@@ -1,0 +1,33 @@
+{
+  "name": "vf-logistics-backend",
+  "version": "1.0.0",
+  "description": "VF物流数据分析平台后端服务",
+  "main": "src/server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node start.js",
+    "dev": "node start.js",
+    "setup": "node setup.js",
+    "quick-test": "node quick-test.js",
+    "test": "node src/scripts/testConnection.js",
+    "diagnose": "node src/scripts/diagnose.js",
+    "server": "node src/server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "helmet": "^7.1.0",
+    "dotenv": "^16.3.1",
+    "oracledb": "^6.3.0",
+    "compression": "^1.7.4",
+    "morgan": "^1.10.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "author": "VF Logistics Team",
+  "license": "MIT"
+}
