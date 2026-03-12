@@ -1,0 +1,16 @@
+{
+  "activeFileId": "timeliness_1772530442876_2s9347",
+  "files": [
+    {
+      "fileId": "timeliness_1772530442876_2s9347",
+      "fileName": "sla.xlsx",
+      "uploadTime": "2026-03-03T09:34:02.890Z",
+      "recordCount": 3092,
+      "mappedCount": 3075,
+      "unmappedCount": 17,
+      "excelFilePath": "C:\\Users\\EZO010\\Downloads\\性能优化 (Copy)\\src\\backend\\uploads\\timeliness\\sla.xlsx",
+      "jsonFilePath": "C:\\Users\\EZO010\\Downloads\\性能优化 (Copy)\\src\\backend\\uploads\\timeliness\\timeliness_1772530442876_2s9347.json",
+      "isActive": true
+    }
+  ]
+}
