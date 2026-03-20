@@ -1,0 +1,189 @@
+import React from 'react';
+import { OverviewDashboard } from './pages/OverviewDashboard';
+import { RegionalPage } from './pages/RegionalPage';
+import { WeightAnalysisPage } from './pages/WeightAnalysisPage';
+import { LogisticsPage } from './pages/LogisticsPage';
+import { TrendsPage } from './pages/TrendsPage';
+import { ExceptionsPage } from './pages/ExceptionsPage';
+import { CarrierPerformance } from './pages/CarrierPerformance';
+import { CostAnalysis } from './pages/CostAnalysis';
+import { CapacityPlanning } from './pages/CapacityPlanning';
+import { VendorManagement } from './pages/VendorManagement';
+import { FourPLTimeEfficiency } from './pages/FourPLTimeEfficiency';
+import { TimeEfficiencyAnalysis } from './TimeEfficiencyAnalysis';
+import { ForwardingAnalysis } from './ForwardingAnalysis';
+<<<<<<< HEAD
+=======
+import { AuthDebugger } from './AuthDebugger';
+>>>>>>> main
+
+import type { DateRange, FilteredOrderData, LogisticsExceptionFilter } from '../data/types';
+
+interface PageRouterProps {
+  activeMenu: string;
+  filteredData: FilteredOrderData;
+  selectedBrand: string | null;
+  selectedPlatform: string | null;
+  selectedSelfFlag?: string | null;
+  regionalDateRange: DateRange;
+  onRegionalDateRangeChange: (from: string, to: string) => void;
+  dateRange: DateRange;
+  onDateRangeChange: (from: string, to: string) => void;
+  onKPIDetailClick: (kpi: any) => void;
+  onExceptionClick: (filter: LogisticsExceptionFilter) => void;
+  logisticsExceptionFilter: LogisticsExceptionFilter;
+  onClearExceptionFilter: () => void;
+  useRealData?: boolean;
+  rawApiData?: any;
+  unifiedCourierData?: any;
+<<<<<<< HEAD
+  userBrands?: string[]; // 🔥 新增：用户品牌权限
+=======
+>>>>>>> main
+}
+
+export function PageRouter({
+  activeMenu,
+  filteredData,
+  selectedBrand,
+  selectedPlatform,
+  selectedSelfFlag,
+  regionalDateRange,
+  onRegionalDateRangeChange,
+  dateRange,
+  onDateRangeChange,
+  onKPIDetailClick,
+  onExceptionClick,
+  logisticsExceptionFilter,
+  onClearExceptionFilter,
+  useRealData = false,
+  rawApiData,
+<<<<<<< HEAD
+  unifiedCourierData,
+  userBrands // 🔥 新增：接收用户品牌权限
+=======
+  unifiedCourierData
+>>>>>>> main
+}: PageRouterProps) {
+  const commonProps = {
+    filteredData,
+    selectedBrand,
+    selectedPlatform,
+    selectedSelfFlag,
+    useRealData,
+    rawApiData,
+    unifiedCourierData,
+<<<<<<< HEAD
+    dateRange,
+    userBrands // 🔥 新增：添加到commonProps
+=======
+    dateRange
+>>>>>>> main
+  };
+
+  switch (activeMenu) {
+    case "overview-dashboard":
+      return (
+        <OverviewDashboard
+          {...commonProps}
+          onKPIDetailClick={onKPIDetailClick}
+          onExceptionClick={onExceptionClick}
+        />
+      );
+      
+    case "overview-regional":
+      return (
+        <RegionalPage
+          {...commonProps}
+          dateRange={regionalDateRange}
+          onDateRangeChange={onRegionalDateRangeChange}
+        />
+      );
+      
+    case "overview-weight":
+      return (
+        <WeightAnalysisPage
+          {...commonProps}
+          dateRange={dateRange}
+          onDateRangeChange={onDateRangeChange}
+        />
+      );
+      
+
+    case "overview-logistics":
+      return (
+        <LogisticsPage
+          data={filteredData}
+          selectedBrand={selectedBrand}
+          selectedPlatform={selectedPlatform}  // ✅ 新增：传递platform参数
+          selectedSelfFlag={selectedSelfFlag}  // ✅ 新增：传递selfFlag参数
+          dateRange={dateRange}
+          exceptionFilter={logisticsExceptionFilter}
+          onClearExceptionFilter={onClearExceptionFilter}
+          onNavigateToMonitoring={onExceptionClick}
+          useRealData={useRealData}
+          rawApiData={rawApiData}
+          unifiedCourierData={unifiedCourierData}
+        />
+      );
+      
+    case "overview-trends":
+      return (
+        <TrendsPage
+          {...commonProps}
+          dateRange={dateRange}
+          onDateRangeChange={onDateRangeChange}
+        />
+      );
+      
+    case "overview-exceptions":
+      return (
+        <ExceptionsPage
+          {...commonProps}
+          dateRange={dateRange}
+          onDateRangeChange={onDateRangeChange}
+<<<<<<< HEAD
+          useRealData={useRealData}
+=======
+>>>>>>> main
+        />
+      );
+      
+    // 4PL Management 模块
+    case "4pl-carrier-performance":
+      return <CarrierPerformance unifiedCourierData={unifiedCourierData} />;      
+    case "4pl-time-efficiency":
+      return <FourPLTimeEfficiency unifiedCourierData={unifiedCourierData} />;      
+    case "4pl-flow-direction":
+      return (
+        <ForwardingAnalysis 
+          useRealData={true}
+          dateRange={dateRange}
+          selectedBrand={selectedBrand}
+          selectedPlatform={selectedPlatform}
+          selectedSelfFlag={selectedSelfFlag}
+        />
+      );      
+    case "4pl-cost-analysis":
+      return <CostAnalysis />;      
+    case "4pl-capacity-planning":
+      return <CapacityPlanning />;      
+    case "4pl-vendor-management":
+      return <VendorManagement />;
+    
+<<<<<<< HEAD
+=======
+    // 🔧 调试工具（仅用于开发）
+    case "debug-auth":
+      return <AuthDebugger />;
+      
+>>>>>>> main
+    default:
+      return (
+        <OverviewDashboard
+          {...commonProps}
+          onKPIDetailClick={onKPIDetailClick}
+        />
+      );
+  }
+}

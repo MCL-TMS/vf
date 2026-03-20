@@ -1,0 +1,609 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --font-size: 14px;
+  
+  /* Brand Palette - Maersk Core Colors */
+  --maersk-blue: #42b0d5;
+  --maersk-white: #ffffff;
+  --maersk-black: #141414;
+  
+  /* Functional Palette - Blues */
+  --functional-dark-blue: #003e62;
+  --functional-mid-blue: #1686bd;
+  --functional-light-blue: #a1d1e8;
+  --functional-bright-blue: #e2f3fb;
+  
+  /* Functional Palette - Greys */
+  --functional-dark-grey: #363636;
+  --functional-mid-grey: #6a6a6a;
+  --functional-light-grey: #d4d4d4;
+  --functional-bright-grey: #f0f0f0;
+  
+  /* Accent Palette - Teal */
+  --accent-dark-teal: #034e45;
+  --accent-mid-teal: #119c85;
+  --accent-light-teal: #97decd;
+  --accent-bright-teal: #dff7ee;
+  
+  /* Accent Palette - Green */
+  --accent-dark-green: #316307;
+  --accent-mid-green: #6ca926;
+  --accent-light-green: #b9e371;
+  --accent-bright-green: #e8f6d0;
+  
+  /* Accent Palette - Orange */
+  --accent-dark-orange: #903e00;
+  --accent-mid-orange: #f3870c;
+  --accent-light-orange: #fed195;
+  --accent-bright-orange: #fff5dd;
+  
+  /* Accent Palette - Red */
+  --accent-dark-red: #981f19;
+  --accent-mid-red: #ea5d4b;
+  --accent-light-red: #fda99e;
+  --accent-bright-red: #ffe9e7;
+
+  /* shadcn/ui Theme Variables */
+  --background: 0 0% 100%;
+  --foreground: 0 0% 8%;
+  --card: 0 0% 100%;
+  --card-foreground: 0 0% 8%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 0 0% 8%;
+  --primary: 198 68% 55%; /* maersk-blue */
+  --primary-foreground: 0 0% 100%;
+  --secondary: 0 0% 94%;
+  --secondary-foreground: 0 0% 8%;
+  --muted: 0 0% 94%;
+  --muted-foreground: 0 0% 42%;
+  --accent: 198 82% 92%;
+  --accent-foreground: 0 0% 8%;
+  --destructive: 8 81% 59%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 0 0% 83%;
+  --input: 0 0% 83%;
+  --ring: 198 68% 55%;
+  
+  /* Chart Colors using Accent Palette */
+  --chart-1: 198 68% 55%; /* maersk-blue */
+  --chart-2: 183 75% 36%; /* accent-mid-teal */
+  --chart-3: 89 63% 41%; /* accent-mid-green */
+  --chart-4: 28 100% 47%; /* accent-mid-orange */
+  --chart-5: 8 81% 59%; /* accent-mid-red */
+  
+  --radius: 0.375rem;
+}
+
+.dark {
+  --background: 0 0% 8%;
+  --foreground: 0 0% 100%;
+  --card: 0 0% 21%;
+  --card-foreground: 0 0% 100%;
+  --popover: 0 0% 21%;
+  --popover-foreground: 0 0% 100%;
+  --primary: 198 68% 55%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 0 0% 21%;
+  --secondary-foreground: 0 0% 100%;
+  --muted: 0 0% 21%;
+  --muted-foreground: 0 0% 42%;
+  --accent: 198 58% 24%;
+  --accent-foreground: 0 0% 100%;
+  --destructive: 8 81% 59%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 0 0% 42%;
+  --input: 0 0% 21%;
+  --ring: 198 68% 55%;
+  
+  /* Chart Colors for Dark Mode */
+  --chart-1: 198 68% 55%; /* maersk-blue */
+  --chart-2: 183 40% 69%; /* accent-light-teal */
+  --chart-3: 89 52% 69%; /* accent-light-green */
+  --chart-4: 28 100% 76%; /* accent-light-orange */
+  --chart-5: 8 81% 78%; /* accent-light-red */
+}
+
+@layer base {
+  * {
+<<<<<<< HEAD
+    border-color: hsl(var(--border));
+  }
+
+  body {
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
+=======
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+>>>>>>> main
+    font-family: 'Maersk Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  }
+}
+
+/**
+ * Base typography using Maersk design system
+ */
+@layer base {
+  h1 {
+    @apply text-2xl font-medium leading-tight;
+    font-family: 'Maersk Headline', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  }
+
+  h2 {
+    @apply text-xl font-medium leading-tight;
+    font-family: 'Maersk Headline', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  }
+
+  h3 {
+    @apply text-lg font-medium leading-normal;
+  }
+
+  h4 {
+    @apply text-base font-medium leading-normal;
+  }
+
+  p {
+    @apply text-base font-normal leading-normal;
+  }
+
+  label {
+    @apply text-base font-medium leading-normal;
+  }
+
+  button {
+    @apply text-base font-medium leading-normal;
+  }
+
+  input {
+    @apply text-base font-normal leading-normal;
+  }
+}
+
+/* Maersk Component Styles - 使用标准马士基设计系统颜色 */
+@layer components {
+  .maersk-card {
+    background-color: var(--maersk-white);
+    border: 1px solid var(--functional-light-grey);
+    border-radius: 0.375rem;
+    box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  }
+  
+  .maersk-button-primary {
+    background-color: var(--maersk-blue);
+    color: var(--maersk-white);
+    border: 1px solid var(--maersk-blue);
+    border-radius: 0.375rem;
+    transition: all 0.2s ease-in-out;
+  }
+  
+  .maersk-button-primary:hover {
+    background-color: var(--functional-mid-blue);
+    border-color: var(--functional-mid-blue);
+  }
+  
+  .maersk-button-secondary {
+    background-color: var(--maersk-white);
+    color: var(--maersk-black);
+    border: 1px solid var(--functional-light-grey);
+    border-radius: 0.375rem;
+    transition: all 0.2s ease-in-out;
+  }
+  
+  .maersk-button-secondary:hover {
+    background-color: var(--functional-bright-grey);
+  }
+  
+  .maersk-sidebar {
+    background-color: var(--functional-dark-blue);
+    color: var(--maersk-white);
+  }
+  
+  .maersk-sidebar-active {
+    background-color: var(--maersk-blue);
+    color: var(--maersk-white);
+  }
+  
+  .maersk-input {
+    background-color: var(--maersk-white);
+    border: 1px solid var(--functional-light-grey);
+    border-radius: 0.375rem;
+    color: var(--maersk-black);
+    transition: all 0.2s ease-in-out;
+  }
+  
+  .maersk-input:focus {
+    border-color: var(--maersk-blue);
+    outline: none;
+    box-shadow: 0 0 0 1px var(--maersk-blue);
+  }
+  
+  .maersk-badge-primary {
+    background-color: var(--maersk-blue);
+    color: var(--maersk-white);
+    border-radius: 9999px;
+  }
+  
+  .maersk-badge-secondary {
+    background-color: var(--functional-bright-grey);
+    color: var(--maersk-black);
+    border-radius: 9999px;
+  }
+  
+  .maersk-alert-info {
+    background-color: var(--functional-bright-blue);
+    border: 1px solid var(--functional-light-blue);
+    color: var(--functional-dark-blue);
+    border-radius: 0.375rem;
+  }
+  
+  .maersk-alert-warning {
+    background-color: var(--accent-bright-orange);
+    border: 1px solid var(--accent-light-orange);
+    color: var(--accent-dark-orange);
+    border-radius: 0.375rem;
+  }
+  
+  .maersk-alert-error {
+    background-color: var(--accent-bright-red);
+    border: 1px solid var(--accent-light-red);
+    color: var(--accent-dark-red);
+    border-radius: 0.375rem;
+  }
+  
+  .maersk-alert-success {
+    background-color: var(--accent-bright-green);
+    border: 1px solid var(--accent-light-green);
+    color: var(--accent-dark-green);
+    border-radius: 0.375rem;
+  }
+}
+
+/* Scrollbar Styling - 使用马士基颜色 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--functional-bright-grey);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--functional-light-grey);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--maersk-blue);
+}
+
+/* Dynamic color classes for chart indicators - 使用马士基强调色 */
+@layer utilities {
+  .status-indicator {
+    border: 1px solid transparent;
+    transition: all 0.2s ease-in-out;
+  }
+  
+  .status-indicator:hover {
+    transform: scale(1.1);
+  }
+  
+  .province-circle {
+    transition: all 0.3s ease-in-out;
+  }
+  
+  .province-text {
+    pointer-events: none;
+    font-weight: 500;
+  }
+  
+  .chart-tooltip {
+    background-color: var(--maersk-black);
+    color: var(--maersk-white);
+    border: 1px solid var(--functional-light-grey);
+    border-radius: 0.375rem;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  }
+  
+  .chart-dynamic-bg {
+    transition: background-color 0.2s ease-in-out;
+  }
+  
+  /* 异常监控筛选提示动画 */
+  .exception-filter-alert {
+    animation: slideInFromTop 0.4s ease-out;
+  }
+  
+  @keyframes slideInFromTop {
+    from {
+      opacity: 0;
+      transform: translateY(-20px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  
+  /* 脉动效果 */
+  .pulse-slow {
+    animation: pulse 3s infinite;
+  }
+  
+  /* 渐变动画 */
+  .gradient-shift {
+    background: linear-gradient(-45deg, var(--accent-bright-orange), var(--accent-bright-red), var(--accent-bright-orange), var(--functional-bright-blue));
+    background-size: 400% 400%;
+    animation: gradientShift 8s ease infinite;
+  }
+  
+  @keyframes gradientShift {
+    0% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+    100% { background-position: 0% 50%; }
+  }
+  
+  /* 异常高亮显示样式 - 优雅简洁版本 */
+  .exception-highlighted {
+    background: linear-gradient(135deg, var(--maersk-white), var(--accent-bright-orange));
+    border: 2px solid var(--accent-mid-orange) !important;
+    box-shadow: 0 4px 16px rgba(243, 135, 12, 0.15);
+    transform: translateY(-1px);
+    transition: all 0.3s ease-in-out;
+    position: relative;
+  }
+  
+  .exception-highlighted::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, 
+      var(--accent-mid-orange), 
+      var(--accent-light-orange), 
+      var(--accent-mid-orange)
+    );
+    border-radius: 0.375rem 0.375rem 0 0;
+    animation: subtleGlow 2s ease-in-out infinite alternate;
+  }
+  
+  @keyframes subtleGlow {
+    from { opacity: 0.7; }
+    to { opacity: 1; }
+  }
+  
+  /* 异常数值高亮 - 简洁版本 */
+  .exception-value-highlighted {
+    background: var(--accent-bright-orange);
+    color: var(--accent-dark-orange) !important;
+    font-weight: 600 !important;
+    border-radius: 4px;
+    padding: 3px 8px;
+    border: 1px solid var(--accent-light-orange);
+    box-shadow: 0 2px 4px rgba(243, 135, 12, 0.1);
+    transition: all 0.2s ease-in-out;
+  }
+  
+  .exception-value-highlighted:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 8px rgba(243, 135, 12, 0.2);
+  }
+  
+  /* 品牌卡片高亮 - 专业版本 */
+  .brand-card-highlighted {
+    background: linear-gradient(135deg, var(--maersk-white), var(--accent-bright-orange));
+    border: 2px solid var(--accent-mid-orange) !important;
+    box-shadow: 
+      0 8px 24px rgba(243, 135, 12, 0.12),
+      0 0 0 1px var(--accent-light-orange);
+    transform: translateY(-2px);
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+    z-index: 10;
+  }
+  
+  .brand-card-highlighted::after {
+    content: '';
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 8px;
+    height: 8px;
+    background: var(--accent-mid-orange);
+    border-radius: 50%;
+    animation: breathe 2s ease-in-out infinite;
+    box-shadow: 0 0 0 2px var(--accent-bright-orange);
+  }
+  
+  @keyframes breathe {
+    0%, 100% { transform: scale(1); opacity: 0.8; }
+    50% { transform: scale(1.2); opacity: 1; }
+  }
+  
+  /* 监控项目高亮容器 */
+  .monitoring-item-highlighted {
+    background: linear-gradient(135deg, var(--functional-bright-blue), var(--accent-bright-teal));
+    border: 1px solid var(--accent-mid-teal) !important;
+    box-shadow: 0 2px 12px rgba(17, 156, 133, 0.1);
+    border-radius: 8px;
+    transition: all 0.25s ease-in-out;
+  }
+  
+  .monitoring-item-highlighted:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 20px rgba(17, 156, 133, 0.15);
+  }
+  
+  /* 异常指标聚焦样式 - 橙色背景简洁设计 */
+  .exception-metric-focused {
+    background: var(--accent-bright-orange);
+    color: var(--accent-dark-orange) !important;
+    border: 2px solid var(--accent-mid-orange);
+    border-radius: 6px;
+    font-weight: 600 !important;
+  }
+  
+  /* 异常监控模式激活时的品牌卡片突出显示 - 参考图片样式 */
+  .exception-monitoring-card-focused {
+    background: var(--maersk-white);
+    border: 2px solid var(--accent-mid-orange) !important;
+    border-radius: 12px;
+    box-shadow: 
+      0 4px 16px rgba(243, 135, 12, 0.12),
+      0 0 0 1px var(--accent-light-orange);
+    position: relative;
+    transition: all 0.3s ease-in-out;
+  }
+  
+  .exception-monitoring-card-focused::before {
+    content: '';
+    position: absolute;
+    top: -2px;
+    left: -2px;
+    right: -2px;
+    bottom: -2px;
+    background: linear-gradient(135deg, 
+      var(--accent-mid-orange), 
+      var(--accent-light-orange), 
+      var(--accent-mid-orange)
+    );
+    border-radius: 14px;
+    z-index: -1;
+    opacity: 0.6;
+  }
+  
+  .exception-monitoring-card-focused:hover {
+    box-shadow: 
+      0 6px 20px rgba(243, 135, 12, 0.15),
+      0 0 0 2px var(--accent-mid-orange);
+  }
+  
+  @keyframes bounce {
+    0%, 20%, 50%, 80%, 100% { transform: translateY(0) scale(1); }
+    40% { transform: translateY(-3px) scale(1.1); }
+    60% { transform: translateY(-1px) scale(1.05); }
+  }
+  
+
+  
+  /* 马士基品牌色工具类 */
+  .bg-maersk-blue { background-color: var(--maersk-blue); }
+  .bg-maersk-white { background-color: var(--maersk-white); }
+  .bg-maersk-black { background-color: var(--maersk-black); }
+  
+  .text-maersk-blue { color: var(--maersk-blue); }
+  .text-maersk-white { color: var(--maersk-white); }
+  .text-maersk-black { color: var(--maersk-black); }
+  
+  .border-maersk-blue { border-color: var(--maersk-blue); }
+  .border-maersk-white { border-color: var(--maersk-white); }
+  .border-maersk-black { border-color: var(--maersk-black); }
+  
+  /* 功能色工具类 - 蓝色系 */
+  .bg-functional-dark-blue { background-color: var(--functional-dark-blue); }
+  .bg-functional-mid-blue { background-color: var(--functional-mid-blue); }
+  .bg-functional-light-blue { background-color: var(--functional-light-blue); }
+  .bg-functional-bright-blue { background-color: var(--functional-bright-blue); }
+  
+  .text-functional-dark-blue { color: var(--functional-dark-blue); }
+  .text-functional-mid-blue { color: var(--functional-mid-blue); }
+  .text-functional-light-blue { color: var(--functional-light-blue); }
+  .text-functional-bright-blue { color: var(--functional-bright-blue); }
+  
+  .border-functional-dark-blue { border-color: var(--functional-dark-blue); }
+  .border-functional-mid-blue { border-color: var(--functional-mid-blue); }
+  .border-functional-light-blue { border-color: var(--functional-light-blue); }
+  .border-functional-bright-blue { border-color: var(--functional-bright-blue); }
+  
+  /* 功能色工具类 - 灰色系 */
+  .bg-functional-dark-grey { background-color: var(--functional-dark-grey); }
+  .bg-functional-mid-grey { background-color: var(--functional-mid-grey); }
+  .bg-functional-light-grey { background-color: var(--functional-light-grey); }
+  .bg-functional-bright-grey { background-color: var(--functional-bright-grey); }
+  
+  .text-functional-dark-grey { color: var(--functional-dark-grey); }
+  .text-functional-mid-grey { color: var(--functional-mid-grey); }
+  .text-functional-light-grey { color: var(--functional-light-grey); }
+  .text-functional-bright-grey { color: var(--functional-bright-grey); }
+  
+  .border-functional-dark-grey { border-color: var(--functional-dark-grey); }
+  .border-functional-mid-grey { border-color: var(--functional-mid-grey); }
+  .border-functional-light-grey { border-color: var(--functional-light-grey); }
+  .border-functional-bright-grey { border-color: var(--functional-bright-grey); }
+  
+  /* 强调色工具类 - 青绿色系 */
+  .bg-accent-dark-teal { background-color: var(--accent-dark-teal); }
+  .bg-accent-mid-teal { background-color: var(--accent-mid-teal); }
+  .bg-accent-light-teal { background-color: var(--accent-light-teal); }
+  .bg-accent-bright-teal { background-color: var(--accent-bright-teal); }
+  
+  .text-accent-dark-teal { color: var(--accent-dark-teal); }
+  .text-accent-mid-teal { color: var(--accent-mid-teal); }
+  .text-accent-light-teal { color: var(--accent-light-teal); }
+  .text-accent-bright-teal { color: var(--accent-bright-teal); }
+  
+  .border-accent-dark-teal { border-color: var(--accent-dark-teal); }
+  .border-accent-mid-teal { border-color: var(--accent-mid-teal); }
+  .border-accent-light-teal { border-color: var(--accent-light-teal); }
+  .border-accent-bright-teal { border-color: var(--accent-bright-teal); }
+  
+  /* 强调色工具类 - 绿色系 */
+  .bg-accent-dark-green { background-color: var(--accent-dark-green); }
+  .bg-accent-mid-green { background-color: var(--accent-mid-green); }
+  .bg-accent-light-green { background-color: var(--accent-light-green); }
+  .bg-accent-bright-green { background-color: var(--accent-bright-green); }
+  
+  .text-accent-dark-green { color: var(--accent-dark-green); }
+  .text-accent-mid-green { color: var(--accent-mid-green); }
+  .text-accent-light-green { color: var(--accent-light-green); }
+  .text-accent-bright-green { color: var(--accent-bright-green); }
+  
+  .border-accent-dark-green { border-color: var(--accent-dark-green); }
+  .border-accent-mid-green { border-color: var(--accent-mid-green); }
+  .border-accent-light-green { border-color: var(--accent-light-green); }
+  .border-accent-bright-green { border-color: var(--accent-bright-green); }
+  
+  /* 强调色工具类 - 橙色系 */
+  .bg-accent-dark-orange { background-color: var(--accent-dark-orange); }
+  .bg-accent-mid-orange { background-color: var(--accent-mid-orange); }
+  .bg-accent-light-orange { background-color: var(--accent-light-orange); }
+  .bg-accent-bright-orange { background-color: var(--accent-bright-orange); }
+  
+  .text-accent-dark-orange { color: var(--accent-dark-orange); }
+  .text-accent-mid-orange { color: var(--accent-mid-orange); }
+  .text-accent-light-orange { color: var(--accent-light-orange); }
+  .text-accent-bright-orange { color: var(--accent-bright-orange); }
+  
+  .border-accent-dark-orange { border-color: var(--accent-dark-orange); }
+  .border-accent-mid-orange { border-color: var(--accent-mid-orange); }
+  .border-accent-light-orange { border-color: var(--accent-light-orange); }
+  .border-accent-bright-orange { border-color: var(--accent-bright-orange); }
+  
+  /* 强调色工具类 - 红色系 */
+  .bg-accent-dark-red { background-color: var(--accent-dark-red); }
+  .bg-accent-mid-red { background-color: var(--accent-mid-red); }
+  .bg-accent-light-red { background-color: var(--accent-light-red); }
+  .bg-accent-bright-red { background-color: var(--accent-bright-red); }
+  
+  .text-accent-dark-red { color: var(--accent-dark-red); }
+  .text-accent-mid-red { color: var(--accent-mid-red); }
+  .text-accent-light-red { color: var(--accent-light-red); }
+  .text-accent-bright-red { color: var(--accent-bright-red); }
+  
+  .border-accent-dark-red { border-color: var(--accent-dark-red); }
+  .border-accent-mid-red { border-color: var(--accent-mid-red); }
+  .border-accent-light-red { border-color: var(--accent-light-red); }
+  .border-accent-bright-red { border-color: var(--accent-bright-red); }
+}
+
+html {
+  font-size: var(--font-size);
+}

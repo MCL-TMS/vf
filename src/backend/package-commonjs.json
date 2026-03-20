@@ -1,0 +1,62 @@
+{
+  "name": "vf-logistics-api",
+  "version": "1.0.0",
+  "description": "VF物流数据分析平台后端API服务",
+  "main": "src/api-server.js",
+  "scripts": {
+    "start": "node src/api-server.js",
+    "dev": "nodemon src/api-server.js",
+    "test": "node quick-test.js",
+    "check": "node src/scripts/checkTables.js",
+    "check-tables": "node src/scripts/checkTables.js",
+    "setup": "node setup.js",
+    "setup-wizard": "node setup-wizard.js",
+    "api:start": "npm run start",
+    "api:dev": "npm run dev",
+    "api:test": "curl http://localhost:3001/api/health || echo 'API服务器未运行，请先运行 npm start'",
+    "db:test": "node src/scripts/testConnection.js",
+    "db:check": "node src/scripts/checkTables.js",
+    "db:diagnose": "node src/scripts/diagnose.js",
+    "env:check": "node src/scripts/checkEnv.js",
+    "oracle:check": "node src/scripts/checkOracleClient.js",
+    "quick:check": "node quick-check.js",
+    "quick:test": "node quick-test.js",
+    "test:api": "node test-api-connection.js"
+  },
+  "keywords": [
+    "logistics",
+    "express",
+    "oracle",
+    "api",
+    "vf",
+    "maersk"
+  ],
+  "author": "VF Logistics Analytics Team",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "helmet": "^7.1.0",
+    "compression": "^1.7.4",
+    "express-rate-limit": "^7.1.5",
+    "morgan": "^1.10.0",
+    "multer": "^1.4.5-lts.1",
+    "xlsx": "^0.18.5",
+    "oracledb": "^6.0.3",
+    "dotenv": "^16.3.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vf-logistics/analytics-platform.git"
+  },
+  "bugs": {
+    "url": "https://github.com/vf-logistics/analytics-platform/issues"
+  },
+  "homepage": "https://github.com/vf-logistics/analytics-platform#readme"
+}
