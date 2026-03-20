@@ -26,7 +26,11 @@ interface ApiPerformanceMetrics {
 }
 
 class ApiServiceClass {
+<<<<<<< HEAD
+  private baseURL = 'http://localhost:3001/api';
+=======
   private baseURL = '/api';
+>>>>>>> main
   private healthCheckCache: HealthCheckCache | null = null;
   private readonly HEALTH_CHECK_CACHE_DURATION = 30000; // 30秒缓存
   private performanceMetrics: ApiPerformanceMetrics[] = [];
@@ -260,7 +264,11 @@ class ApiServiceClass {
         throw new Error(result.error || '导出失败');
       }
 
+<<<<<<< HEAD
+      console.log(`✅ 时效分析RawData获取功: ${result.data?.length || 0} 条`);
+=======
       console.log(`✅ 时效分析RawData获取成功: ${result.data?.length || 0} 条`);
+>>>>>>> main
       
       // 🔍 调试：打印第一条数据查看字段
       if (result.data && result.data.length > 0) {
@@ -488,10 +496,19 @@ class ApiServiceClass {
           console.log('🏷️ [ApiService] Brand mapping:', { original: brand, mapped: mappedBrand });
           params.append('brand', mappedBrand);
         }
+<<<<<<< HEAD
+      }
+      
+      // 🔥 新增：始终传递用户品牌权限（无论是否选择了specific品牌）
+      if (userBrands && Array.isArray(userBrands) && userBrands.length > 0) {
+        params.append('userBrands', userBrands.join(','));  // 🔥 使用逗号分隔，而不是JSON
+        console.log('🔐 [ApiService] 传递用户品牌权限:', userBrands.join(','));
+=======
       } else if (brand === 'all' && userBrands && Array.isArray(userBrands) && userBrands.length > 0) {
         // 🔥 新增：当选择"全部品牌"时，传递用户品牌权限
         params.append('userBrands', JSON.stringify(userBrands));
         console.log('🔐 [ApiService] 传递用户品牌权限:', userBrands);
+>>>>>>> main
       } else {
         console.log('🏷️ [ApiService] Brand parameter not added:', brand);
       }
@@ -938,8 +955,13 @@ class ApiServiceClass {
         }
       } else if (brand === 'all' && userBrands && Array.isArray(userBrands) && userBrands.length > 0) {
         // 🔥 新增：当选择"全部品牌"时，传递用户品牌权限
+<<<<<<< HEAD
+        params.append('userBrands', userBrands.join(','));  // 🔥 使用逗号分隔，而不是JSON
+        console.log('🔐 [ApiService.getLogisticsBrands] 传递用户品牌权限:', userBrands.join(','));
+=======
         params.append('userBrands', JSON.stringify(userBrands));
         console.log('🔐 [ApiService.getLogisticsBrands] 传递用户品牌权限:', userBrands);
+>>>>>>> main
       }
       if (platform && platform !== 'all') {
         const mappedPlatform = this.PLATFORM_MAPPING[platform as keyof typeof this.PLATFORM_MAPPING] || platform;
@@ -1027,8 +1049,13 @@ class ApiServiceClass {
       
       // 🔥 新增：添加用户品牌权限参数
       if (userBrands && Array.isArray(userBrands) && userBrands.length > 0) {
+<<<<<<< HEAD
+        params.append('userBrands', userBrands.join(','));  // 🔥 使用逗号分隔，而不是JSON
+        console.log('🔐 [ApiService.getForwardingData] 用户品牌权限:', userBrands.join(','));
+=======
         params.append('userBrands', JSON.stringify(userBrands)); // 序列化为JSON字符串
         console.log('🔐 [ApiService.getForwardingData] 用户品牌权限:', userBrands);
+>>>>>>> main
       }
       
       if (platform && platform !== 'all') {
@@ -1139,8 +1166,13 @@ class ApiServiceClass {
       
       // 🔥 新增：用户品牌权限（仅当选择"全部品牌"时传递）
       if (userBrands && userBrands.length > 0 && (!brand || brand === 'all')) {
+<<<<<<< HEAD
+        params.append('userBrands', userBrands.join(','));  // 🔥 使用逗号分隔，而不是JSON
+        console.log('🔐 [ApiService.getInterceptionData] 传递用户品牌权限:', userBrands.join(','));
+=======
         params.append('userBrands', JSON.stringify(userBrands));
         console.log('🔐 [ApiService.getInterceptionData] 传递用户品牌权限:', userBrands);
+>>>>>>> main
       }
       
       // 平台筛选
@@ -1164,7 +1196,13 @@ class ApiServiceClass {
         params.append('interceptLocation', interceptLocation);
       }
       
+<<<<<<< HEAD
+      const apiUrl = import.meta.env.DEV 
+        ? `http://localhost:3001/api/logistics/interception?${params.toString()}`
+        : `/api/logistics/interception?${params.toString()}`;
+=======
       const apiUrl = `/api/logistics/interception?${params.toString()}`;
+>>>>>>> main
       
       console.log('🛑 [ApiService] 拦截分析请求URL:', apiUrl);
       console.log('🛑 [ApiService] 拦截分析请求参数:', {
@@ -1220,6 +1258,237 @@ class ApiServiceClass {
     console.log('✅ [ApiService.getPlatformList] 返回平台列表:', platformList);
     return platformList;
   }
+<<<<<<< HEAD
+
+  // 🔥 新增：获取异常监控分析数据
+  async getExceptionAnalysisData(options?: APIRequestOptions): Promise<any> {
+    try {
+      const params = new URLSearchParams();
+      
+      // 🔥 必需参数：日期范围
+      if (options?.dateFrom) params.append('dateFrom', options.dateFrom);
+      if (options?.dateTo) params.append('dateTo', options.dateTo);
+      
+      // 🔥 可选参数：品牌、平台、自管
+      if (options?.selectedBrand) params.append('brand', options.selectedBrand);
+      if (options?.selectedPlatform) params.append('platform', options.selectedPlatform);
+      if (options?.selfFlag !== undefined) params.append('selfFlag', options.selfFlag);
+      
+      // 🔥 用户品牌权限
+      if (options?.userBrands) params.append('userBrands', options.userBrands);
+      
+      const url = `${this.baseURL}/exception-analysis/overview${params.toString() ? `?${params.toString()}` : ''}`;
+      
+      console.log('🔍 [ApiService] 获取异常监控分析数据:', url);
+      
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30000); // 30秒超时
+      
+      const response = await this.performanceFetch(url, {
+        method: 'GET',
+        signal: controller.signal,
+        headers: {
+          'Content-Type': 'application/json',
+        }
+      });
+      
+      clearTimeout(timeoutId);
+      
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      
+      const data = await response.json();
+      
+      console.log('✅ [ApiService] 异常监控分析数据获取成功:', {
+        totalExceptions: data.data?.summary?.totalExceptions,
+        responsibilityCount: data.data?.byResponsibility?.length,
+        carrierCount: data.data?.byCarrier?.length,
+        reasonCount: data.data?.byReason?.length,
+        crossAnalysisCount: data.data?.crossAnalysis?.length
+      });
+      
+      return data;
+    } catch (error: any) {
+      console.error('❌ [ApiService] 异常监控分析数据获取失败:', error);
+      throw new Error(`获取异常监控分析数据失败: ${error.message}`);
+    }
+  }
+
+  // 🔥 新增：获取快递商异常详情
+  async getCarrierExceptionDetails(carrierName: string, options: APIRequestOptions = {}): Promise<any> {
+    const { dateRange, brand, platform, selfFlag, userBrands } = options;
+    
+    try {
+      const params = new URLSearchParams();
+      
+      if (dateRange?.from) {
+        params.append('dateFrom', dateRange.from);
+      }
+      if (dateRange?.to) {
+        params.append('dateTo', dateRange.to);
+      }
+      if (brand && brand !== 'all') {
+        if (Array.isArray(brand)) {
+          brand.forEach(brandCode => {
+            params.append('brand', brandCode);
+          });
+        } else {
+          const mappedBrand = this.BRAND_MAPPING[brand as keyof typeof this.BRAND_MAPPING] || brand;
+          params.append('brand', mappedBrand);
+        }
+      } else if (brand === 'all' && userBrands && Array.isArray(userBrands) && userBrands.length > 0) {
+        params.append('userBrands', userBrands.join(','));
+      }
+      if (platform && platform !== 'all') {
+        const mappedPlatform = this.PLATFORM_MAPPING[platform as keyof typeof this.PLATFORM_MAPPING] || platform;
+        params.append('platform', mappedPlatform);
+      }
+      if (selfFlag && selfFlag !== 'all') {
+        params.append('selfFlag', selfFlag);
+      }
+      
+      const url = `${this.baseURL}/logistics/carriers/${encodeURIComponent(carrierName)}/exceptions?${params.toString()}`;
+      
+      console.log(`🔍 [ApiService] 获取快递商异常详情: ${carrierName}`, url);
+      
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30000); // 30秒超时
+      
+      const response = await this.performanceFetch(url, {
+        method: 'GET',
+        signal: controller.signal,
+        headers: {
+          'Content-Type': 'application/json',
+        }
+      });
+      
+      clearTimeout(timeoutId);
+      
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      
+      const data = await response.json();
+      
+      console.log(`✅ [ApiService] ${carrierName} 异常详情获取成功:`, {
+        detailsCount: data.data?.details?.length
+      });
+      
+      return data;
+    } catch (error: any) {
+      console.error(`❌ [ApiService] ${carrierName} 异常详情获取失败:`, error);
+      throw new Error(`获取快递商异常详情失败: ${error.message}`);
+    }
+  }
+
+  // 🎯 新增：获取异常监控分析数据（基于责任方和异常原因）
+  async getExceptionAnalysis(options: APIRequestOptions = {}): Promise<any> {
+    const { dateRange, brand, platform, selfFlag, userBrands, signal } = options;
+    
+    console.log('🔍 [ApiService.getExceptionAnalysis] 接收到的参数:', {
+      dateRange,
+      brand,
+      platform,
+      selfFlag,
+      userBrands
+    });
+    
+    try {
+      const params = new URLSearchParams();
+      
+      // 日期范围（必需）
+      if (dateRange?.from) {
+        params.append('dateFrom', dateRange.from);
+      }
+      if (dateRange?.to) {
+        params.append('dateTo', dateRange.to);
+      }
+      
+      // 品牌筛选
+      if (brand && brand !== 'all') {
+        if (Array.isArray(brand)) {
+          brand.forEach(brandCode => {
+            params.append('brand', brandCode);
+          });
+          console.log('🏷️ [ApiService.getExceptionAnalysis] 多品牌查询:', brand);
+        } else {
+          const mappedBrand = this.BRAND_MAPPING[brand as keyof typeof this.BRAND_MAPPING] || brand;
+          params.append('brand', mappedBrand);
+          console.log('🏷️ [ApiService.getExceptionAnalysis] 单品牌查询:', mappedBrand);
+        }
+      } else if (brand === 'all' && userBrands && Array.isArray(userBrands) && userBrands.length > 0) {
+        // 用户品牌权限
+        params.append('userBrands', userBrands.join(','));
+        console.log('🔐 [ApiService.getExceptionAnalysis] 用户品牌权限:', userBrands.join(','));
+      } else {
+        // 如果没有指定品牌，也没有用户品牌权限，添加 brand=all
+        console.log('⚠️ [ApiService.getExceptionAnalysis] 无品牌筛选条件，添加 brand=all');
+        params.append('brand', 'all');
+      }
+      
+      // 平台筛选
+      if (platform && platform !== 'all') {
+        const mappedPlatform = this.PLATFORM_MAPPING[platform as keyof typeof this.PLATFORM_MAPPING] || platform;
+        params.append('platform', mappedPlatform);
+      }
+      
+      // 自管筛选
+      if (selfFlag && selfFlag !== 'all') {
+        params.append('selfFlag', selfFlag);
+      } else if (!selfFlag || selfFlag === '') {
+        params.append('selfFlag', 'Y'); // 默认自管
+      }
+      
+      const url = `${this.baseURL}/exception-analysis/overview?${params.toString()}`;
+      
+      console.log('📊 [ApiService] 获取异常监控分析数据:', url);
+      console.log('筛选参数:', { dateRange, brand, platform, selfFlag, userBrands });
+      
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30000); // 30秒超时
+      
+      const response = await this.performanceFetch(url, {
+        method: 'GET',
+        signal: signal || controller.signal,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        throw new Error(`异常监控分析API请求失败: ${response.status} ${response.statusText}`);
+      }
+
+      const data = await this.safeJsonParse(response, '异常监控分析数据获取');
+      
+      console.log('✅ [ApiService] 异常监控分析数据获取成功:', {
+        success: data.success,
+        totalExceptions: data.data?.summary?.totalExceptions || 0,
+        responsibilityGroups: data.data?.byResponsibility?.length || 0,
+        carrierGroups: data.data?.byCarrier?.length || 0,
+        reasonGroups: data.data?.byReason?.length || 0,
+        crossAnalysisRecords: data.data?.crossAnalysis?.length || 0
+      });
+
+      return data;
+    } catch (error: any) {
+      if (error.name === 'AbortError') {
+        throw error;
+      }
+      
+      if (error.message.includes('fetch')) {
+        throw new Error('无法连接到API服务器，请确认后端服务是否已启动');
+      }
+      
+      console.error('❌ [ApiService] 获取异常监控分析数据失败:', error);
+      throw new Error(`获取异常监控分析数据失败: ${error.message}`);
+    }
+  }
+=======
+>>>>>>> main
 }
 
 export const ApiService = new ApiServiceClass();
@@ -1234,4 +1503,11 @@ export const getForwardingData = (options?: APIRequestOptions) => ApiService.get
 export const getInterceptionData = (options?: any) => ApiService.getInterceptionData(options);
 export const getPlatformList = () => ApiService.getPlatformList(); // 🔥 导出平台列表方法
 export const exportOrderDetails = (options: APIRequestOptions) => ApiService.exportOrderDetails(options); // 🔥 导出订单明细
+<<<<<<< HEAD
 export const exportTimelinessRawData = (options: any) => ApiService.exportTimelinessRawData(options); // 🔥 导出时效分析RawData
+export const getExceptionAnalysisData = (options?: any) => ApiService.getExceptionAnalysisData(options); // 🔥 异常监控分析数据
+export const getCarrierExceptionDetails = (carrierName: string, options?: any) => ApiService.getCarrierExceptionDetails(carrierName, options); // 🔥 快递商异常详情
+export const getExceptionAnalysis = (options?: APIRequestOptions) => ApiService.getExceptionAnalysis(options); // 🔥 异常监控分析数据（基于责任方和异常原因）
+=======
+export const exportTimelinessRawData = (options: any) => ApiService.exportTimelinessRawData(options); // 🔥 导出时效分析RawData
+>>>>>>> main

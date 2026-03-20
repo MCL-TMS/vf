@@ -40,7 +40,11 @@ export function EnhancedKPICard({ data, onDetailClick }: EnhancedKPICardProps) {
 
   return (
     <Card 
+<<<<<<< HEAD
+      className={`bg-white hover:shadow-lg transition-all duration-200 cursor-pointer group ${
+=======
       className={`hover:shadow-lg transition-all duration-200 cursor-pointer group ${
+>>>>>>> main
         isNullValue ? 'border-functional-light-grey bg-functional-bright-grey' : 'border-functional-light-grey'
       }`}
       onClick={() => onDetailClick && onDetailClick(data)}

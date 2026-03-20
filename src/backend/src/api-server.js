@@ -21,6 +21,10 @@ const uploadRoutes = require('./routes/upload-commonjs');
 const diagnosticRoutes = require('./routes/bas-area-diagnostic');
 const authRoutes = require('./routes/auth'); // 新增认证路由
 const orderDetailsRoutes = require('./routes/order-details'); // 🔥 订单明细导出路由
+<<<<<<< HEAD
+const exceptionAnalysisRoutes = require('./routes/exception-analysis'); // 🔥 异常监控分析路由
+=======
+>>>>>>> main
 
 // 🔍 调试：检查 authRoutes 是否正确导入
 console.log('🔍 调试信息:');
@@ -101,6 +105,11 @@ app.use('/api/auth', authRoutes); // 注册认证路由
 console.log('✅ 已注册: /api/auth');
 app.use('/api/order-details', orderDetailsRoutes); // 注册订单明细导出路由
 console.log('✅ 已注册: /api/order-details');
+<<<<<<< HEAD
+app.use('/api/exception-analysis', exceptionAnalysisRoutes); // 注册异常监控分析路由
+console.log('✅ 已注册: /api/exception-analysis');
+=======
+>>>>>>> main
 console.log('📋 所有路由注册完成\n');
 
 /**
@@ -170,6 +179,13 @@ app.get('/api/info', (req, res) => {
         '/api/upload/sla-matching-status': '获取SLA匹配状态 (GET)',
         '/api/upload/history': '获取上传历史记录 (GET)'
       },
+<<<<<<< HEAD
+      exceptionAnalysis: {
+        '/api/exception-analysis/overview': '获取异常监控分析总览 (GET)',
+        '/api/exception-analysis/carrier/:name': '获取指定快递商的异常明细 (GET)'
+      },
+=======
+>>>>>>> main
       system: {
         '/api/health': '健康检查',
         '/api/info': 'API信息'

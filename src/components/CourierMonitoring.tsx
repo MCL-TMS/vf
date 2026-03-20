@@ -107,6 +107,19 @@ export function CourierMonitoring({
       return { couriers: [], apiCouriers: [], noData: true };
     }
 
+<<<<<<< HEAD
+    // 🔥 详细的数据调试日志
+    console.log('🔍 [CourierMonitoring] 数据源检查:', {
+      hasUnifiedData: !!unifiedCourierData,
+      unifiedDataLength: Array.isArray(unifiedCourierData) ? unifiedCourierData.length : 'not array',
+      unifiedDataType: typeof unifiedCourierData,
+      unifiedDataSample: unifiedCourierData?.[0],
+      hasRawApiData: !!rawApiData,
+      rawApiDataKeys: rawApiData ? Object.keys(rawApiData) : 'null'
+    });
+
+=======
+>>>>>>> main
     // 🔥 优先使用统一的快递商数据
     if (unifiedCourierData && Array.isArray(unifiedCourierData) && unifiedCourierData.length > 0) {
       console.log('🎯 [CourierMonitoring] 使用统一快递商数据处理器结果');
@@ -270,7 +283,11 @@ export function CourierMonitoring({
   };
 
   // 获取处理后的快递商数据
+<<<<<<< HEAD
+  const { couriers: processedCouriers, apiCouriers, noData } = getCourierDataFromAPI();
+=======
   const { couriers: processedCouriers, apiCouriers } = getCourierDataFromAPI();
+>>>>>>> main
 
   // 🔥 修复：从快递商数据计算总异常数 - 使用统一的异常字段名
   const calculateTotalExceptionsFromCouriers = () => {
@@ -741,6 +758,26 @@ export function CourierMonitoring({
     }
   };
 
+<<<<<<< HEAD
+  // 🔥 数据为空时显示友好提示
+  if (noData || processedCouriers.length === 0) {
+    return (
+      <DataLoadingState
+        hasData={false}
+        dataType="快递商数据"
+        noDataMessage={
+          !useRealData 
+            ? "当前使用模拟数据模式已关闭，请启用真实数据模式查看实际订单" 
+            : "当前筛选条件下没有找到快递商数据，可能原因：日期范围内无订单、品牌筛选无匹配数据、或后端API返回为空"
+        }
+        showCard={true}
+        minHeight="400px"
+      />
+    );
+  }
+
+=======
+>>>>>>> main
   return (
     <div className="space-y-6">
       {/* 🔥 总览统计卡片 */}

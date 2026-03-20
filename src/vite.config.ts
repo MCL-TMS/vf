@@ -22,22 +22,37 @@ export default defineConfig({
     open: true,
     proxy: {
       '/api': {
+<<<<<<< HEAD
+        target: 'http://localhost:3001',
+=======
         target: 'http://127.0.0.1:3001',
+>>>>>>> main
         changeOrigin: true,
         secure: false,
         ws: true,
         rewrite: (path) => {
+<<<<<<< HEAD
+          console.log('🔄 [Vite代理] 重写路径:', path, '-> http://localhost:3001' + path);
+=======
           console.log('🔄 [Vite代理] 重写路径:', path, '-> http://127.0.0.1:3001' + path);
+>>>>>>> main
           return path;
         },
         configure: (proxy, options) => {
           proxy.on('error', (err, req, res) => {
             console.error('🔥 [Vite代理] 代理错误:', err.message);
             console.error('🔥 [Vite代理] 请求URL:', req.url);
+<<<<<<< HEAD
+            console.error('🔥 [Vite代理] 目标:', 'http://localhost:3001' + req.url);
+          });
+          proxy.on('proxyReq', (proxyReq, req, res) => {
+            console.log('🔄 [Vite代理] 发起代理请求:', req.method, req.url, '-> http://localhost:3001' + req.url);
+=======
             console.error('🔥 [Vite代理] 目标:', 'http://127.0.0.1:3001' + req.url);
           });
           proxy.on('proxyReq', (proxyReq, req, res) => {
             console.log('🔄 [Vite代理] 发起代理请求:', req.method, req.url, '-> http://127.0.0.1:3001' + req.url);
+>>>>>>> main
             console.log('🔄 [Vite代理] 请求头:', req.headers);
           });
           proxy.on('proxyRes', (proxyRes, req, res) => {

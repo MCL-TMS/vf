@@ -5,9 +5,14 @@ const router = express.Router();
 
 // 🔧 共享工具函数 - 与logistics-esm.js保持一致
 const QueryUtils = {
+<<<<<<< HEAD
+  // 🔥 移除硬编码的品牌范围限制
+  BASE_WHERE_CONDITIONS: `
+=======
   // VF品牌范围限制
   BASE_WHERE_CONDITIONS: `
     AND t.CUSTOMERNO IN ('18405', '18405-1', '18405-2', '18405-3', '18405-4', '18405-5')
+>>>>>>> main
     AND t.WMS_OUTBOUND_TIME IS NOT NULL
   `,
   
@@ -153,6 +158,9 @@ router.get('/export', async (req, res) => {
         -- 订单基本信息
         t.TSK_MERGE_NO as order_no,
         t.CUSTOMERNO as customer_no,
+<<<<<<< HEAD
+        COALESCE(bc.COMPANY_ABNAME, t.CUSTOMERNO) as brand_name,
+=======
         CASE 
           WHEN t.CUSTOMERNO = '18405' THEN 'DICKIES'
           WHEN t.CUSTOMERNO = '18405-1' THEN 'TNF'
@@ -162,6 +170,7 @@ router.get('/export', async (req, res) => {
           WHEN t.CUSTOMERNO = '18405-5' THEN 'SMARTWOOL'
           ELSE t.CUSTOMERNO
         END as brand_name,
+>>>>>>> main
         
         -- 平台信息
         t.PLATFORM_CLASS as platform,
@@ -231,6 +240,10 @@ router.get('/export', async (req, res) => {
         t.LOGISTICS_REMARKS as remarks
         
       FROM APP_CMS.TSK_LIST_TASK t
+<<<<<<< HEAD
+      LEFT JOIN APP_CMS.BAS_COMPANY bc ON t.CUSTOMERNO = bc.COMPANY_SYSID
+=======
+>>>>>>> main
       WHERE 1=1
         ${QueryUtils.BASE_WHERE_CONDITIONS}
         ${dateFilter}
@@ -323,4 +336,8 @@ router.get('/export', async (req, res) => {
   }
 });
 
+<<<<<<< HEAD
 export default router;
+=======
+export default router;
+>>>>>>> main

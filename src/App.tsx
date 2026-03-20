@@ -88,7 +88,11 @@ function AppContent() {
     };
 
     // 在总览和物流页面时都进行API连接检查
+<<<<<<< HEAD
+    if (activeMenu === 'overview-dashboard' || activeMenu === 'overview-logistics' || activeMenu === 'overview-exceptions') {
+=======
     if (activeMenu === 'overview-dashboard' || activeMenu === 'overview-logistics') {
+>>>>>>> main
       const initialCheckTimeout = setTimeout(() => {
         checkApiConnection();
       }, 1000);
@@ -144,7 +148,15 @@ function AppContent() {
   const currentDateRange = getCurrentDateRange(activeMenu, dateRange, regionalDateRange);
 
   // 判断是否应该使用真实数据 - 基于API连接状态，支持总览和物流页面
+<<<<<<< HEAD
+  const shouldUseRealDataInApp = (
+    activeMenu === 'overview-dashboard' || 
+    activeMenu === 'overview-logistics' || 
+    activeMenu === 'overview-exceptions'
+  ) && apiConnectionStatus === 'connected';
+=======
   const shouldUseRealDataInApp = (activeMenu === 'overview-dashboard' || activeMenu === 'overview-logistics') && apiConnectionStatus === 'connected';
+>>>>>>> main
   
   // 🔍 调试实时数据状态
   if (activeMenu === 'overview-logistics') {
@@ -285,6 +297,10 @@ function AppContent() {
               useRealData={shouldUseRealDataInApp}
               rawApiData={rawApiData}
               unifiedCourierData={unifiedCourierData}
+<<<<<<< HEAD
+              userBrands={user?.customerNos || []} // 🔥 新增：传递用户品牌权限
+=======
+>>>>>>> main
             />
             
             {/* Status Bar - 简化版，移除所有API状态显示 */}

@@ -2,7 +2,11 @@ import { useState, useMemo, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
+<<<<<<< HEAD
+import { Package, TrendingUp, AlertTriangle, Activity, Info, ExternalLink, BarChart3 } from "lucide-react";
+=======
 import { Package, TrendingUp, AlertTriangle, Activity, Info, ExternalLink, Calculator, BarChart3 } from "lucide-react";
+>>>>>>> main
 import { brandPlatformCrossData, platformsData, getPlatformKPIData } from "../data/platformData";
 import { getAllCourierBaseExceptionRates, generateExceptionRateReport, getCourierBaseExceptionRate } from "../utils/baseExceptionRateCalculator";
 import { ExceptionsRealDataCard } from "./ExceptionsRealDataCard";
@@ -75,7 +79,10 @@ export function ImpactChart({
   
   const [hoveredPath, setHoveredPath] = useState<string | null>(null);
   const [selectedExceptionType, setSelectedExceptionType] = useState<string | null>(null);
+<<<<<<< HEAD
+=======
   const [showCalculationDetails, setShowCalculationDetails] = useState(false);
+>>>>>>> main
   const [flowApiData, setFlowApiData] = useState(null);
   const [flowApiLoading, setFlowApiLoading] = useState(false);
   const [flowApiError, setFlowApiError] = useState(null);
@@ -165,7 +172,11 @@ export function ImpactChart({
             // 尝试直接连接后端服务器
             try {
               console.log('🔄 [ImpactChart] 尝试直接连接后端服务器...');
+<<<<<<< HEAD
+              const directUrl = `http://localhost:3001/api/overview/flow-analysis?${params.toString()}`;
+=======
               const directUrl = `${window.location.origin}/api/overview/flow-analysis?${params.toString()}`;
+>>>>>>> main
               console.log('🔄 [ImpactChart] 直接连接URL:', directUrl);
               
               const directResponse = await fetch(directUrl, {
@@ -896,7 +907,11 @@ export function ImpactChart({
                     
                     // 测试2: 直接后端连接
                     console.log('🔍 [API调试] 测试2: 直接后端连接');
+<<<<<<< HEAD
+                    const directUrl = 'http://localhost:3001/api/overview/flow-analysis?dateFrom=2025-08-19&dateTo=2025-08-27';
+=======
                     const directUrl = `${window.location.origin}/api/overview/flow-analysis?dateFrom=2025-08-19&dateTo=2025-08-27`;
+>>>>>>> main
                     console.log('🔍 [API调试] 直接URL:', directUrl);
                     
                     let directResult = '❌ 直接连接失败';
@@ -969,6 +984,8 @@ export function ImpactChart({
           }`}>
             {useRealData ? (flowApiData ? '真实数据' : '连接中...') : '模拟数据'}
           </Badge>
+<<<<<<< HEAD
+=======
           <Button
             variant="outline"
             size="sm"
@@ -978,10 +995,13 @@ export function ImpactChart({
             <Calculator className="h-4 w-4 mr-1" />
             计算详情
           </Button>
+>>>>>>> main
         </CardTitle>
       </CardHeader>
       
       <CardContent>
+<<<<<<< HEAD
+=======
         {/* 基础异常率计算详情 */}
         {showCalculationDetails && (
           <div className="mb-6 p-4 bg-functional-bright-grey rounded-lg border border-functional-light-grey">
@@ -1063,6 +1083,7 @@ export function ImpactChart({
           </div>
         )}
 
+>>>>>>> main
         {/* 统计概览 */}
         <div className="grid grid-cols-3 gap-4 mb-6">
           <div className="text-center p-3 bg-functional-bright-blue rounded-lg border border-functional-light-blue">
@@ -1222,9 +1243,13 @@ export function ImpactChart({
                           查看监控
                         </Button>
                       </div>
+<<<<<<< HEAD
+                      
+=======
                       <p className="text-xs text-functional-mid-grey mt-1">
                         {type.description} (阈值: {type.threshold})
                       </p>
+>>>>>>> main
                     </div>
                   </div>
                 ))}

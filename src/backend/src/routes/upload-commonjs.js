@@ -1009,6 +1009,20 @@ router.get('/sla-matching-status', async (req, res) => {
       // 检查数据库中的订单数据分布
       const statsQuery = `
         SELECT 
+<<<<<<< HEAD
+          COALESCE(bc.COMPANY_ABNAME, t.CUSTOMERNO) as brand_name,
+          t.CARRIERID,
+          COUNT(*) as order_count,
+          COUNT(DISTINCT t.DEST_CITY) as city_count
+        FROM APP_CMS.TSK_LIST_TASK t
+        LEFT JOIN APP_CMS.BAS_COMPANY bc ON t.CUSTOMERNO = bc.COMPANY_SYSID
+        WHERE t.SELF_FLAG = 'Y' 
+          AND t.SUM_SEND_TIME2 IS NOT NULL
+          AND t.CARRIERID != 'EMS'
+          AND (t.DIS_TYPE IS NULL OR t.DIS_TYPE != '06')
+          ${brand && brand !== 'all' ? `AND t.CUSTOMERNO = :brandParam` : ""}
+        GROUP BY t.CUSTOMERNO, bc.COMPANY_ABNAME, t.CARRIERID
+=======
           CASE CUSTOMERNO
             WHEN '18405' THEN 'DICKIES'
             WHEN '18405-1' THEN 'TNF'
@@ -1036,6 +1050,7 @@ router.get('/sla-matching-status', async (req, res) => {
             END
           )` : ""}
         GROUP BY CUSTOMERNO, CARRIERID
+>>>>>>> main
         ORDER BY order_count DESC
       `;
       

@@ -24,7 +24,11 @@ interface ApiPerformanceMetrics {
 }
 
 class ApiServiceClass {
+<<<<<<< HEAD
+  private baseURL = 'http://localhost:3001/api';
+=======
   private baseURL = '/api';
+>>>>>>> main
   private healthCheckCache: HealthCheckCache | null = null;
   private readonly HEALTH_CHECK_CACHE_DURATION = 30000; // 30秒缓存
   private performanceMetrics: ApiPerformanceMetrics[] = [];

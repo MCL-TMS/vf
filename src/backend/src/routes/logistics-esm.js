@@ -23,14 +23,21 @@ const QueryUtils = {
     'SMARTWOOL': '18405-5'
   },
 
+<<<<<<< HEAD
+  // 🔥 基础WHERE条件 - 移除硬编码的品牌过滤
+=======
   // 基础WHERE条件 - 与overview.js完全一致
+>>>>>>> main
   BASE_WHERE_CONDITIONS: `
     WHERE (
       (t.WMS_OUTBOUND_TIME IS NOT NULL AND to_char(t.WMS_OUTBOUND_TIME,'yyyy-mm-dd') >= :dateFrom AND to_char(t.WMS_OUTBOUND_TIME,'yyyy-mm-dd') <= :dateTo)
       OR
       (t.WMS_OUTBOUND_TIME IS NULL AND t.PAYMENTDATE_D IS NOT NULL AND to_char(t.PAYMENTDATE_D,'yyyy-mm-dd') >= :dateFrom AND to_char(t.PAYMENTDATE_D,'yyyy-mm-dd') <= :dateTo)
     )
+<<<<<<< HEAD
+=======
       AND t.CUSTOMERNO IN ('18405', '18405-1', '18405-2', '18405-3', '18405-4', '18405-5')
+>>>>>>> main
       AND t.TSK_MERGE_NO IS NOT NULL`,
 
   // 平台映射配置 - 与overview.js完全一致
@@ -72,6 +79,34 @@ const QueryUtils = {
     NO_UPDATE_48H: `(t.IS48H_FLAG = 'Y')`
   },
 
+<<<<<<< HEAD
+  // 🔥 新增：构建用户品牌权限过滤条件
+  buildUserBrandsFilter(userBrands, queryParams) {
+    // 解析 userBrands 参数（可能是数组或逗号分隔字符串）
+    const brandArray = userBrands 
+      ? (Array.isArray(userBrands) ? userBrands : userBrands.split(',').map(b => b.trim()).filter(Boolean))
+      : [];
+    
+    console.log('🔐 [Brand Permission] 用户品牌权限:', brandArray);
+    
+    // 管理员或无权限信息 - 不限制品牌
+    if (brandArray.length === 0 || brandArray.includes('all') || brandArray.includes('ALL')) {
+      console.log('✅ [Brand Permission] 管理员模式 - 不限制品牌');
+      return '';
+    }
+    
+    // 🔥 普通用户 - 只查询有权限的品牌
+    const placeholders = brandArray.map((_, index) => `:userBrand${index}`).join(', ');
+    brandArray.forEach((brand, index) => {
+      queryParams[`userBrand${index}`] = brand;
+    });
+    
+    console.log(`✅ [Brand Permission] 普通用户模式 - 限制品牌: ${brandArray.join(', ')}`);
+    return ` AND t.CUSTOMERNO IN (${placeholders})`;
+  },
+
+=======
+>>>>>>> main
   // 构建筛选条件和参数 - 与overview.js完全一致
   buildFilters(queryParams, brand, platform) {
     let brandFilter = '';
@@ -116,9 +151,15 @@ router.get('/couriers', async (req, res) => {
   let connection;
   
   try {
+<<<<<<< HEAD
+    const { dateFrom, dateTo, brand, platform, userBrands } = req.query;  // 🔥 新增 userBrands
+    
+    console.log('🔄 [Logistics-Couriers查询] 收到请求参数:', { dateFrom, dateTo, brand, platform, userBrands });
+=======
     const { dateFrom, dateTo, brand, platform } = req.query;
     
     console.log('🔄 [Logistics-Couriers查询] 收到请求参数:', { dateFrom, dateTo, brand, platform });
+>>>>>>> main
     
     if (!dateFrom || !dateTo) {
       return res.status(400).json({
@@ -140,8 +181,16 @@ router.get('/couriers', async (req, res) => {
     // 🔧 使用统一的筛选条件构建逻辑 - 与overview.js完全一致
     const params = { dateFrom, dateTo };
     const { brandFilter, platformFilter } = QueryUtils.buildFilters(params, brand, platform);
+<<<<<<< HEAD
+    
+    // 🔥 新增：构建用户品牌权限过滤
+    const userBrandsFilter = QueryUtils.buildUserBrandsFilter(userBrands, params);
+
+    // 🔥 快递公司性能统计查询 - 添加用户品牌权限过滤
+=======
 
     // 🔥 快递公司性能统计查询 - 与overview.js的courierQuery完全一致
+>>>>>>> main
     const couriersQuery = `
       SELECT 
         t.CARRIERID as courier_id,
@@ -188,6 +237,10 @@ router.get('/couriers', async (req, res) => {
       FROM APP_CMS.TSK_LIST_TASK t
       ${QueryUtils.BASE_WHERE_CONDITIONS}
         AND t.CARRIERID IS NOT NULL
+<<<<<<< HEAD
+        ${userBrandsFilter}
+=======
+>>>>>>> main
         ${brandFilter}
         ${platformFilter}
       GROUP BY t.CARRIERID
@@ -283,9 +336,15 @@ router.get('/brands', async (req, res) => {
   let connection;
   
   try {
+<<<<<<< HEAD
+    const { dateFrom, dateTo, brand, platform, userBrands } = req.query;  // 🔥 新增 userBrands
+    
+    console.log('🔄 [Logistics-Brands查询] 收到请求参数:', { dateFrom, dateTo, brand, platform, userBrands });
+=======
     const { dateFrom, dateTo, brand, platform } = req.query;
     
     console.log('🔄 [Logistics-Brands查询] 收到请求参数:', { dateFrom, dateTo, brand, platform });
+>>>>>>> main
     
     if (!dateFrom || !dateTo) {
       return res.status(400).json({
@@ -304,9 +363,18 @@ router.get('/brands', async (req, res) => {
 
     connection = await getConnection();
     
+<<<<<<< HEAD
+    // 🔧 使用统一的筛选条件构建逻辑
+    const params = { dateFrom, dateTo };
+    const { brandFilter, platformFilter } = QueryUtils.buildFilters(params, brand, platform);
+    
+    // 🔥 新增：构建用户品牌权限过滤
+    const userBrandsFilter = QueryUtils.buildUserBrandsFilter(userBrands, params);
+=======
     // 构建筛选条件
     const params = { dateFrom, dateTo };
     const { brandFilter, platformFilter } = QueryUtils.buildFilters(params, brand, platform);
+>>>>>>> main
 
     // 品牌维度物流统计查询
     const brandsQuery = `
@@ -336,6 +404,10 @@ router.get('/brands', async (req, res) => {
         ROUND(AVG(CASE WHEN t.SUM_SEND_TIME2 IS NOT NULL AND t.SUM_SEND_TIME2 > 0 THEN t.SUM_SEND_TIME2 END), 2) as avg_delivery_time
       FROM APP_CMS.TSK_LIST_TASK t
       ${QueryUtils.BASE_WHERE_CONDITIONS}
+<<<<<<< HEAD
+        ${userBrandsFilter}
+=======
+>>>>>>> main
         ${brandFilter}
         ${platformFilter}
       GROUP BY t.CUSTOMERNO

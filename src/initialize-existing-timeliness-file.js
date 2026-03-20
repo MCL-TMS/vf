@@ -103,7 +103,11 @@ if (hasMetadata && jsonFiles.length > 0) {
   console.log('  1. 启动后端服务：');
   console.log('     cd backend && npm start\n');
   console.log('  2. 上传Excel文件：');
+<<<<<<< HEAD
+  console.log('     curl -X POST http://localhost:3001/api/upload/timeliness-excel \\');
+=======
   console.log('     curl -X POST /api/upload/timeliness-excel \\');
+>>>>>>> main
   console.log('       -F "file=@backend/uploads/timeliness/' + excelFiles[0] + '" \\');
   console.log('       -F "brand=all"\n');
   
@@ -121,8 +125,13 @@ if (hasMetadata && jsonFiles.length > 0) {
 // 步骤5: 验证API服务
 console.log('📡 步骤5: 验证API服务\n');
 console.log('服务启动后，访问以下接口测试：');
+<<<<<<< HEAD
+console.log('  - 查看SLA状态: GET http://localhost:3001/api/upload/sla-matching-status');
+console.log('  - 执行时效分析: POST http://localhost:3001/api/upload/analyze-timeliness\n');
+=======
 console.log('  - 查看SLA状态: GET /api/upload/sla-matching-status');
 console.log('  - 执行时效分析: POST /api/upload/analyze-timeliness\n');
+>>>>>>> main
 
 console.log('✅ 初始化检查完成！\n');
 

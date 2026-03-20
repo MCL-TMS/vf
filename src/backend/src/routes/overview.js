@@ -36,12 +36,19 @@ const QueryUtils = {
     return `UPPER(COALESCE(bc_brand.COMPANY_ABNAME, t.CUSTOMERNO)) as brand_name`;
   },
 
+<<<<<<< HEAD
+  // 🔥 基础WHERE条件 - 移除硬编码的品牌过滤（⚡ 性能优化：使用TRUNC代替to_char）
+=======
   // 基础WHERE条件 - 日期和品牌筛选（⚡ 性能优化：使用TRUNC代替to_char）
+>>>>>>> main
   BASE_WHERE_CONDITIONS: `
     WHERE (t.WMS_OUTBOUND_TIME IS NOT NULL 
            AND TRUNC(t.WMS_OUTBOUND_TIME) >= TO_DATE(:dateFrom, 'YYYY-MM-DD')
            AND TRUNC(t.WMS_OUTBOUND_TIME) <= TO_DATE(:dateTo, 'YYYY-MM-DD'))
+<<<<<<< HEAD
+=======
       AND t.CUSTOMERNO IN ('18405', '18405-1', '18405-2', '18405-3', '18405-4', '18405-5')
+>>>>>>> main
       AND t.TSK_MERGE_NO IS NOT NULL`,
 
   // 平台映射配置 - 前端选择器值到数据库BAS_CODES表中UDF1字段的映射
