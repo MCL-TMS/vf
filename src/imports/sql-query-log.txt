@@ -1,0 +1,121 @@
+1. 原始数据: {
+  brandName: undefined,
+  cityName: '阿坝藏族羌族自治州',
+  courierCode: undefined,
+  timeValue: 72
+}
+     生成的Key: "UNDEFINED-阿坝藏族羌族自治州-UNDEFINED"
+  2. 原始数据: {
+  brandName: undefined,
+  cityName: '阿克苏地区',
+  courierCode: undefined,
+  timeValue: 999
+}
+     生成的Key: "UNDEFINED-阿克苏地区-UNDEFINED"
+  3. 原始数据: {
+  brandName: undefined,
+  cityName: '阿拉尔市',
+  courierCode: undefined,
+  timeValue: 999
+}
+     生成的Key: "UNDEFINED-阿拉尔市-UNDEFINED"
+  4. 原始数据: {
+  brandName: undefined,
+  cityName: '阿拉善盟',
+  courierCode: undefined,
+  timeValue: 999
+}
+     生成的Key: "UNDEFINED-阿拉善盟-UNDEFINED"
+  5. 原始数据: {
+  brandName: undefined,
+  cityName: '阿勒泰地区',
+  courierCode: undefined,
+  timeValue: 999
+}
+     生成的Key: "UNDEFINED-阿勒泰地区-UNDEFINED"
+  6. 原始数据: {
+  brandName: undefined,
+  cityName: '阿里地区',
+  courierCode: undefined,
+  timeValue: 999
+}
+     生成的Key: "UNDEFINED-阿里地区-UNDEFINED"
+  7. 原始数据: {
+  brandName: undefined,
+  cityName: '安康市',
+  courierCode: undefined,
+  timeValue: 72
+}
+     生成的Key: "UNDEFINED-安康市-UNDEFINED"
+  8. 原始数据: {
+  brandName: undefined,
+  cityName: '安庆市',
+  courierCode: undefined,
+  timeValue: 48
+}
+     生成的Key: "UNDEFINED-安庆市-UNDEFINED"
+  9. 原始数据: {
+  brandName: undefined,
+  cityName: '安顺市',
+  courierCode: undefined,
+  timeValue: 72
+}
+     生成的Key: "UNDEFINED-安顺市-UNDEFINED"
+  10. 原始数据: {
+  brandName: undefined,
+  cityName: '安阳市',
+  courierCode: undefined,
+  timeValue: 72
+}
+     生成的Key: "UNDEFINED-安阳市-UNDEFINED"
+🔍 SQL参数: {
+  dateFrom: '2026-03-01',
+  dateTo: '2026-03-04',
+  userbrand0: '18405',
+  userbrand1: '18405-2',
+  userbrand2: '18405-5',
+  userbrand3: '18405-4',
+  userbrand4: '18405-1',
+  userbrand5: '18405-3',
+  selfFlag: 'Y'
+}
+📋 执行查询...
+🔗 获取数据库连接成功
+🔍 执行SQL查询:
+      SELECT
+        -- 快递商信息
+        v.CARRIERID as carrier_id,
+        v.COMPANY_NAME as company...
+✅ 查询执行成功，返回 8687 行数据
+🔒 数据库连接已释放
+✅ 查询完成，耗时: 23482ms，查询到 8687 条数据
+
+🔍 订单 #1 匹配结果: {
+  matchKey: 'TNF-苏州市-SF',
+  found: false,
+  companyName: 'TNF',
+  city: '苏州市',
+  carrier: 'SF'
+}
+  - Plan时效区间: 未匹配
+  - Plan时效小时: 未匹配
+
+🔍 订单 #2 匹配结果: {
+  matchKey: 'TNF-苏州市-SF',
+  found: false,
+  companyName: 'TNF',
+  city: '苏州市',
+  carrier: 'SF'
+}
+  - Plan时效区间: 未匹配
+  - Plan时效小时: 未匹配
+
+🔍 订单 #3 匹配结果: {
+  matchKey: 'TNF-苏州市-SF',
+  found: false,
+  companyName: 'TNF',
+  city: '苏州市',
+  carrier: 'SF'
+}
+  - Plan时效区间: 未匹配
+  - Plan时效小时: 未匹配
