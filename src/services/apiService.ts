@@ -26,7 +26,11 @@ interface ApiPerformanceMetrics {
 }
 
 class ApiServiceClass {
+<<<<<<< HEAD
   private baseURL = 'http://localhost:3001/api';
+=======
+  private baseURL = '/api';
+>>>>>>> main
   private healthCheckCache: HealthCheckCache | null = null;
   private readonly HEALTH_CHECK_CACHE_DURATION = 30000; // 30秒缓存
   private performanceMetrics: ApiPerformanceMetrics[] = [];
@@ -260,7 +264,11 @@ class ApiServiceClass {
         throw new Error(result.error || '导出失败');
       }
 
+<<<<<<< HEAD
       console.log(`✅ 时效分析RawData获取功: ${result.data?.length || 0} 条`);
+=======
+      console.log(`✅ 时效分析RawData获取成功: ${result.data?.length || 0} 条`);
+>>>>>>> main
       
       // 🔍 调试：打印第一条数据查看字段
       if (result.data && result.data.length > 0) {
@@ -488,12 +496,19 @@ class ApiServiceClass {
           console.log('🏷️ [ApiService] Brand mapping:', { original: brand, mapped: mappedBrand });
           params.append('brand', mappedBrand);
         }
+<<<<<<< HEAD
       }
       
       // 🔥 新增：始终传递用户品牌权限（无论是否选择了specific品牌）
       if (userBrands && Array.isArray(userBrands) && userBrands.length > 0) {
         params.append('userBrands', userBrands.join(','));  // 🔥 使用逗号分隔，而不是JSON
         console.log('🔐 [ApiService] 传递用户品牌权限:', userBrands.join(','));
+=======
+      } else if (brand === 'all' && userBrands && Array.isArray(userBrands) && userBrands.length > 0) {
+        // 🔥 新增：当选择"全部品牌"时，传递用户品牌权限
+        params.append('userBrands', JSON.stringify(userBrands));
+        console.log('🔐 [ApiService] 传递用户品牌权限:', userBrands);
+>>>>>>> main
       } else {
         console.log('🏷️ [ApiService] Brand parameter not added:', brand);
       }
@@ -940,8 +955,13 @@ class ApiServiceClass {
         }
       } else if (brand === 'all' && userBrands && Array.isArray(userBrands) && userBrands.length > 0) {
         // 🔥 新增：当选择"全部品牌"时，传递用户品牌权限
+<<<<<<< HEAD
         params.append('userBrands', userBrands.join(','));  // 🔥 使用逗号分隔，而不是JSON
         console.log('🔐 [ApiService.getLogisticsBrands] 传递用户品牌权限:', userBrands.join(','));
+=======
+        params.append('userBrands', JSON.stringify(userBrands));
+        console.log('🔐 [ApiService.getLogisticsBrands] 传递用户品牌权限:', userBrands);
+>>>>>>> main
       }
       if (platform && platform !== 'all') {
         const mappedPlatform = this.PLATFORM_MAPPING[platform as keyof typeof this.PLATFORM_MAPPING] || platform;
@@ -1029,8 +1049,13 @@ class ApiServiceClass {
       
       // 🔥 新增：添加用户品牌权限参数
       if (userBrands && Array.isArray(userBrands) && userBrands.length > 0) {
+<<<<<<< HEAD
         params.append('userBrands', userBrands.join(','));  // 🔥 使用逗号分隔，而不是JSON
         console.log('🔐 [ApiService.getForwardingData] 用户品牌权限:', userBrands.join(','));
+=======
+        params.append('userBrands', JSON.stringify(userBrands)); // 序列化为JSON字符串
+        console.log('🔐 [ApiService.getForwardingData] 用户品牌权限:', userBrands);
+>>>>>>> main
       }
       
       if (platform && platform !== 'all') {
@@ -1141,8 +1166,13 @@ class ApiServiceClass {
       
       // 🔥 新增：用户品牌权限（仅当选择"全部品牌"时传递）
       if (userBrands && userBrands.length > 0 && (!brand || brand === 'all')) {
+<<<<<<< HEAD
         params.append('userBrands', userBrands.join(','));  // 🔥 使用逗号分隔，而不是JSON
         console.log('🔐 [ApiService.getInterceptionData] 传递用户品牌权限:', userBrands.join(','));
+=======
+        params.append('userBrands', JSON.stringify(userBrands));
+        console.log('🔐 [ApiService.getInterceptionData] 传递用户品牌权限:', userBrands);
+>>>>>>> main
       }
       
       // 平台筛选
@@ -1166,9 +1196,13 @@ class ApiServiceClass {
         params.append('interceptLocation', interceptLocation);
       }
       
+<<<<<<< HEAD
       const apiUrl = import.meta.env.DEV 
         ? `http://localhost:3001/api/logistics/interception?${params.toString()}`
         : `/api/logistics/interception?${params.toString()}`;
+=======
+      const apiUrl = `/api/logistics/interception?${params.toString()}`;
+>>>>>>> main
       
       console.log('🛑 [ApiService] 拦截分析请求URL:', apiUrl);
       console.log('🛑 [ApiService] 拦截分析请求参数:', {
@@ -1224,6 +1258,7 @@ class ApiServiceClass {
     console.log('✅ [ApiService.getPlatformList] 返回平台列表:', platformList);
     return platformList;
   }
+<<<<<<< HEAD
 
   // 🔥 新增：获取异常监控分析数据
   async getExceptionAnalysisData(options?: APIRequestOptions): Promise<any> {
@@ -1452,6 +1487,8 @@ class ApiServiceClass {
       throw new Error(`获取异常监控分析数据失败: ${error.message}`);
     }
   }
+=======
+>>>>>>> main
 }
 
 export const ApiService = new ApiServiceClass();
@@ -1466,7 +1503,11 @@ export const getForwardingData = (options?: APIRequestOptions) => ApiService.get
 export const getInterceptionData = (options?: any) => ApiService.getInterceptionData(options);
 export const getPlatformList = () => ApiService.getPlatformList(); // 🔥 导出平台列表方法
 export const exportOrderDetails = (options: APIRequestOptions) => ApiService.exportOrderDetails(options); // 🔥 导出订单明细
+<<<<<<< HEAD
 export const exportTimelinessRawData = (options: any) => ApiService.exportTimelinessRawData(options); // 🔥 导出时效分析RawData
 export const getExceptionAnalysisData = (options?: any) => ApiService.getExceptionAnalysisData(options); // 🔥 异常监控分析数据
 export const getCarrierExceptionDetails = (carrierName: string, options?: any) => ApiService.getCarrierExceptionDetails(carrierName, options); // 🔥 快递商异常详情
 export const getExceptionAnalysis = (options?: APIRequestOptions) => ApiService.getExceptionAnalysis(options); // 🔥 异常监控分析数据（基于责任方和异常原因）
+=======
+export const exportTimelinessRawData = (options: any) => ApiService.exportTimelinessRawData(options); // 🔥 导出时效分析RawData
+>>>>>>> main

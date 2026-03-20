@@ -216,6 +216,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       // ===== 其他账号使用真实API认证 =====
+<<<<<<< HEAD
       // 开发环境下使用完整URL（绕过可能存在的Vite代理问题）
       const isDevelopment = import.meta.env.DEV;
       const apiBaseUrl = isDevelopment ? 'http://localhost:3001' : '';
@@ -223,6 +224,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       console.log('🔍 [AuthContext] 认证模式:', { isDevelopment, apiBaseUrl });
       
       const response = await fetch(`${apiBaseUrl}/api/auth/login`, {
+=======
+      // 统一使用同域 /api；开发环境依赖 Vite 代理转发到本地后端
+      const response = await fetch(`/api/auth/login`, {
+>>>>>>> main
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

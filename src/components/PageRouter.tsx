@@ -12,6 +12,10 @@ import { VendorManagement } from './pages/VendorManagement';
 import { FourPLTimeEfficiency } from './pages/FourPLTimeEfficiency';
 import { TimeEfficiencyAnalysis } from './TimeEfficiencyAnalysis';
 import { ForwardingAnalysis } from './ForwardingAnalysis';
+<<<<<<< HEAD
+=======
+import { AuthDebugger } from './AuthDebugger';
+>>>>>>> main
 
 import type { DateRange, FilteredOrderData, LogisticsExceptionFilter } from '../data/types';
 
@@ -32,7 +36,10 @@ interface PageRouterProps {
   useRealData?: boolean;
   rawApiData?: any;
   unifiedCourierData?: any;
+<<<<<<< HEAD
   userBrands?: string[]; // 🔥 新增：用户品牌权限
+=======
+>>>>>>> main
 }
 
 export function PageRouter({
@@ -51,8 +58,12 @@ export function PageRouter({
   onClearExceptionFilter,
   useRealData = false,
   rawApiData,
+<<<<<<< HEAD
   unifiedCourierData,
   userBrands // 🔥 新增：接收用户品牌权限
+=======
+  unifiedCourierData
+>>>>>>> main
 }: PageRouterProps) {
   const commonProps = {
     filteredData,
@@ -62,8 +73,12 @@ export function PageRouter({
     useRealData,
     rawApiData,
     unifiedCourierData,
+<<<<<<< HEAD
     dateRange,
     userBrands // 🔥 新增：添加到commonProps
+=======
+    dateRange
+>>>>>>> main
   };
 
   switch (activeMenu) {
@@ -127,7 +142,10 @@ export function PageRouter({
           {...commonProps}
           dateRange={dateRange}
           onDateRangeChange={onDateRangeChange}
+<<<<<<< HEAD
           useRealData={useRealData}
+=======
+>>>>>>> main
         />
       );
       
@@ -153,6 +171,13 @@ export function PageRouter({
     case "4pl-vendor-management":
       return <VendorManagement />;
     
+<<<<<<< HEAD
+=======
+    // 🔧 调试工具（仅用于开发）
+    case "debug-auth":
+      return <AuthDebugger />;
+      
+>>>>>>> main
     default:
       return (
         <OverviewDashboard

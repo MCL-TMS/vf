@@ -62,7 +62,11 @@ export function TimeEfficiencyAnalysis({ selectedBrand, selectedSelfFlag, dateRa
 
       console.log(`🔍 自动执行${analysisType}时效分析:`, requestBody);
 
+<<<<<<< HEAD
       const response = await fetch('http://localhost:3001/api/upload/analyze-timeliness', {
+=======
+      const response = await fetch('/api/upload/analyze-timeliness', {
+>>>>>>> main
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -130,7 +134,11 @@ export function TimeEfficiencyAnalysis({ selectedBrand, selectedSelfFlag, dateRa
 
             console.log(`📡 请求竞品 ${competitorBrand} 数据:`, requestBody);
 
+<<<<<<< HEAD
             const response = await fetch('http://localhost:3001/api/upload/analyze-timeliness', {
+=======
+            const response = await fetch('/api/upload/analyze-timeliness', {
+>>>>>>> main
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json'

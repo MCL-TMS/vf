@@ -57,11 +57,15 @@ export const BrandProvider: React.FC<BrandProviderProps> = ({ children }) => {
       
       console.log('🏷️  正在获取品牌映射...');
       
+<<<<<<< HEAD
       // 🔥 修复：安全访问 import.meta.env
       const isDev = typeof import.meta !== 'undefined' && import.meta.env?.DEV;
       const apiUrl = isDev 
         ? 'http://localhost:3001/api/brands/mapping'
         : '/api/brands/mapping';
+=======
+      const apiUrl = '/api/brands/mapping';
+>>>>>>> main
       
       const response = await fetch(apiUrl);
       

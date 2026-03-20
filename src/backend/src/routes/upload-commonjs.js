@@ -1009,6 +1009,7 @@ router.get('/sla-matching-status', async (req, res) => {
       // 检查数据库中的订单数据分布
       const statsQuery = `
         SELECT 
+<<<<<<< HEAD
           COALESCE(bc.COMPANY_ABNAME, t.CUSTOMERNO) as brand_name,
           t.CARRIERID,
           COUNT(*) as order_count,
@@ -1021,6 +1022,35 @@ router.get('/sla-matching-status', async (req, res) => {
           AND (t.DIS_TYPE IS NULL OR t.DIS_TYPE != '06')
           ${brand && brand !== 'all' ? `AND t.CUSTOMERNO = :brandParam` : ""}
         GROUP BY t.CUSTOMERNO, bc.COMPANY_ABNAME, t.CARRIERID
+=======
+          CASE CUSTOMERNO
+            WHEN '18405' THEN 'DICKIES'
+            WHEN '18405-1' THEN 'TNF'
+            WHEN '18405-2' THEN 'ICEBREAKER'
+            WHEN '18405-3' THEN 'VANS'
+            WHEN '18405-4' THEN 'TIMBERLAND'
+            ELSE CUSTOMERNO
+          END as brand_name,
+          CARRIERID,
+          COUNT(*) as order_count,
+          COUNT(DISTINCT DEST_CITY) as city_count
+        FROM APP_CMS.TSK_LIST_TASK
+        WHERE SELF_FLAG = 'Y' 
+          AND SUM_SEND_TIME2 IS NOT NULL
+          AND CARRIERID != 'EMS'
+          AND (DIS_TYPE IS NULL OR DIS_TYPE != '06')
+          ${brand && brand !== 'all' ? `AND CUSTOMERNO IN (
+            CASE :brandParam
+              WHEN 'DICKIES' THEN '18405'
+              WHEN 'TNF' THEN '18405-1' 
+              WHEN 'ICEBREAKER' THEN '18405-2'
+              WHEN 'VANS' THEN '18405-3'
+              WHEN 'TIMBERLAND' THEN '18405-4'
+              ELSE :brandParam
+            END
+          )` : ""}
+        GROUP BY CUSTOMERNO, CARRIERID
+>>>>>>> main
         ORDER BY order_count DESC
       `;
       

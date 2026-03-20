@@ -88,7 +88,11 @@ router.get('/mapping', async (req, res) => {
 router.get('/list', async (req, res) => {
   console.log('\n📋 品牌列表查询请求');
   
+<<<<<<< HEAD
   const { userBrands } = req.query; // 🔥 用户权限品牌代码，逗号分隔或数组
+=======
+  const { userBrands } = req.query; // 用户权限品牌代码，逗号分隔
+>>>>>>> main
   
   let connection;
   
@@ -98,6 +102,7 @@ router.get('/list', async (req, res) => {
     let query;
     let bindParams = {};
     
+<<<<<<< HEAD
     // 🔥 解析 userBrands 参数
     const brandArray = userBrands 
       ? (Array.isArray(userBrands) ? userBrands : userBrands.split(',').map(b => b.trim()).filter(Boolean))
@@ -107,6 +112,11 @@ router.get('/list', async (req, res) => {
     
     if (brandArray.length > 0 && !brandArray.includes('all') && !brandArray.includes('ALL')) {
       // 🔥 普通用户 - 只查询有权限的品牌
+=======
+    if (userBrands && userBrands !== 'all') {
+      // 用户有特定品牌权限
+      const brandArray = userBrands.split(',').map(b => b.trim());
+>>>>>>> main
       const placeholders = brandArray.map((_, i) => `:brand${i}`).join(', ');
       
       query = `
@@ -124,16 +134,22 @@ router.get('/list', async (req, res) => {
         bindParams[`brand${i}`] = brand;
       });
       
+<<<<<<< HEAD
       console.log(`✅ 普通用户模式 - 查询品牌: ${brandArray.join(', ')}`);
       
     } else {
       // 🔥 管理员或无权限信息 - 查询所有品牌
+=======
+    } else {
+      // 用户是管理员或查看所有品牌
+>>>>>>> main
       query = `
         SELECT 
           COMPANY_SYSID as brandCode,
           COMPANY_ABNAME as brandName,
           COMPANY_FNAME as fullName
         FROM APP_CMS.BAS_COMPANY
+<<<<<<< HEAD
         WHERE COMPANY_SYSID IS NOT NULL
         ORDER BY COMPANY_SYSID
       `;
@@ -142,6 +158,14 @@ router.get('/list', async (req, res) => {
     }
 
     console.log('📊 执行SQL查询:', { bindParams });
+=======
+        WHERE COMPANY_SYSID IN ('18405', '18405-1', '18405-2', '18405-3', '18405-4', '18405-5')
+        ORDER BY COMPANY_SYSID
+      `;
+    }
+
+    console.log('📊 执行SQL查询:', { userBrands, bindParams });
+>>>>>>> main
 
     const result = await connection.execute(query, bindParams);
     
@@ -151,7 +175,11 @@ router.get('/list', async (req, res) => {
       fullName: row[2] || ''
     }));
 
+<<<<<<< HEAD
     console.log(`✅ 返回 ${brandList.length} 个品牌:`, brandList.map(b => `${b.brandCode}(${b.brandName})`).join(', '));
+=======
+    console.log(`✅ 返回 ${brandList.length} 个品牌`);
+>>>>>>> main
 
     res.json({
       success: true,
@@ -173,4 +201,8 @@ router.get('/list', async (req, res) => {
   }
 });
 
+<<<<<<< HEAD
 export default router;
+=======
+export default router;
+>>>>>>> main

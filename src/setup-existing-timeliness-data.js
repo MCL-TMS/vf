@@ -160,7 +160,11 @@ if (needsSetup) {
   console.log('请运行以下命令：');
   console.log(`  node parse-timeliness-excel-to-json.js "${targetExcel}"\n`);
   console.log('或通过API上传：');
+<<<<<<< HEAD
   console.log('  curl -X POST http://localhost:3001/api/upload/timeliness-excel \\');
+=======
+  console.log('  curl -X POST /api/upload/timeliness-excel \\');
+>>>>>>> main
   console.log(`    -F "file=@${targetExcelPath}" \\`);
   console.log('    -F "brand=all"\n');
   

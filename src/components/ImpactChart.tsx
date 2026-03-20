@@ -2,7 +2,11 @@ import { useState, useMemo, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
+<<<<<<< HEAD
 import { Package, TrendingUp, AlertTriangle, Activity, Info, ExternalLink, BarChart3 } from "lucide-react";
+=======
+import { Package, TrendingUp, AlertTriangle, Activity, Info, ExternalLink, Calculator, BarChart3 } from "lucide-react";
+>>>>>>> main
 import { brandPlatformCrossData, platformsData, getPlatformKPIData } from "../data/platformData";
 import { getAllCourierBaseExceptionRates, generateExceptionRateReport, getCourierBaseExceptionRate } from "../utils/baseExceptionRateCalculator";
 import { ExceptionsRealDataCard } from "./ExceptionsRealDataCard";
@@ -75,6 +79,10 @@ export function ImpactChart({
   
   const [hoveredPath, setHoveredPath] = useState<string | null>(null);
   const [selectedExceptionType, setSelectedExceptionType] = useState<string | null>(null);
+<<<<<<< HEAD
+=======
+  const [showCalculationDetails, setShowCalculationDetails] = useState(false);
+>>>>>>> main
   const [flowApiData, setFlowApiData] = useState(null);
   const [flowApiLoading, setFlowApiLoading] = useState(false);
   const [flowApiError, setFlowApiError] = useState(null);
@@ -164,7 +172,11 @@ export function ImpactChart({
             // 尝试直接连接后端服务器
             try {
               console.log('🔄 [ImpactChart] 尝试直接连接后端服务器...');
+<<<<<<< HEAD
               const directUrl = `http://localhost:3001/api/overview/flow-analysis?${params.toString()}`;
+=======
+              const directUrl = `${window.location.origin}/api/overview/flow-analysis?${params.toString()}`;
+>>>>>>> main
               console.log('🔄 [ImpactChart] 直接连接URL:', directUrl);
               
               const directResponse = await fetch(directUrl, {
@@ -895,7 +907,11 @@ export function ImpactChart({
                     
                     // 测试2: 直接后端连接
                     console.log('🔍 [API调试] 测试2: 直接后端连接');
+<<<<<<< HEAD
                     const directUrl = 'http://localhost:3001/api/overview/flow-analysis?dateFrom=2025-08-19&dateTo=2025-08-27';
+=======
+                    const directUrl = `${window.location.origin}/api/overview/flow-analysis?dateFrom=2025-08-19&dateTo=2025-08-27`;
+>>>>>>> main
                     console.log('🔍 [API调试] 直接URL:', directUrl);
                     
                     let directResult = '❌ 直接连接失败';
@@ -968,10 +984,106 @@ export function ImpactChart({
           }`}>
             {useRealData ? (flowApiData ? '真实数据' : '连接中...') : '模拟数据'}
           </Badge>
+<<<<<<< HEAD
+=======
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setShowCalculationDetails(!showCalculationDetails)}
+            className="ml-4 text-maersk-blue hover:bg-functional-bright-blue"
+          >
+            <Calculator className="h-4 w-4 mr-1" />
+            计算详情
+          </Button>
+>>>>>>> main
         </CardTitle>
       </CardHeader>
       
       <CardContent>
+<<<<<<< HEAD
+=======
+        {/* 基础异常率计算详情 */}
+        {showCalculationDetails && (
+          <div className="mb-6 p-4 bg-functional-bright-grey rounded-lg border border-functional-light-grey">
+            <h4 className="font-medium text-maersk-black mb-3 flex items-center gap-2">
+              <BarChart3 className="h-4 w-4 text-maersk-blue" />
+              基础异常率计算详情
+            </h4>
+            
+            {/* 计算方法说明 */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+              <div className="p-3 bg-maersk-white rounded border border-functional-light-grey">
+                <h5 className="text-sm font-medium text-maersk-black mb-2">🧮 计算方法</h5>
+                <div className="text-xs text-functional-mid-grey space-y-1">
+                  <p><strong>数据来源:</strong> 过去30天历史订单数据</p>
+                  <p><strong>计算公式:</strong> 基础异常率 = 总异常订单数 / 总订单数</p>
+                  <p><strong>平滑处理:</strong> 80%当前数据 + 20%历史基准</p>
+                  <p><strong>异常值处理:</strong> 限制在基准值的0.5-2倍范围内</p>
+                </div>
+              </div>
+              
+              <div className="p-3 bg-maersk-white rounded border border-functional-light-grey">
+                <h5 className="text-sm font-medium text-maersk-black mb-2">📊 当前异常率</h5>
+                <div className="space-y-2">
+                  {COURIERS.map(courier => (
+                    <div key={courier} className="flex items-center justify-between text-xs">
+                      <span className="text-functional-mid-grey">
+                        {courier === 'ZTO' ? '🚛' : '✈️'} {COURIER_DISPLAY_NAMES[courier] || courier}:
+                      </span>
+                      <div className="flex items-center space-x-2">
+                        <span className="font-medium text-maersk-black">
+                          {(baseExceptionRates[courier] * 100).toFixed(2)}%
+                        </span>
+                        <div className={`w-2 h-2 rounded-full ${
+                          baseExceptionRates[courier] > 0.10 ? 'bg-accent-mid-red' : 'bg-accent-mid-green'
+                        }`}></div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* 报告摘要 */}
+            <div className="p-3 bg-maersk-white rounded border border-functional-light-grey">
+              <h5 className="text-sm font-medium text-maersk-black mb-2">📋 异常率分析报告</h5>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3 text-xs">
+                <div className="text-center">
+                  <div className="font-medium text-maersk-blue">{exceptionRateReport.summary.totalCouriers}</div>
+                  <div className="text-functional-mid-grey">参与快递商</div>
+                </div>
+                <div className="text-center">
+                  <div className="font-medium text-accent-mid-orange">
+                    {(exceptionRateReport.summary.averageExceptionRate * 100).toFixed(1)}%
+                  </div>
+                  <div className="text-functional-mid-grey">平均异常率</div>
+                </div>
+                <div className="text-center">
+                  <div className="font-medium text-accent-mid-red">{exceptionRateReport.summary.highestRiskCourier}</div>
+                  <div className="text-functional-mid-grey">最高风险</div>
+                </div>
+                <div className="text-center">
+                  <div className="font-medium text-accent-mid-green">{exceptionRateReport.summary.lowestRiskCourier}</div>
+                  <div className="text-functional-mid-grey">最低风险</div>
+                </div>
+              </div>
+              
+              {/* 建议 */}
+              {exceptionRateReport.recommendations.length > 0 && (
+                <div className="mt-3 p-2 bg-accent-bright-orange rounded text-xs">
+                  <div className="font-medium text-accent-dark-orange mb-1">💡 优化建议:</div>
+                  <ul className="text-accent-dark-orange space-y-1">
+                    {exceptionRateReport.recommendations.slice(0, 2).map((rec, index) => (
+                      <li key={index}>• {rec}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+>>>>>>> main
         {/* 统计概览 */}
         <div className="grid grid-cols-3 gap-4 mb-6">
           <div className="text-center p-3 bg-functional-bright-blue rounded-lg border border-functional-light-blue">
@@ -1131,7 +1243,13 @@ export function ImpactChart({
                           查看监控
                         </Button>
                       </div>
+<<<<<<< HEAD
                       
+=======
+                      <p className="text-xs text-functional-mid-grey mt-1">
+                        {type.description} (阈值: {type.threshold})
+                      </p>
+>>>>>>> main
                     </div>
                   </div>
                 ))}

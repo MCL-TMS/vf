@@ -518,7 +518,11 @@ export function OverviewDashboard({
                     />
                     <div>
                       <div className="font-medium text-accent-dark-orange">{exception.name}</div>
+<<<<<<< HEAD
                       
+=======
+                      <div className="text-xs text-functional-mid-grey">{exception.description}</div>
+>>>>>>> main
                     </div>
                   </div>
                   <div className="text-right">
@@ -588,7 +592,11 @@ export function OverviewDashboard({
                       </div>
                       
                       {/* 进度条显示占比 */}
+<<<<<<< HEAD
                       <Progress value={parseFloat(courier.percentage)} className="h-2" />
+=======
+                      <Progress value={parseFloat(courier.percentage)} className="h-3" />
+>>>>>>> main
                       
                       {/* 详细数据 */}
                       <div className="bg-muted/30 rounded-lg p-3 space-y-2">

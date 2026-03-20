@@ -55,10 +55,17 @@ const menuItems = [
     subItems: [
       { id: "overview-dashboard", label: "总览", icon: Home },
       { id: "overview-logistics", label: "物流监控", icon: Truck },
+<<<<<<< HEAD
       { id: "overview-regional", label: "地域分析", icon: Map, hidden: true },  // 🔒 隐藏未完成功能
       { id: "overview-exceptions", label: "异常监控", icon: AlertTriangle, hidden: false },  // 🔒 隐藏未完成功能
       { id: "overview-trends", label: "趋势分析", icon: TrendingUp, hidden: true },  // 🔒 隐藏未完成功能
       { id: "overview-weight", label: "重量分析", icon: Scale, hidden: true }  // 🔒 隐藏未完成功能
+=======
+      { id: "overview-regional", label: "地域分析", icon: Map },
+      { id: "overview-exceptions", label: "异常监控", icon: AlertTriangle },
+      { id: "overview-trends", label: "趋势分析", icon: TrendingUp },
+      { id: "overview-weight", label: "重量分析", icon: Scale }
+>>>>>>> main
     ]
   },
   {
@@ -66,7 +73,10 @@ const menuItems = [
     label: "4PL Management",
     icon: Settings,
     hasSubmenu: true,
+<<<<<<< HEAD
     hidden: true,
+=======
+>>>>>>> main
     subItems: [
       { id: "4pl-carrier-performance", label: "承运商绩效", icon: Award },
       { id: "4pl-time-efficiency", label: "时效分析", icon: Clock },
@@ -76,19 +86,40 @@ const menuItems = [
       { id: "4pl-vendor-management", label: "供应商管理", icon: Users }
     ]
   },
+<<<<<<< HEAD
+=======
+  // 🔧 调试工具（始终显示，方便开发和调试）
+  {
+    id: "debug",
+    label: "🔧 Dev Tools",
+    icon: Settings,
+    hasSubmenu: true,
+    subItems: [
+      { id: "debug-auth", label: "认证调试", icon: User }
+    ]
+  },
+>>>>>>> main
   {
     id: "schedules",
     label: "Schedules",
     icon: Calendar,
+<<<<<<< HEAD
     hasSubmenu: false,
     hidden: true  // 🔒 隐藏未完成功能
+=======
+    hasSubmenu: false
+>>>>>>> main
   },
   {
     id: "fulfillment",
     label: "myFulfillment",
     icon: Truck,
+<<<<<<< HEAD
     hasSubmenu: false,
     hidden: true  // 🔒 隐藏未完成功能
+=======
+    hasSubmenu: false
+>>>>>>> main
   }
 ];
 
@@ -113,6 +144,13 @@ export function Sidebar({ onMenuSelect, activeMenu: externalActiveMenu }: Sideba
     if (currentActiveMenu && currentActiveMenu.startsWith("4pl-")) {
       setExpandedMenus(prev => new Set(prev).add("4pl-management"));
     }
+<<<<<<< HEAD
+=======
+    // 确保当活跃菜单是 debug 的子菜单时，debug 菜单保持展开
+    if (currentActiveMenu && currentActiveMenu.startsWith("debug-")) {
+      setExpandedMenus(prev => new Set(prev).add("debug"));
+    }
+>>>>>>> main
   }, [currentActiveMenu]);
 
   const handleMenuClick = (menuId: string, hasSubmenu: boolean = false) => {
@@ -173,9 +211,13 @@ export function Sidebar({ onMenuSelect, activeMenu: externalActiveMenu }: Sideba
 
       {/* 导航菜单 - 添加滚动支持 */}
       <nav className="flex-1 p-4 space-y-2 overflow-y-auto">
+<<<<<<< HEAD
         {menuItems
           .filter(item => !item.hidden)  // 🔒 过滤掉隐藏的菜单项
           .map((item) => (
+=======
+        {menuItems.map((item) => (
+>>>>>>> main
           <div key={item.id}>
             {item.hasSubmenu ? (
               <Collapsible 
@@ -201,9 +243,13 @@ export function Sidebar({ onMenuSelect, activeMenu: externalActiveMenu }: Sideba
                   </Button>
                 </CollapsibleTrigger>
                 <CollapsibleContent className="space-y-1 mt-2">
+<<<<<<< HEAD
                   {item.subItems
                     ?.filter(subItem => !subItem.hidden)  // 🔒 过滤掉隐藏的子菜单项
                     .map((subItem) => (
+=======
+                  {item.subItems?.map((subItem) => (
+>>>>>>> main
                     <Button
                       key={subItem.id}
                       variant="ghost"
