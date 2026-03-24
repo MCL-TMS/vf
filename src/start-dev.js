@@ -109,11 +109,11 @@ function startBackend() {
       if (output.includes('API 服务器已启动') || 
           output.includes('Server running') || 
           output.includes('listening on')) {
-<<<<<<< HEAD
+
         log('✅ 后端服务启动成功: http://localhost:3001', 'green');
-=======
+
         log('✅ 后端服务启动成功: http://127.0.0.1:3001', 'green');
->>>>>>> main
+
         resolve(backend);
       }
       // 显示后端日志
@@ -215,15 +215,15 @@ async function main() {
     log('\n' + '='.repeat(60), 'green');
     log('🎉 服务启动成功！', 'green');
     log('', 'reset');
-<<<<<<< HEAD
+
     log('📊 后端 API:    http://localhost:3001', 'cyan');
     log('🌐 前端应用:    http://localhost:5173', 'cyan');
     log('🔍 健康检查:    http://localhost:3001/health', 'cyan');
-=======
+
     log('📊 后端 API:    http://127.0.0.1:3001', 'cyan');
     log('🌐 前端应用:    http://localhost:5173', 'cyan');
     log('🔍 健康检查:    http://127.0.0.1:3001/health', 'cyan');
->>>>>>> main
+
     log('', 'reset');
     log('💡 提示:', 'yellow');
     log('  - 查看前端连接状态指示器验证 API 连接', 'reset');

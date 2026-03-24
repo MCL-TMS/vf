@@ -65,6 +65,8 @@ export function TopToolbar({
   const accessibleBrands = getAccessibleBrands();
   const isOverviewDashboard = activeMenu === 'overview-dashboard';
 
+
+
   const handleDateRangeChange = (range: { from: string; to: string }) => {
     console.log('TopToolbar received date range:', range);
     if (range?.from && range?.to) {
@@ -207,10 +209,10 @@ export function TopToolbar({
         <div className="flex items-center space-x-2">
           <Label className="text-sm text-functional-mid-grey whitespace-nowrap">品牌:</Label>
           <Select value={selectedBrand || "all"} onValueChange={onBrandChange}>
-            <SelectTrigger className="w-32 h-8 text-sm border-functional-light-grey">
+            <SelectTrigger className="w-32 h-8 text-sm border-functional-light-grey bg-white">
               <SelectValue placeholder="选择品牌" />
             </SelectTrigger>
-            <SelectContent>
+            <SelectContent className="bg-white border border-functional-light-grey shadow-md rounded-lg">
               <SelectItem value="all">全部品牌</SelectItem>
               {accessibleBrands.map((brand) => (
                 <SelectItem key={brand.code} value={brand.code}>
@@ -228,10 +230,10 @@ export function TopToolbar({
             value={selectedPlatform || "all"} 
             onValueChange={onPlatformChange || (() => {})}
           >
-            <SelectTrigger className="w-32 h-8 text-sm border-functional-light-grey">
+            <SelectTrigger className="w-32 h-8 text-sm border-functional-light-grey bg-white">
               <SelectValue placeholder="选择平台" />
             </SelectTrigger>
-            <SelectContent>
+            <SelectContent className="bg-white border border-functional-light-grey shadow-md rounded-lg">
               <SelectItem value="all">全部平台</SelectItem>
               {platformOptions.map((platform) => (
                 <SelectItem key={platform.code} value={platform.code}>
@@ -249,10 +251,10 @@ export function TopToolbar({
             value={selectedSelfFlag || "Y"} 
             onValueChange={onSelfFlagChange || (() => {})}
           >
-            <SelectTrigger className="w-28 h-8 text-sm border-functional-light-grey">
+            <SelectTrigger className="w-28 h-8 text-sm border-functional-light-grey bg-white">
               <SelectValue placeholder="选择类型" />
             </SelectTrigger>
-            <SelectContent>
+            <SelectContent className="bg-white border border-functional-light-grey shadow-md rounded-lg">
               <SelectItem value="Y">自管</SelectItem>
               <SelectItem value="N">非自管</SelectItem>
               <SelectItem value="all">全部</SelectItem>
@@ -305,7 +307,7 @@ export function TopToolbar({
         {/* 总览页面(overview-dashboard)：隐藏 */}
         {/* 物流监控页面(overview-logistics)：显示导出按钮 */}
         {/* 其他页面：显示导出按钮 */}
-        <div className={`flex items-center space-x-2 ${isOverviewDashboard ? 'hidden' : ''}`}>
+        <div className={`flex items-center space-x-2 ${isOverviewDashboard|| activeMenu === 'overview-exceptions' ? 'hidden' : ''}`}>
           {/* 导入按钮 - 所有页面都隐藏 */}
           <Button
             variant="outline"

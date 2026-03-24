@@ -70,32 +70,22 @@ import logisticsRouter from './routes/logistics-esm.js';  // 🔥 使用ES6模�
 import uploadRouter from './routes/upload.js';  // 🔥 文件上传路由
 import authRouter from './routes/auth-esm.js';  // 🔥 认证路由 (ES6版本)
 import brandsRouter from './routes/brands-esm.js';  // 🔥 品牌映射路由 (ES6版本)
-<<<<<<< HEAD
 import platformsRouter from './routes/platforms-esm.js';  // 🔥 平台映射路由 (ES6版本)
 import orderDetailsRouter from './routes/order-details.mjs';  // 🔥 订单明细导出路由 (MJS版本)
 import exceptionAnalysisRouter from './routes/exception-analysis.js';  // 🔥 异常监控分析路由
-=======
-import orderDetailsRouter from './routes/order-details.mjs';  // 🔥 订单明细导出路由 (MJS版本)
->>>>>>> main
 // import regionalRouter from './routes/regional.js';
 // import trendsRouter from './routes/trends.js';
 
 // 注册API路由
 app.use('/api/auth', authRouter);  // 🔥 注册认证路由（必须在其他路由之前）
 app.use('/api/brands', brandsRouter);  // 🔥 品牌映射路由
-<<<<<<< HEAD
 app.use('/api/platform', platformsRouter);  // 🔥 平台映射路由
-=======
->>>>>>> main
 app.use('/api/overview', overviewRouter);
 app.use('/api/overview', overviewWithTrendsRouter);
 app.use('/api/logistics', logisticsRouter);  // 🔥 关键：注册物流路由（ES6版本）
 app.use('/api/upload', uploadRouter);  // 🔥 文件上传路由
 app.use('/api/order-details', orderDetailsRouter);  // 🔥 订单明细导出路由
-<<<<<<< HEAD
 app.use('/api/exception-analysis', exceptionAnalysisRouter);  // 🔥 异常监控分析路由
-=======
->>>>>>> main
 // app.use('/api/regional', regionalRouter);    // 地域分析路由
 // app.use('/api/trends', trendsRouter);        // 趋势分析路由
 

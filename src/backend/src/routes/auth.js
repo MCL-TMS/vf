@@ -28,11 +28,7 @@ router.get('/login', (req, res) => {
       }
     },
     example: `
-<<<<<<< HEAD
 fetch('http://localhost:3001/api/auth/login', {
-=======
-fetch('/api/auth/login', {
->>>>>>> main
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({ userId: 'admin', password: 'admin123' })

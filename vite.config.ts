@@ -1,19 +1,11 @@
 
   import { defineConfig } from 'vite';
-<<<<<<< HEAD
   import react from '@vitejs/plugin-react';
   import tailwindcss from '@tailwindcss/vite';
   import path from 'path';
 
   export default defineConfig({
     plugins: [react(), tailwindcss()],
-=======
-  import react from '@vitejs/plugin-react-swc';
-  import path from 'path';
-
-  export default defineConfig({
-    plugins: [react()],
->>>>>>> main
     resolve: {
       extensions: ['.js', '.jsx', '.ts', '.tsx', '.json'],
       alias: {
@@ -51,11 +43,7 @@
     },
     build: {
       target: 'esnext',
-<<<<<<< HEAD
       outDir: 'build',
-=======
-      outDir: 'dist',
->>>>>>> main
     },
     server: {
       port: 3000,

@@ -771,9 +771,7 @@ export const KPIDetailDialog: React.FC<KPIDetailDialogProps> = ({
                                       {adjustedCount} 单
                                     </Badge>
                                   </div>
-                                  <div className="text-xs text-accent-dark-orange">
-                                    阈值: {exception.threshold}
-                                  </div>
+
                                 </div>
                               );
                             })}

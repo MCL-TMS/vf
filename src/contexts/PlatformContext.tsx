@@ -57,15 +57,11 @@ export const PlatformProvider: React.FC<PlatformProviderProps> = ({ children }) 
       setIsLoading(true);
       setError(null);
       
-<<<<<<< HEAD
       // 🔥 修复：安全访问 import.meta.env
       const isDev = typeof import.meta !== 'undefined' && import.meta.env?.DEV;
       const apiUrl = isDev 
         ? 'http://localhost:3001/api/platform/mappings'
         : '/api/platform/mappings';
-=======
-      const apiUrl = '/api/platform/mappings';
->>>>>>> main
       
       console.log('🏪 [PlatformContext] 请求平台映射:', apiUrl);
       

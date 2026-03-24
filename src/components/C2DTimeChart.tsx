@@ -756,39 +756,6 @@ export function C2DTimeChart({ selectedBrand, apiData, isLoading = false, access
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>C2D指标说明</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-sm text-muted-foreground space-y-3">
-              <div>
-                <h5 className="font-medium text-foreground mb-1">C2D (Customer to Delivery):</h5>
-                <p>从消费者付款到最终签收的完整配送时间，包含所有环节</p>
-              </div>
-              
-              <div>
-                <h5 className="font-medium text-foreground mb-1">时效分类标准：</h5>
-                <ul className="space-y-1 list-disc list-inside ml-2">
-                  <li><span className="text-green-600">1d</span>：1天内送达（当日达）</li>
-                  <li><span className="text-blue-600">2d</span>：2天内送达（次日达）</li>
-                  <li><span className="text-yellow-600">3d</span>：3天内送达（标准配送）</li>
-                  <li><span className="text-red-600">3+d</span>：超过3天（延期配送）</li>
-                </ul>
-              </div>
-
-              <div>
-                <h5 className="font-medium text-foreground mb-1">快递商表现评级：</h5>
-                <ul className="space-y-1 list-disc list-inside ml-2">
-                  <li><span className="text-green-600">优秀</span>：完成率 ≥ 100%</li>
-                  <li><span className="text-blue-600">良好</span>：完成率 ≥ 90%</li>
-                  <li><span className="text-yellow-600">一般</span>：完成率 ≥ 80%</li>
-                  <li><span className="text-red-600">待改进</span>：完成率 &lt; 80%</li>
-                </ul>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
       </div>
 
       {/* C2D指标说明 */}
