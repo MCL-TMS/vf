@@ -83,11 +83,11 @@ try {
   console.log('🎯 下一步操作：\n');
   console.log('1. 生成JSON缓存（二选一）：\n');
   console.log('   方式A - 通过API上传：');
-<<<<<<< HEAD
+
   console.log('     curl -X POST http://localhost:3001/api/upload/timeliness-excel \\');
-=======
+
   console.log('     curl -X POST /api/upload/timeliness-excel \\');
->>>>>>> main
+
   console.log(`       -F "file=@${excelFilePath}" \\`);
   console.log('       -F "brand=all"\n');
   console.log('   方式B - 运行解析脚本：');

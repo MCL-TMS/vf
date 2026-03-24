@@ -711,39 +711,6 @@ export function S2DTimeChart({ selectedBrand, apiData, isLoading = false, access
               </CardContent>
             </Card>
 
-            <Card>
-              <CardHeader>
-                <CardTitle>S2D指标说明</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="text-sm text-muted-foreground space-y-3">
-                  <div>
-                    <h5 className="font-medium text-foreground mb-1">S2D (Send to Delivery):</h5>
-                    <p>从发运出库到最终签收的配送时间，反映快递商配送能力</p>
-                  </div>
-                  
-                  <div>
-                    <h5 className="font-medium text-foreground mb-1">时效分类标准：</h5>
-                    <ul className="space-y-1 list-disc list-inside ml-2">
-                      <li><span className="text-green-600">24H</span>：发运后24小时内签收（极速）</li>
-                      <li><span className="text-blue-600">48H</span>：发运后24-48小时签收（标准）</li>
-                      <li><span className="text-yellow-600">72H</span>：发运后48-72小时签收（一般）</li>
-                      <li><span className="text-red-600">72H+</span>：发运后超过72小时（延迟）</li>
-                    </ul>
-                  </div>
-
-                  <div>
-                    <h5 className="font-medium text-foreground mb-1">快递商表现评级：</h5>
-                    <ul className="space-y-1 list-disc list-inside ml-2">
-                      <li><span className="text-green-600">优秀</span>：完成率 ≥ 100%</li>
-                      <li><span className="text-blue-600">良好</span>：完成率 ≥ 90%</li>
-                      <li><span className="text-yellow-600">一般</span>：完成率 ≥ 80%</li>
-                      <li><span className="text-red-600">待改进</span>：完成率 &lt; 80%</li>
-                    </ul>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
           </div>
 
           {/* 说明信息 */}

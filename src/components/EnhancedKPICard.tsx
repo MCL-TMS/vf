@@ -40,11 +40,7 @@ export function EnhancedKPICard({ data, onDetailClick }: EnhancedKPICardProps) {
 
   return (
     <Card 
-<<<<<<< HEAD
       className={`bg-white hover:shadow-lg transition-all duration-200 cursor-pointer group ${
-=======
-      className={`hover:shadow-lg transition-all duration-200 cursor-pointer group ${
->>>>>>> main
         isNullValue ? 'border-functional-light-grey bg-functional-bright-grey' : 'border-functional-light-grey'
       }`}
       onClick={() => onDetailClick && onDetailClick(data)}
@@ -80,9 +76,7 @@ export function EnhancedKPICard({ data, onDetailClick }: EnhancedKPICardProps) {
                             {exception.count}
                           </Badge>
                         </div>
-                        <div className="text-muted-foreground">
-                          阈值: {exception.threshold}
-                        </div>
+
                       </div>
                     ))}
                   </div>
@@ -256,7 +250,7 @@ export function EnhancedKPICard({ data, onDetailClick }: EnhancedKPICardProps) {
             <Button
               variant="ghost"
               size="sm"
-              className="w-full h-6 text-xs opacity-0 group-hover:opacity-100 transition-opacity"
+              className="w-full h-6 text-xs opacity-0 group-hover:opacity-100 transition-opacity hover:bg-functional-bright-grey hover:text-functional-dark-grey focus-visible:ring-0 focus-visible:outline-none focus-visible:border-transparent !important"
               onClick={(e) => {
                 e.stopPropagation(); // 阻止事件冒泡，避免重复触发
                 onDetailClick(data);

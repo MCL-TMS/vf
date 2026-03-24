@@ -62,11 +62,7 @@ export function TimeEfficiencyAnalysis({ selectedBrand, selectedSelfFlag, dateRa
 
       console.log(`🔍 自动执行${analysisType}时效分析:`, requestBody);
 
-<<<<<<< HEAD
       const response = await fetch('http://localhost:3001/api/upload/analyze-timeliness', {
-=======
-      const response = await fetch('/api/upload/analyze-timeliness', {
->>>>>>> main
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -134,11 +130,7 @@ export function TimeEfficiencyAnalysis({ selectedBrand, selectedSelfFlag, dateRa
 
             console.log(`📡 请求竞品 ${competitorBrand} 数据:`, requestBody);
 
-<<<<<<< HEAD
             const response = await fetch('http://localhost:3001/api/upload/analyze-timeliness', {
-=======
-            const response = await fetch('/api/upload/analyze-timeliness', {
->>>>>>> main
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json'
@@ -258,9 +250,9 @@ export function TimeEfficiencyAnalysis({ selectedBrand, selectedSelfFlag, dateRa
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-xl font-semibold">时效分析</h2>
-          <p className="text-sm text-muted-foreground mt-1">
+        {/*  <p className="text-sm text-muted-foreground mt-1">
             基于预配置时效标准的Plan vs Actual对比分析
-          </p>
+          </p> */}
         </div>
         <div className="flex items-center space-x-3">
           {selectedBrand && (
@@ -268,12 +260,7 @@ export function TimeEfficiencyAnalysis({ selectedBrand, selectedSelfFlag, dateRa
               🎯 当前筛选品牌: {selectedBrand}
             </Badge>
           )}
-          
-          {dateRange && (
-            <Badge variant="outline" className="text-sm">
-              时间范围: {dateRange.from} 至 {dateRange.to}
-            </Badge>
-          )}
+
           
           {isLoading && (
             <Badge variant="outline" className="text-sm">
@@ -307,9 +294,9 @@ export function TimeEfficiencyAnalysis({ selectedBrand, selectedSelfFlag, dateRa
               <h3 className="text-lg font-medium mb-4 flex items-center space-x-2">
                 <span>📋</span>
                 <span>S2D 数据表格</span>
-                <Badge variant="secondary" className="text-xs">
+               {/* <Badge variant="secondary" className="text-xs">
                   发运到签收时效统计
-                </Badge>
+                </Badge>*/}
               </h3>
               <CourierPerformanceTable 
                 selectedBrand={selectedBrand} 
@@ -325,9 +312,9 @@ export function TimeEfficiencyAnalysis({ selectedBrand, selectedSelfFlag, dateRa
               <h3 className="text-lg font-medium mb-4 flex items-center space-x-2">
                 <span>📊</span>
                 <span>S2D 图表分析</span>
-                <Badge variant="secondary" className="text-xs">
+                {/*  <Badge variant="secondary" className="text-xs">
                   可视化趋势与分布
-                </Badge>
+                </Badge>*/}
               </h3>
               <S2DTimeChart 
                 selectedBrand={selectedBrand} 
@@ -346,9 +333,9 @@ export function TimeEfficiencyAnalysis({ selectedBrand, selectedSelfFlag, dateRa
               <h3 className="text-lg font-medium mb-4 flex items-center space-x-2">
                 <span>📋</span>
                 <span>C2D 数据表格</span>
-                <Badge variant="secondary" className="text-xs">
+               {/*   <Badge variant="secondary" className="text-xs">
                   付款到签收时效统计
-                </Badge>
+                </Badge>*/}
               </h3>
               <CourierPerformanceTable 
                 selectedBrand={selectedBrand} 
@@ -364,9 +351,9 @@ export function TimeEfficiencyAnalysis({ selectedBrand, selectedSelfFlag, dateRa
               <h3 className="text-lg font-medium mb-4 flex items-center space-x-2">
                 <span>📈</span>
                 <span>C2D 图表分析</span>
-                <Badge variant="secondary" className="text-xs">
+               {/*  <Badge variant="secondary" className="text-xs">
                   可视化趋势与分布
-                </Badge>
+                </Badge>*/}
               </h3>
               <C2DTimeChart 
                 selectedBrand={selectedBrand} 

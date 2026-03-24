@@ -215,8 +215,8 @@ export function ForwardingAnalysis({
         provincesByCourier[courierName].push({
           province: p.destProvince || p.province,
           count: p.count,
-          percentage: p.percentage,
-          recommendation: `建议优化${courierName}在${p.destProvince || p.province}的配送路线`
+          percentage: p.percentage
+         // recommendation: `建议优化${courierName}在${p.destProvince || p.province}的配送路线`
         });
       });
 
@@ -332,7 +332,7 @@ export function ForwardingAnalysis({
           <TabsContent value="address" className="space-y-4">
             <div className="text-center">
               <div className="text-lg font-semibold text-maersk-black">改地址转寄分布</div>
-              <div className="text-sm text-functional-mid-grey">按快递公司统计（TR_FLAG='Y'）</div>
+             {/* <div className="text-sm text-functional-mid-grey">按快递公司统计（TR_FLAG='Y'）</div> */}
             </div>
             <div className="h-64">
               <ResponsiveContainer width="100%" height="100%">
@@ -376,7 +376,7 @@ export function ForwardingAnalysis({
           <TabsContent value="outrange" className="space-y-4">
             <div className="text-center">
               <div className="text-lg font-semibold text-maersk-black">超区转寄分布</div>
-              <div className="text-sm text-functional-mid-grey">按快递公司和目的省份统计（TR_FLAG2='Y'）</div>
+              {/*  <div className="text-sm text-functional-mid-grey">按快递公司和目的省份统计（TR_FLAG2='Y'）</div>*/}
             </div>
 
             {/* 快递公司占比概览 */}

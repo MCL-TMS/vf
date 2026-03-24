@@ -56,10 +56,11 @@ export function DatePickerWithRange({
     <div className={cn("grid gap-2", className)}>
       <Popover open={isOpen} onOpenChange={setIsOpen}>
         <PopoverTrigger asChild>
+          {/* 🔥 给触发按钮也加上白色背景 */}
           <Button
             variant={"outline"}
             className={cn(
-              "w-[280px] justify-start text-left font-normal",
+              "w-[280px] justify-start text-left font-normal bg-white", // 新增 bg-white
               "border-functional-light-grey"
             )}
           >
@@ -67,7 +68,11 @@ export function DatePickerWithRange({
             <span>{formatDateRange()}</span>
           </Button>
         </PopoverTrigger>
-        <PopoverContent className="w-80 p-4" align="start">
+        {/* 🔥 核心修改：添加白色背景、边框、阴影 */}
+        <PopoverContent 
+          className="w-80 p-4 bg-white border border-functional-light-grey shadow-md rounded-lg" 
+          align="start"
+        >
           <div className="space-y-4">
             <div className="space-y-2">
               <label className="text-sm font-medium">开始日期</label>
@@ -75,7 +80,7 @@ export function DatePickerWithRange({
                 type="date"
                 value={fromDate}
                 onChange={(e) => setFromDate(e.target.value)}
-                className="w-full"
+                className="w-full bg-white border-functional-light-grey" // 输入框也加白色背景
               />
             </div>
             <div className="space-y-2">
@@ -84,7 +89,7 @@ export function DatePickerWithRange({
                 type="date"
                 value={toDate}
                 onChange={(e) => setToDate(e.target.value)}
-                className="w-full"
+                className="w-full bg-white border-functional-light-grey" // 输入框也加白色背景
               />
             </div>
             <div className="flex justify-end space-x-2">
@@ -92,6 +97,7 @@ export function DatePickerWithRange({
                 variant="outline"
                 onClick={() => setIsOpen(false)}
                 size="sm"
+                className="bg-white border-functional-light-grey" // 取消按钮加白色背景
               >
                 取消
               </Button>

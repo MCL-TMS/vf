@@ -1,6 +1,4 @@
 # 忽略 node_modules 文件夹（核心）
 node_modules/
-<<<<<<< HEAD
+
 node_modules
-=======
->>>>>>> main
