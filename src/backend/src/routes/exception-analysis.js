@@ -483,7 +483,7 @@ router.get('/carrier/:carrierName', async (req, res) => {
       percentage: row.PERCENTAGE
     }));
     
-    console.log(`✅ [Exception-Analysis] ${carrierName} 异常详情查询完成:`, {
+    console.log('✅ [Exception-Analysis] %s 异常详情查询完成:', carrierName, {
       异常记录数: details.length
     });
     

@@ -78,6 +78,30 @@ const QueryUtils = {
     NO_UPDATE_48H: `(t.IS48H_FLAG = 'Y')`
   },
 
+  /**
+   * 规范化查询参数，避免字符串 / 数组 类型混淆
+   * - 接受 string 或 string[]，忽略其他类型
+   * - 去除首尾空格
+   */
+  normalizeStringOrStringArray(value) {
+    if (value == null) {
+      return undefined;
+    }
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      return trimmed === '' ? undefined : trimmed;
+    }
+    if (Array.isArray(value)) {
+      const normalized = value
+        .filter(v => typeof v === 'string')
+        .map(v => v.trim())
+        .filter(v => v);
+      return normalized.length > 0 ? normalized : undefined;
+    }
+    // 其他类型一律忽略
+    return undefined;
+  },
+
   // ✅ 异步构建筛选条件和参数（支持动态品牌映射）
   async buildFiltersAsync(queryParams, brand, platform, selfFlag, userBrands) {
     let brandFilter = '';
@@ -87,15 +111,18 @@ const QueryUtils = {
     // 🔥 获取动态品牌映射
     const BRAND_MAPPING = await getBrandMapping();
     
+    // 先对 brand 做类型规范化，避免字符串 / 数组混用导致的类型混淆
+    const normalizedBrand = this.normalizeStringOrStringArray(brand);
+    
     // 🔐 品牌筛选：支持单个品牌、多个品牌（数组或逗号分隔字符串）
-    if (brand && brand !== 'all') {
+    if (normalizedBrand && normalizedBrand !== 'all') {
       // 🔥 新增：如果是逗号分隔的字符串，拆分为数组
-      let brandArray = brand;
-      if (typeof brand === 'string' && brand.includes(',')) {
-        brandArray = brand.split(',').map(b => b.trim()).filter(b => b);
+      let brandArray = normalizedBrand;
+      if (typeof normalizedBrand === 'string' && normalizedBrand.includes(',')) {
+        brandArray = normalizedBrand.split(',').map(b => b.trim()).filter(b => b);
         console.log(`🔧 [Brand Filter] 检测到逗号分隔字符串，拆分为数组:`, brandArray);
-      } else if (!Array.isArray(brand)) {
-        brandArray = [brand]; // 单个品牌也转为数组统一处理
+      } else if (!Array.isArray(normalizedBrand)) {
+        brandArray = [normalizedBrand]; // 单个品牌也转为数组统一处理
       }
       
       if (brandArray.length > 1) {

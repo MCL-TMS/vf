@@ -38,10 +38,41 @@ const PORT = process.env.API_PORT || 3001;
 /**
  * 中间件配置
  */
-app.use(helmet({
-  contentSecurityPolicy: false, // 开发环境下禁用CSP
-  crossOriginEmbedderPolicy: false
-}));
+const isProduction = process.env.NODE_ENV === 'production';
+const helmetConfig = isProduction
+  ? {
+      // 在生产环境启用内容安全策略，尽量减少 XSS 等风险
+      contentSecurityPolicy: {
+        useDefaults: true,
+        directives: {
+          "default-src": ["'self'"],
+          "script-src": ["'self'"],
+          "style-src": ["'self'"],
+          "img-src": ["'self'", "data:"],
+          "connect-src": ["'self'"],
+          "frame-ancestors": ["'self'"]
+        }
+      },
+      // 如需兼容跨源资源（如 WebAssembly、SharedArrayBuffer），可根据需要调整该配置
+      crossOriginEmbedderPolicy: false
+    }
+  : {
+      // 开发环境下放宽 CSP（如需完全禁用可将 contentSecurityPolicy 设为 false）
+      contentSecurityPolicy: {
+        useDefaults: true,
+        directives: {
+          "default-src": ["'self'", "*"],
+          "script-src": ["'self'", "'unsafe-inline'", "'unsafe-eval'", "*"],
+          "style-src": ["'self'", "'unsafe-inline'", "*"],
+          "img-src": ["'self'", "data:", "*"],
+          "connect-src": ["'self'", "*"],
+          "frame-ancestors": ["'self'"]
+        }
+      },
+      crossOriginEmbedderPolicy: false
+    };
+
+app.use(helmet(helmetConfig));
 
 app.use(compression()); // 启用Gzip压缩
 

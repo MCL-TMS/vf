@@ -13,6 +13,9 @@ const fs = require('fs');
 const XLSX = require('xlsx');
 const timelinessFileStore = require('../utils/timelinessFileStore');
 
+// 统一的上传文件根目录，应与 multer 的存储目录保持一致
+const UPLOAD_ROOT = path.resolve(__dirname, '../../uploads');
+
 const router = express.Router();
 
 /**
@@ -486,8 +489,17 @@ router.post('/timeliness-excel', upload.single('file'), async (req, res) => {
     } finally {
       // 清理临时文件
       try {
-        if (fs.existsSync(file.path)) {
-          fs.unlinkSync(file.path);
+        if (file && file.path) {
+          // 将文件路径限制在受控的上传目录中，防止路径遍历
+          const safePath = path.resolve(UPLOAD_ROOT, path.basename(file.path));
+
+          if (safePath.startsWith(UPLOAD_ROOT)) {
+            if (fs.existsSync(safePath)) {
+              fs.unlinkSync(safePath);
+            }
+          } else {
+            console.warn('检测到潜在的非法文件路径，已跳过删除:', file.path);
+          }
         }
       } catch (cleanupError) {
         console.warn('清理临时文件失败:', cleanupError.message);

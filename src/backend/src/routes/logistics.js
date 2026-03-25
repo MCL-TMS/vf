@@ -103,7 +103,7 @@ const QueryUtils = {
           queryParams[`userBrand${index}`] = code;
         });
         
-        console.log(`🔐 [Brand Filter] 全部品牌 - 基于用户权限 (${userBrands.length}个):`, userBrands);
+        console.log('🔐 [Brand Filter] 全部品牌 - 基于用户权限 (%d个): %o', userBrands.length, userBrands);
       } else {
         // 回退：如果没有userBrands，使用VF品牌范围
         brandFilter = ` AND t.CUSTOMERNO IN ('18405', '18405-1', '18405-2', '18405-3', '18405-4', '18405-5')`;
@@ -182,7 +182,7 @@ const QueryUtils = {
           queryParams[`userBrand${index}`] = code;
         });
         
-        console.log(`🔐 [Brand Filter] 全部品牌 - 基于用户权限 (${userBrands.length}个):`, userBrands);
+        console.log('🔐 [Brand Filter] 全部品牌 - 基于用户权限 (%d个): %o', userBrands.length, userBrands);
       } else {
         // 回退：如果没有userBrands，使用VF品牌范围
         brandFilter = ` AND t.CUSTOMERNO IN ('18405', '18405-1', '18405-2', '18405-3', '18405-4', '18405-5')`;

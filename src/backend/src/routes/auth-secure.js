@@ -314,6 +314,7 @@ router.post('/logout',
  * }
  */
 router.post('/change-password',
+  loginRateLimiter,
   authenticateToken,
   async (req, res) => {
     let connection;
