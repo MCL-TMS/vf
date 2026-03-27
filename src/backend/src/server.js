@@ -5,6 +5,7 @@ import compression from 'compression';
 import morgan from 'morgan';
 import dotenv from 'dotenv';
 import { initializeDatabase, closeDatabase } from './config/database.js';
+import { forceHttps, securityHeaders } from './middleware/httpsMiddleware.mjs'; // 🔥 新增：HTTPS中间件
 
 dotenv.config();
 
@@ -12,10 +13,21 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 const HOST = process.env.HOST || 'localhost';
 
-// 中间件配置
-app.use(helmet()); // 安全头
-app.use(compression()); // 压缩响应
-app.use(morgan('combined')); // 日志记录
+// 🔥 安全中间件配置（顺序很重要！）
+// 1. HTTPS强制（生产环境）
+app.use(forceHttps);
+
+// 2. 安全响应头
+app.use(securityHeaders);
+
+// 3. Helmet安全头（保留原有）
+app.use(helmet());
+
+// 4. 压缩响应
+app.use(compression());
+
+// 5. 日志记录
+app.use(morgan('combined'));
 
 // CORS配置
 const corsOptions = {
@@ -76,16 +88,21 @@ import exceptionAnalysisRouter from './routes/exception-analysis.js';  // 🔥 �
 // import regionalRouter from './routes/regional.js';
 // import trendsRouter from './routes/trends.js';
 
+// 🔥 新增：导入JWT认证中间件（需要先创建ES6版本）
+import { verifyToken } from './middleware/authMiddleware.mjs';
+
 // 注册API路由
-app.use('/api/auth', authRouter);  // 🔥 注册认证路由（必须在其他路由之前）
-app.use('/api/brands', brandsRouter);  // 🔥 品牌映射路由
-app.use('/api/platform', platformsRouter);  // 🔥 平台映射路由
-app.use('/api/overview', overviewRouter);
-app.use('/api/overview', overviewWithTrendsRouter);
-app.use('/api/logistics', logisticsRouter);  // 🔥 关键：注册物流路由（ES6版本）
-app.use('/api/upload', uploadRouter);  // 🔥 文件上传路由
-app.use('/api/order-details', orderDetailsRouter);  // 🔥 订单明细导出路由
-app.use('/api/exception-analysis', exceptionAnalysisRouter);  // 🔥 异常监控分析路由
+app.use('/api/auth', authRouter);  // 🔥 注册认证路由（必须在其他路由之前，不需要认证）
+app.use('/api/brands', brandsRouter);  // 🔥 品牌映射路由（不需要认证，用于登录前加载选项）
+app.use('/api/platform', platformsRouter);  // 🔥 平台映射路由（不需要认证）
+
+// 🔥 受保护的路由 - 需要JWT认证
+app.use('/api/overview', verifyToken, overviewRouter);  // 总览数据（需要认证）
+app.use('/api/overview', verifyToken, overviewWithTrendsRouter);  // 总览趋势数据（需要认证）
+app.use('/api/logistics', verifyToken, logisticsRouter);  // 🔥 关键：注册物流路由（需要认证）
+app.use('/api/upload', verifyToken, uploadRouter);  // 🔥 文件上传路由（需要认证）
+app.use('/api/order-details', verifyToken, orderDetailsRouter);  // 🔥 订单明细导出路由（需要认证）
+app.use('/api/exception-analysis', verifyToken, exceptionAnalysisRouter);  // 🔥 异常监控分析路由（需要认证）
 // app.use('/api/regional', regionalRouter);    // 地域分析路由
 // app.use('/api/trends', trendsRouter);        // 趋势分析路由
 

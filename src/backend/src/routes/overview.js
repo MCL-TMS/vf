@@ -154,7 +154,9 @@ const QueryUtils = {
           queryParams[`userBrand${index}`] = code;
         });
         
-        console.log(`🔐 [Brand Filter] 全部品牌 - 基于用户权限 (${userBrands.length}个):`, userBrands);
+        //console.log(`🔐 [Brand Filter] 全部品牌 - 基于用户权限 (${userBrands.length}个):`, userBrands);
+        // 使用显式占位符 %d (代表数字) 或 %s (代表字符串)
+        console.log('🔐 [Brand Filter] 全部品牌 - 基于用户权限 (%d个):', userBrands.length, userBrands);
       } else {
         // 回退：如果没有userBrands，使用VF品牌范围（包含18405-5）
         brandFilter = ` AND t.CUSTOMERNO IN ('18405', '18405-1', '18405-2', '18405-3', '18405-4', '18405-5')`;

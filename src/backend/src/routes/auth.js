@@ -7,6 +7,8 @@ const express = require('express');
 const router = express.Router();
 const oracledb = require('oracledb');
 const { getConnection, releaseConnection } = require('../config/database-api');
+const { generateToken } = require('../middleware/authMiddleware'); // 🔥 JWT生成函数
+const { loginRateLimit } = require('../middleware/rateLimitMiddleware'); // 🔥 防暴力破解中间件
 
 /**
  * GET /api/auth/login
@@ -57,10 +59,11 @@ fetch('http://localhost:3001/api/auth/login', {
  *     userName: string,
  *     customerNo: string  // 可查看的品牌范围（逗号分隔）
  *   },
+ *   token: string,  // 🔥 JWT token
  *   error?: string
  * }
  */
-router.post('/login', async (req, res) => {
+router.post('/login', loginRateLimit, async (req, res) => {
   let connection;
   
   try {
@@ -113,7 +116,7 @@ router.post('/login', async (req, res) => {
       });
     }
 
-    // 验证密码（简单字符串对比，实际生产环境应该使用加密）
+    // 验证密码
     if (user.PASSWORD !== password) {
       return res.status(401).json({
         success: false,
@@ -121,14 +124,41 @@ router.post('/login', async (req, res) => {
       });
     }
 
-    // 登录成功，返回用户信息
+    // 🔥 登录成功，清除尝试记录
+    if (req.clearLoginAttempts) {
+      req.clearLoginAttempts();
+    }
+
+    // 🔥 准备JWT载荷
+    const customerNos = user.CUSTOMERNO ? user.CUSTOMERNO.split(',').map(c => c.trim()).filter(Boolean) : [];
+    const isAdmin = customerNos.length === 0 || customerNos.includes('all') || customerNos.includes('ALL');
+
+    const tokenPayload = {
+      userId: user.USERID,
+      userName: user.USER_NAME_C,
+      customerNo: user.CUSTOMERNO || '',
+      customerNos: isAdmin ? [] : customerNos,
+      isAdmin: isAdmin
+    };
+
+    // 🔥 生成JWT token
+    const token = generateToken(tokenPayload);
+
+    console.log('✅ [Auth] 用户登录成功，生成token:', {
+      userId: user.USERID,
+      isAdmin: isAdmin,
+      tokenLength: token.length
+    });
+
+    // 登录成功，返回用户信息和token
     return res.json({
       success: true,
       user: {
         userId: user.USERID,
         userName: user.USER_NAME_C,
         customerNo: user.CUSTOMERNO || '' // 可查看的品牌范围
-      }
+      },
+      token: token // 🔥 返回JWT token
     });
 
   } catch (error) {

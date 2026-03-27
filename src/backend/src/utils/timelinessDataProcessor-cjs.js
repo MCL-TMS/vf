@@ -36,13 +36,21 @@ async function analyzeTimelinessPerformance(options = {}) {
     } = options;
 
     console.log(`\n🔥🔥🔥 ========== ${analysisType}时效分析开始 (CommonJS版本) ========== 🔥🔥🔥\n`);
-    console.log(`🔍 开始${analysisType}时效分析（文件存储模式）:`, {
+   // console.log(`🔍 开始${analysisType}时效分析（文件存储模式）:`, {
+    //  dateRange,
+   //   selectedBrand,
+    //  selectedSelfFlag,
+    //  selectedCarrier,
+    //  analysisType,
+    //  userBrands // 🔥 打印userBrands
+   // });
+
+    console.log('🔍 开始分析，分析类型:', analysisType, '配置详情:', {
       dateRange,
       selectedBrand,
       selectedSelfFlag,
       selectedCarrier,
-      analysisType,
-      userBrands // 🔥 打印userBrands
+      userBrands
     });
 
     // ✅ 根据analysisType选择执行S2D或C2D分析
@@ -214,7 +222,12 @@ async function analyzeS2DPerformance(options = {}) {
 
     const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
 
-    console.log('📊 SQL查询参数:', { params, whereClause: whereClause.substring(0, 200) + '...' });
+    //console.log('📊 SQL查询参数:', { params, whereClause: whereClause.substring(0, 200) + '...' });
+
+    // ✅ 正确做法 (确认为纯静态字符串作为第一个参数)
+    console.log('📊 SQL查询参数');
+    console.log('Params:', params);
+    console.log('WhereClause:', whereClause.substring(0, 200) + '...');
 
     // 查询订单统计（按品牌+快递商+城市分组）
     // 🔥 使用JOIN BAS_COMPANY表动态获取品牌名称

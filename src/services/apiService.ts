@@ -31,6 +31,11 @@ class ApiServiceClass {
   private readonly HEALTH_CHECK_CACHE_DURATION = 30000; // 30秒缓存
   private performanceMetrics: ApiPerformanceMetrics[] = [];
   private readonly MAX_METRICS_HISTORY = 50; // 保留最近50条记录
+  private getAuthToken: (() => string | null) | null = null; // 🔥 获取access token的回调函数
+  private getRefreshTokenFn: (() => string | null) | null = null; // 🔥 新增：获取refresh token
+  private refreshTokenFn: (() => Promise<boolean>) | null = null; // 🔥 新增：刷新token函数
+  private isRefreshing = false; // 🔥 新增：防止并发刷新
+  private failedRequestsQueue: Array<() => void> = []; // 🔥 新增：失败请求队列
 
   // 🔥 重要修复：添加品牌和平台映射配置，与后端保持一致
   private readonly BRAND_MAPPING = {
@@ -40,6 +45,40 @@ class ApiServiceClass {
     'VANS': '18405-3',
     'TIMBERLAND': '18405-4'
   };
+
+  // 🔥 新增：设置获取Auth Token的回调函数
+  // 这个方法需要在应用初始化时调用，传入AuthContext的getToken方法
+  setAuthTokenGetter(getter: () => string | null): void {
+    this.getAuthToken = getter;
+    console.log('✅ [ApiService] Auth token getter已设置');
+  }
+
+  // 🔥 新增：设置refresh token相关回调
+  setRefreshTokenCallbacks(
+    getRefreshToken: () => string | null,
+    refreshToken: () => Promise<boolean>
+  ): void {
+    this.getRefreshTokenFn = getRefreshToken;
+    this.refreshTokenFn = refreshToken;
+    console.log('✅ [ApiService] Refresh token callbacks已设置');
+  }
+
+  // 🔥 新增：获取认证请求头
+  private getAuthHeaders(): HeadersInit {
+    const headers: HeadersInit = {
+      'Content-Type': 'application/json',
+    };
+
+    // 如果有token，添加Authorization头
+    if (this.getAuthToken) {
+      const token = this.getAuthToken();
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+    }
+
+    return headers;
+  }
 
   // 🔥 关键修复：平台映射配置 - 前端选择器值到后端数据库查询值的映射
   // 这个映射将前端的平台选择转换为后端能够识别的查询条件
@@ -348,14 +387,120 @@ class ApiServiceClass {
     }
   }
 
-  // 增强的fetch方法，包含性能监控
+  // 🔥 新增：处理Token刷新（带队列机制）
+  private async handleTokenRefresh(): Promise<boolean> {
+    // 如果已经在刷新中，将请求加入队列
+    if (this.isRefreshing) {
+      console.log('🔄 [ApiService] Token刷新进行中，请求加入队列');
+      
+      return new Promise<boolean>((resolve) => {
+        this.failedRequestsQueue.push(() => {
+          // 刷新完成后，队列中的请求会被唤醒
+          resolve(true);
+        });
+      });
+    }
+
+    if (!this.refreshTokenFn) {
+      console.error('❌ [ApiService] Refresh token函数未设置');
+      return false;
+    }
+
+    this.isRefreshing = true;
+
+    try {
+      console.log('🔄 [ApiService] 开始刷新token...');
+      const success = await this.refreshTokenFn();
+
+      if (success) {
+        console.log('✅ [ApiService] Token刷新成功，处理队列中的请求');
+        
+        // 刷新成功，处理队列中的所有请求
+        this.failedRequestsQueue.forEach(callback => callback());
+        this.failedRequestsQueue = [];
+        
+        return true;
+      } else {
+        console.error('❌ [ApiService] Token刷新失败');
+        
+        // 刷新失败，清空队列
+        this.failedRequestsQueue = [];
+        
+        return false;
+      }
+    } finally {
+      this.isRefreshing = false;
+    }
+  }
+
+  // 增强的fetch方法，包含性能监控和401拦截
   private async performanceFetch(url: string, options: RequestInit = {}): Promise<Response> {
     const startTime = performance.now();
     let success = false;
     let error: string | undefined;
 
     try {
-      const response = await fetch(url, options);
+      // 🔥 自动添加认证头
+      const headers = options.headers ? { ...options.headers } : {};
+      const authHeaders = this.getAuthHeaders();
+      
+      // 合并headers，保留原有headers但添加Authorization
+      const mergedHeaders = {
+        ...authHeaders,
+        ...headers // 原有headers优先级更高，可以覆盖默认headers
+      };
+
+      const response = await fetch(url, {
+        ...options,
+        headers: mergedHeaders
+      });
+      
+      // 🔥 检查是否token过期（401错误）
+      if (response.status === 401) {
+        try {
+          const errorData = await response.clone().json();
+          
+          // 检查是否是TOKEN_EXPIRED错误
+          if (errorData.code === 'TOKEN_EXPIRED') {
+            console.log('⚠️ [ApiService] Access token已过期，尝试自动刷新...');
+
+            // 尝试刷新token
+            const refreshed = await this.handleTokenRefresh();
+
+            if (refreshed) {
+              console.log('🔄 [ApiService] Token刷新成功，重试原始请求');
+
+              // 重试原始请求（使用新的token）
+              const retryHeaders = {
+                ...this.getAuthHeaders(), // 获取新的token
+                ...headers
+              };
+              
+              const retryResponse = await fetch(url, {
+                ...options,
+                headers: retryHeaders
+              });
+              
+              success = retryResponse.ok;
+              if (!retryResponse.ok) {
+                error = `HTTP ${retryResponse.status} ${retryResponse.statusText}`;
+              }
+              
+              const endTime = performance.now();
+              this.recordPerformance(url, options.method || 'GET', startTime, endTime, success, error);
+              
+              return retryResponse;
+            } else {
+              console.error('❌ [ApiService] Token刷新失败，返回401错误');
+              // Token刷新失败，返回原始401响应
+            }
+          }
+        } catch (e) {
+          console.error('❌ [ApiService] 解析401错误响应失败:', e);
+          // 解析失败，返回原始响应
+        }
+      }
+      
       success = response.ok;
       if (!response.ok) {
         error = `HTTP ${response.status} ${response.statusText}`;

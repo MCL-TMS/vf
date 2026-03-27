@@ -24,11 +24,18 @@ import { Toaster } from "./components/ui/sonner";
 // 主应用组件（需要认证）
 function AppContent() {
   // 认证相关
-  const { user, isAuthenticated, logout, isLoading } = useAuth();
+  const { user, isAuthenticated, logout, isLoading, getToken, getRefreshToken, refreshToken } = useAuth(); // 🔥 新增：getRefreshToken和refreshToken
 
   const [apiConnectionStatus, setApiConnectionStatus] = React.useState<'checking' | 'connected' | 'disconnected' | 'error'>('disconnected');
   const [lastConnectionCheck, setLastConnectionCheck] = React.useState<Date>(new Date());
   
+  // 🔥 在组件挂载时设置API Service的token getter和refresh token回调
+  useEffect(() => {
+    ApiService.setAuthTokenGetter(getToken);
+    ApiService.setRefreshTokenCallbacks(getRefreshToken, refreshToken); // 🔥 新增：设置refresh token回调
+    console.log('✅ [App] API Service完全配置完成（包含token刷新）');
+  }, [getToken, getRefreshToken, refreshToken]);
+
   const {
     activeMenu,
     setActiveMenu,
@@ -335,7 +342,7 @@ function AppContent() {
                   )}
                   <div className="flex items-center space-x-2">
                     <span>Maersk</span>
-                    <span className="text-maersk-blue font-medium">© 2026</span>
+                    <span className="text-maersk-blue font-medium">© 2025</span>
                   </div>
                 </div>
               </div>

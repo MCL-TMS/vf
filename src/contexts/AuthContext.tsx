@@ -149,6 +149,8 @@ export interface User {
   userName: string;        // 用户说明
   customerNos: string[];   // 可查看的品牌列表（从CUSTOMERNO字段解析）
   isAdmin: boolean;        // 是否管理员（如果customerNos为空或包含'all'）
+  token?: string;          // 🔥 Access Token
+  refreshToken?: string;   // 🔥 新增：Refresh Token
 }
 
 // 认证上下文接口
@@ -156,10 +158,14 @@ interface AuthContextType {
   user: User | null;
   isAuthenticated: boolean;
   login: (userId: string, password: string) => Promise<{ success: boolean; error?: string }>;
-  logout: () => void;
+  logout: () => Promise<void>; // 🔥 改为异步
   hasAccessToBrand: (brandCode: string) => boolean;
   getAccessibleBrands: () => string[];
   isLoading: boolean;
+  getToken: () => string | null;
+  getRefreshToken: () => string | null; // 🔥 新增
+  refreshToken: () => Promise<boolean>; // 🔥 新增
+  updateToken: (newToken: string) => void; // 🔥 新增
 }
 
 // 创建认证上下文
@@ -268,6 +274,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           userName: data.user.userName,
           customerNos: isAdmin ? [] : customerNos, // 管理员 customerNos 为空表示可查看全部
           isAdmin,
+          token: data.token, // 🔥 新增：保存token
+          refreshToken: data.refreshToken, // 🔥 新增：保存refreshToken
         };
 
         setUser(userInfo);
@@ -290,7 +298,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   // 登出函数
-  const logout = () => {
+  const logout = async (): Promise<void> => {
     setUser(null);
     sessionStorage.removeItem(AUTH_STORAGE_KEY);
     // 同时清理可能存在的localStorage旧数据
@@ -315,6 +323,88 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return user.customerNos;
   }, [user]);
 
+  // 🔥 新增：获取token的方法
+  const getToken = (): string | null => {
+    return user?.token || null;
+  };
+
+  // 🔥 新增：获取refreshToken的方法
+  const getRefreshToken = (): string | null => {
+    return user?.refreshToken || null;
+  };
+
+  // 🔥 新增：刷新token的方法
+  const refreshToken = async (): Promise<boolean> => {
+    const currentRefreshToken = getRefreshToken();
+    
+    if (!currentRefreshToken || !user) {
+      console.error('❌ [AuthContext] 无refreshToken或用户信息，无法刷新token');
+      return false;
+    }
+
+    try {
+      console.log('🔄 [AuthContext] 开始刷新token...');
+      
+      // 开发环境下使用完整URL
+      const isDevelopment = import.meta.env.DEV;
+      const apiBaseUrl = isDevelopment ? 'http://localhost:3001' : '';
+      
+      const response = await fetch(`${apiBaseUrl}/api/auth/refresh`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ refreshToken: currentRefreshToken }),
+      });
+
+      if (!response.ok) {
+        console.error('❌ [AuthContext] Token刷新失败，状态码:', response.status);
+        
+        // 如果refresh token也无效，清除登录状态
+        if (response.status === 401) {
+          await logout();
+        }
+        
+        return false;
+      }
+
+      const data = await response.json();
+
+      if (data.success && data.token) {
+        // 更新token，保持其他用户信息不变
+        const updatedUser: User = {
+          ...user,
+          token: data.token,
+          // 如果后端返回了新的refresh token（轮换策略），也更新
+          refreshToken: data.refreshToken || user.refreshToken,
+        };
+
+        setUser(updatedUser);
+        sessionStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(updatedUser));
+
+        console.log('✅ [AuthContext] Token刷新成功');
+        return true;
+      }
+
+      console.error('❌ [AuthContext] Token刷新失败，服务器返回数据异常');
+      return false;
+    } catch (error) {
+      console.error('❌ [AuthContext] Token刷新异常:', error);
+      return false;
+    }
+  };
+
+  // 🔥 新增：更新token的方法
+  const updateToken = (newToken: string): void => {
+    if (!user) return;
+    const updatedUser: User = {
+      ...user,
+      token: newToken,
+    };
+    setUser(updatedUser);
+    sessionStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(updatedUser));
+  };
+
   const value: AuthContextType = {
     user,
     isAuthenticated: !!user,
@@ -323,6 +413,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     hasAccessToBrand,
     getAccessibleBrands,
     isLoading,
+    getToken,
+    getRefreshToken,
+    refreshToken,
+    updateToken,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
