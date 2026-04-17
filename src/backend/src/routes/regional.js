@@ -7,6 +7,9 @@
 const express = require('express');
 const router = express.Router();
 const { getConnection, DateHelper } = require('../config/database-api');
+const { getBrandMapping } = require('../utils/brandMapping');
+const { buildScopedBrandFilter, getAuthorizedCustomerNos } = require('../utils/brandScope');
+const { ERROR_CODES, sendError, sendRouteError } = require('../utils/apiError');
 
 /**
  * 获取省份分布统计
@@ -17,18 +20,24 @@ router.get('/provinces', async (req, res) => {
   
   try {
     const { dateFrom, dateTo, brand, selfFlag } = req.query;
+    const authorizedCustomerNos = getAuthorizedCustomerNos(req.user);
     
     if (!dateFrom || !dateTo) {
-      return res.status(400).json({
-        error: '缺少必需的日期参数'
+      return sendError(res, req, {
+        status: 400,
+        code: ERROR_CODES.VALIDATION_ERROR,
+        error: '缺少必需的日期参数',
+        details: { requiredFields: ['dateFrom', 'dateTo'] }
       });
     }
 
     // 参数验证
     if (!DateHelper.isValidDateString(dateFrom) || !DateHelper.isValidDateString(dateTo)) {
-      return res.status(400).json({
+      return sendError(res, req, {
+        status: 400,
+        code: ERROR_CODES.VALIDATION_ERROR,
         error: '日期格式无效',
-        message: '请提供有效的YYYY-MM-DD格式日期'
+        details: { expectedFormat: 'YYYY-MM-DD' }
       });
     }
 
@@ -41,18 +50,17 @@ router.get('/provinces', async (req, res) => {
       dateFrom: dateFrom,
       dateTo: dateTo
     };
-    
-    if (brand && brand !== 'all') {
-      const brandMapping = {
-        'DICKIES': '18405',
-        'TNF': '18405-1', 
-        'ICEBREAKER': '18405-2',
-        'VANS': '18405-3',
-        'TIMBERLAND': '18405-4'
-      };
-      brandFilter = ` AND t.CUSTOMERNO = :brand`;
-      params.brand = brandMapping[brand] || brand;
-    }
+
+    const shouldLoadBrandMapping = Boolean((brand && brand !== 'all') || (Array.isArray(authorizedCustomerNos) && authorizedCustomerNos.length > 0));
+    const brandMapping = shouldLoadBrandMapping ? await getBrandMapping() : {};
+    brandFilter = buildScopedBrandFilter({
+      queryParams: params,
+      requestedBrands: brand,
+      authorizedCustomerNos,
+      brandMapping,
+      fieldName: 't.CUSTOMERNO',
+      paramPrefix: 'brand'
+    });
     
     // 🔥 新增：自管筛选条件
     if (selfFlag && selfFlag !== 'all') {
@@ -94,7 +102,6 @@ router.get('/provinces', async (req, res) => {
       WHERE to_char(t.WMS_OUTBOUND_TIME,'yyyy-mm-dd') >= :dateFrom
         AND to_char(t.WMS_OUTBOUND_TIME,'yyyy-mm-dd') <= :dateTo
         AND t.WMS_OUTBOUND_TIME IS NOT NULL
-        AND t.CUSTOMERNO IN ('18405', '18405-1', '18405-2', '18405-3', '18405-4')
         AND t.DEST_PROVINCE IS NOT NULL
         AND t.TSK_MERGE_NO IS NOT NULL
         ${brandFilter}
@@ -128,10 +135,7 @@ router.get('/provinces', async (req, res) => {
 
   } catch (error) {
     console.error('省份分布查询失败:', error);
-    res.status(500).json({
-      error: '服务器内部错误',
-      message: '获取省份分布数据失败'
-    });
+    return sendRouteError(res, req, error, { fallbackError: '获取省份分布数据失败' });
   } finally {
     if (connection) {
       try {
@@ -152,18 +156,24 @@ router.get('/cities', async (req, res) => {
   
   try {
     const { dateFrom, dateTo, brand, province, selfFlag } = req.query;
+    const authorizedCustomerNos = getAuthorizedCustomerNos(req.user);
     
     if (!dateFrom || !dateTo) {
-      return res.status(400).json({
-        error: '缺少必需的日期参数'
+      return sendError(res, req, {
+        status: 400,
+        code: ERROR_CODES.VALIDATION_ERROR,
+        error: '缺少必需的日期参数',
+        details: { requiredFields: ['dateFrom', 'dateTo'] }
       });
     }
 
     // 参数验证
     if (!DateHelper.isValidDateString(dateFrom) || !DateHelper.isValidDateString(dateTo)) {
-      return res.status(400).json({
+      return sendError(res, req, {
+        status: 400,
+        code: ERROR_CODES.VALIDATION_ERROR,
         error: '日期格式无效',
-        message: '请提供有效的YYYY-MM-DD格式日期'
+        details: { expectedFormat: 'YYYY-MM-DD' }
       });
     }
 
@@ -177,18 +187,17 @@ router.get('/cities', async (req, res) => {
       dateFrom: dateFrom,
       dateTo: dateTo
     };
-    
-    if (brand && brand !== 'all') {
-      const brandMapping = {
-        'DICKIES': '18405',
-        'TNF': '18405-1', 
-        'ICEBREAKER': '18405-2',
-        'VANS': '18405-3',
-        'TIMBERLAND': '18405-4'
-      };
-      brandFilter = ` AND t.CUSTOMERNO = :brand`;
-      params.brand = brandMapping[brand] || brand;
-    }
+
+    const shouldLoadBrandMapping = Boolean((brand && brand !== 'all') || (Array.isArray(authorizedCustomerNos) && authorizedCustomerNos.length > 0));
+    const brandMapping = shouldLoadBrandMapping ? await getBrandMapping() : {};
+    brandFilter = buildScopedBrandFilter({
+      queryParams: params,
+      requestedBrands: brand,
+      authorizedCustomerNos,
+      brandMapping,
+      fieldName: 't.CUSTOMERNO',
+      paramPrefix: 'brand'
+    });
     
     if (province && province !== 'all') {
       provinceFilter = ` AND t.DEST_PROVINCE = :province`;
@@ -236,7 +245,6 @@ router.get('/cities', async (req, res) => {
       WHERE to_char(t.WMS_OUTBOUND_TIME,'yyyy-mm-dd') >= :dateFrom
         AND to_char(t.WMS_OUTBOUND_TIME,'yyyy-mm-dd') <= :dateTo
         AND t.WMS_OUTBOUND_TIME IS NOT NULL
-        AND t.CUSTOMERNO IN ('18405', '18405-1', '18405-2', '18405-3', '18405-4')
         AND t.DEST_PROVINCE IS NOT NULL
         AND t.DEST_CITY IS NOT NULL
         AND t.TSK_MERGE_NO IS NOT NULL
@@ -275,10 +283,7 @@ router.get('/cities', async (req, res) => {
 
   } catch (error) {
     console.error('城市分布查询失败:', error);
-    res.status(500).json({
-      error: '服务器内部错误',
-      message: '获取城市分布数据失败'
-    });
+    return sendRouteError(res, req, error, { fallbackError: '获取城市分布数据失败' });
   } finally {
     if (connection) {
       try {

@@ -7,6 +7,9 @@
 const express = require('express');
 const router = express.Router();
 const { getConnection, DateHelper } = require('../config/database-api');
+const { getBrandMapping } = require('../utils/brandMapping');
+const { buildScopedBrandFilter, getAuthorizedCustomerNos } = require('../utils/brandScope');
+const { ERROR_CODES, sendError, sendRouteError } = require('../utils/apiError');
 
 /**
  * 获取订单趋势数据
@@ -17,27 +20,35 @@ router.get('/orders', async (req, res) => {
   
   try {
     const { dateFrom, dateTo, brand, granularity = 'day', selfFlag } = req.query;
+    const authorizedCustomerNos = getAuthorizedCustomerNos(req.user);
     
     if (!dateFrom || !dateTo) {
-      return res.status(400).json({
-        error: '缺少必需的日期参数'
+      return sendError(res, req, {
+        status: 400,
+        code: ERROR_CODES.VALIDATION_ERROR,
+        error: '缺少必需的日期参数',
+        details: { requiredFields: ['dateFrom', 'dateTo'] }
       });
     }
 
     // 参数验证
     if (!DateHelper.isValidDateString(dateFrom) || !DateHelper.isValidDateString(dateTo)) {
-      return res.status(400).json({
+      return sendError(res, req, {
+        status: 400,
+        code: ERROR_CODES.VALIDATION_ERROR,
         error: '日期格式无效',
-        message: '请提供有效的YYYY-MM-DD格式日期'
+        details: { expectedFormat: 'YYYY-MM-DD' }
       });
     }
 
     // 验证granularity参数
     const validGranularities = ['day', 'week', 'month'];
     if (!validGranularities.includes(granularity)) {
-      return res.status(400).json({
+      return sendError(res, req, {
+        status: 400,
+        code: ERROR_CODES.VALIDATION_ERROR,
         error: '时间粒度参数无效',
-        message: 'granularity参数必须是day、week或month之一'
+        details: { allowedValues: validGranularities }
       });
     }
 
@@ -50,18 +61,17 @@ router.get('/orders', async (req, res) => {
       dateFrom: dateFrom,
       dateTo: dateTo
     };
-    
-    if (brand && brand !== 'all') {
-      const brandMapping = {
-        'DICKIES': '18405',
-        'TNF': '18405-1', 
-        'ICEBREAKER': '18405-2',
-        'VANS': '18405-3',
-        'TIMBERLAND': '18405-4'
-      };
-      brandFilter = ` AND t.CUSTOMERNO = :brand`;
-      params.brand = brandMapping[brand] || brand;
-    }
+
+    const shouldLoadBrandMapping = Boolean((brand && brand !== 'all') || (Array.isArray(authorizedCustomerNos) && authorizedCustomerNos.length > 0));
+    const brandMapping = shouldLoadBrandMapping ? await getBrandMapping() : {};
+    brandFilter = buildScopedBrandFilter({
+      queryParams: params,
+      requestedBrands: brand,
+      authorizedCustomerNos,
+      brandMapping,
+      fieldName: 't.CUSTOMERNO',
+      paramPrefix: 'brand'
+    });
     
     // 🔥 新增：自管筛选条件
     if (selfFlag && selfFlag !== 'all') {
@@ -118,7 +128,6 @@ router.get('/orders', async (req, res) => {
       WHERE to_char(t.WMS_OUTBOUND_TIME,'yyyy-mm-dd') >= :dateFrom
         AND to_char(t.WMS_OUTBOUND_TIME,'yyyy-mm-dd') <= :dateTo
         AND t.WMS_OUTBOUND_TIME IS NOT NULL
-        AND t.CUSTOMERNO IN ('18405', '18405-1', '18405-2', '18405-3', '18405-4')
         AND t.TSK_MERGE_NO IS NOT NULL
         ${brandFilter}
         ${selfFlagFilter}
@@ -153,10 +162,7 @@ router.get('/orders', async (req, res) => {
 
   } catch (error) {
     console.error('订单趋势查询失败:', error);
-    res.status(500).json({
-      error: '服务器内部错误',
-      message: '获取订单趋势数据失败'
-    });
+    return sendRouteError(res, req, error, { fallbackError: '获取订单趋势数据失败' });
   } finally {
     if (connection) {
       try {
@@ -177,27 +183,35 @@ router.get('/performance', async (req, res) => {
   
   try {
     const { dateFrom, dateTo, brand, metric = 'delivery_rate' } = req.query;
+    const authorizedCustomerNos = getAuthorizedCustomerNos(req.user);
     
     if (!dateFrom || !dateTo) {
-      return res.status(400).json({
-        error: '缺少必需的日期参数'
+      return sendError(res, req, {
+        status: 400,
+        code: ERROR_CODES.VALIDATION_ERROR,
+        error: '缺少必需的日期参数',
+        details: { requiredFields: ['dateFrom', 'dateTo'] }
       });
     }
 
     // 参数验证
     if (!DateHelper.isValidDateString(dateFrom) || !DateHelper.isValidDateString(dateTo)) {
-      return res.status(400).json({
+      return sendError(res, req, {
+        status: 400,
+        code: ERROR_CODES.VALIDATION_ERROR,
         error: '日期格式无效',
-        message: '请提供有效的YYYY-MM-DD格式日期'
+        details: { expectedFormat: 'YYYY-MM-DD' }
       });
     }
 
     // 验证metric参数
     const validMetrics = ['delivery_rate', 'exception_rate', 'avg_delivery_time', 'first_dispatch_success_rate'];
     if (!validMetrics.includes(metric)) {
-      return res.status(400).json({
+      return sendError(res, req, {
+        status: 400,
+        code: ERROR_CODES.VALIDATION_ERROR,
         error: '性能指标参数无效',
-        message: 'metric参数必须是delivery_rate、exception_rate、avg_delivery_time或first_dispatch_success_rate之一'
+        details: { allowedValues: validMetrics }
       });
     }
 
@@ -210,18 +224,17 @@ router.get('/performance', async (req, res) => {
       dateFrom: dateFrom,
       dateTo: dateTo
     };
-    
-    if (brand && brand !== 'all') {
-      const brandMapping = {
-        'DICKIES': '18405',
-        'TNF': '18405-1', 
-        'ICEBREAKER': '18405-2',
-        'VANS': '18405-3',
-        'TIMBERLAND': '18405-4'
-      };
-      brandFilter = ` AND t.CUSTOMERNO = :brand`;
-      params.brand = brandMapping[brand] || brand;
-    }
+
+    const shouldLoadBrandMapping = Boolean((brand && brand !== 'all') || (Array.isArray(authorizedCustomerNos) && authorizedCustomerNos.length > 0));
+    const brandMapping = shouldLoadBrandMapping ? await getBrandMapping() : {};
+    brandFilter = buildScopedBrandFilter({
+      queryParams: params,
+      requestedBrands: brand,
+      authorizedCustomerNos,
+      brandMapping,
+      fieldName: 't.CUSTOMERNO',
+      paramPrefix: 'brand'
+    });
     
     // 🔥 新增：自管筛选条件（注意此处使用的是performance接口的selfFlag参数）
     const selfFlagParam = req.query.selfFlag;
@@ -262,7 +275,6 @@ router.get('/performance', async (req, res) => {
       WHERE to_char(t.WMS_OUTBOUND_TIME,'yyyy-mm-dd') >= :dateFrom
         AND to_char(t.WMS_OUTBOUND_TIME,'yyyy-mm-dd') <= :dateTo
         AND t.WMS_OUTBOUND_TIME IS NOT NULL
-        AND t.CUSTOMERNO IN ('18405', '18405-1', '18405-2', '18405-3', '18405-4')
         AND t.TSK_MERGE_NO IS NOT NULL
         ${brandFilter}
         ${selfFlagFilter}
@@ -295,10 +307,7 @@ router.get('/performance', async (req, res) => {
 
   } catch (error) {
     console.error('性能趋势查询失败:', error);
-    res.status(500).json({
-      error: '服务器内部错误',
-      message: '获取性能趋势数据失败'
-    });
+    return sendRouteError(res, req, error, { fallbackError: '获取性能趋势数据失败' });
   } finally {
     if (connection) {
       try {

@@ -9,7 +9,7 @@ yarn-error.log*
 .env.local
 .env.development.local
 .env.test.local
-.env.production.local
+.env.production
 
 # 日志文件
 logs

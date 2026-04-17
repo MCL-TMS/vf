@@ -1,4 +1,6 @@
 import type { DateRange } from '../data/types';
+import { toast } from 'sonner';
+import { ApiClientError, BackendErrorPayload, createApiClientError, shouldLogoutForErrorCode } from './apiError';
 
 interface APIRequestOptions {
   dateRange?: DateRange;
@@ -7,6 +9,31 @@ interface APIRequestOptions {
   selfFlag?: string | null;
   userBrands?: string[]; // 🔥 新增：用户品牌权限
   signal?: AbortSignal;
+}
+
+interface TrendsOrdersOptions extends APIRequestOptions {
+  granularity?: 'day' | 'week' | 'month';
+}
+
+interface TrendsCarriersOptions extends APIRequestOptions {
+  granularity?: 'day' | 'week' | 'month';
+}
+
+interface TrendsExceptionsOptions extends APIRequestOptions {
+  granularity?: 'day' | 'week' | 'month';
+}
+
+interface TrendsForecastOptions extends APIRequestOptions {
+  days?: number;
+}
+
+interface WeightDistributionOptions extends APIRequestOptions {
+  billingType?: 'AR' | 'AP';
+}
+
+interface WeightAnalysisOptions extends APIRequestOptions {
+  weightType?: 'payable' | 'receivable';
+  userId?: string;
 }
 
 interface HealthCheckCache {
@@ -29,13 +56,20 @@ class ApiServiceClass {
   private baseURL = 'http://localhost:3001/api';
   private healthCheckCache: HealthCheckCache | null = null;
   private readonly HEALTH_CHECK_CACHE_DURATION = 30000; // 30秒缓存
+  private readonly FAILED_HEALTH_CHECK_CACHE_DURATION = 1000; // 失败结果仅短暂缓存，避免阻塞后续真实查询
   private performanceMetrics: ApiPerformanceMetrics[] = [];
   private readonly MAX_METRICS_HISTORY = 50; // 保留最近50条记录
+  private authTokenSnapshot: string | null = null;
   private getAuthToken: (() => string | null) | null = null; // 🔥 获取access token的回调函数
   private getRefreshTokenFn: (() => string | null) | null = null; // 🔥 新增：获取refresh token
   private refreshTokenFn: (() => Promise<boolean>) | null = null; // 🔥 新增：刷新token函数
+  private authFailureHandler: ((error: ApiClientError) => Promise<void> | void) | null = null;
   private isRefreshing = false; // 🔥 新增：防止并发刷新
-  private failedRequestsQueue: Array<() => void> = []; // 🔥 新增：失败请求队列
+  private failedRequestsQueue: Array<(success: boolean) => void> = []; // 🔥 新增：失败请求队列
+  private lastProactiveRefreshAt = 0;
+  private readonly PROACTIVE_REFRESH_DEBOUNCE_MS = 5000;
+  private lastToastAt = 0;
+  private lastToastMessage = '';
 
   // 🔥 重要修复：添加品牌和平台映射配置，与后端保持一致
   private readonly BRAND_MAPPING = {
@@ -53,6 +87,10 @@ class ApiServiceClass {
     console.log('✅ [ApiService] Auth token getter已设置');
   }
 
+  setAccessToken(token: string | null): void {
+    this.authTokenSnapshot = token;
+  }
+
   // 🔥 新增：设置refresh token相关回调
   setRefreshTokenCallbacks(
     getRefreshToken: () => string | null,
@@ -63,6 +101,15 @@ class ApiServiceClass {
     console.log('✅ [ApiService] Refresh token callbacks已设置');
   }
 
+  setAuthFailureHandler(handler: (error: ApiClientError) => Promise<void> | void): void {
+    this.authFailureHandler = handler;
+    console.log('✅ [ApiService] Auth failure handler已设置');
+  }
+
+  clearHealthCheckCache(): void {
+    this.healthCheckCache = null;
+  }
+
   // 🔥 新增：获取认证请求头
   private getAuthHeaders(): HeadersInit {
     const headers: HeadersInit = {
@@ -70,14 +117,84 @@ class ApiServiceClass {
     };
 
     // 如果有token，添加Authorization头
-    if (this.getAuthToken) {
-      const token = this.getAuthToken();
-      if (token) {
-        headers['Authorization'] = `Bearer ${token}`;
-      }
+    const token = this.getAuthToken?.() || this.authTokenSnapshot;
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
     }
 
     return headers;
+  }
+
+  private async parseBackendErrorPayload(response: Response): Promise<BackendErrorPayload | null> {
+    const contentType = response.headers.get('content-type');
+    if (!contentType || !contentType.includes('application/json')) {
+      return null;
+    }
+
+    try {
+      return await response.clone().json();
+    } catch {
+      return null;
+    }
+  }
+
+  private notifyGlobalError(error: ApiClientError): void {
+    const shouldToast = [401, 403, 429, 503].includes(error.status);
+    if (!shouldToast) {
+      return;
+    }
+
+    const now = Date.now();
+    const signature = `${error.code}:${error.message}`;
+    if (this.lastToastMessage === signature && now - this.lastToastAt < 3000) {
+      return;
+    }
+
+    this.lastToastMessage = signature;
+    this.lastToastAt = now;
+    toast.error(error.message);
+  }
+
+  private async handleAuthFailure(error: ApiClientError): Promise<void> {
+    if (!shouldLogoutForErrorCode(error.code) || !this.authFailureHandler) {
+      return;
+    }
+
+    await this.authFailureHandler(error);
+  }
+
+  private async throwApiError(response: Response, fallbackError: string): Promise<never> {
+    const payload = await this.parseBackendErrorPayload(response);
+    const apiError = createApiClientError({
+      status: response.status,
+      payload,
+      fallbackError
+    });
+
+    this.notifyGlobalError(apiError);
+    await this.handleAuthFailure(apiError);
+    throw apiError;
+  }
+
+  private async parseApiResponse<T = any>(response: Response, operation: string): Promise<T> {
+    if (!response.ok) {
+      return this.throwApiError(response, `${operation}失败`);
+    }
+
+    const data = await this.safeJsonParse(response, operation);
+    if (data?.success === false) {
+      const apiError = createApiClientError({
+        status: response.status || 500,
+        payload: data,
+        fallbackError: `${operation}失败`
+      });
+
+      this.notifyGlobalError(apiError);
+      await this.handleAuthFailure(apiError);
+      throw apiError;
+    }
+
+    return data as T;
   }
 
   // 🔥 关键修复：平台映射配置 - 前端选择器值到后端数据库查询值的映射
@@ -237,21 +354,15 @@ class ApiServiceClass {
     const timeoutId = setTimeout(() => controller.abort(), 60000); // 60秒超时
 
     try {
-      const response = await fetch(`${this.baseURL}/logistics/order-details/export?${params.toString()}`, {
+      const response = await this.performanceFetch(`${this.baseURL}/logistics/order-details/export?${params.toString()}`, {
+        method: 'GET',
+        headers: this.getAuthHeaders(),
         signal: controller.signal
       });
 
       clearTimeout(timeoutId);
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const result = await response.json();
-      
-      if (!result.success) {
-        throw new Error(result.error || '导出失败');
-      }
+      const result = await this.parseApiResponse<any>(response, '订单明细导出');
 
       return result.data || [];
       
@@ -262,6 +373,37 @@ class ApiServiceClass {
         throw new Error('请求超时，请缩小日期范围或添加更多筛选条件');
       }
       
+      throw error;
+    }
+  }
+
+  /**
+   * 执行时效分析
+   */
+  async analyzeTimeliness(filters: {
+    dateRange?: { from: string; to: string };
+    selectedBrand?: string | null;
+    selectedSelfFlag?: string | null;
+    selectedCarrier?: string | null;
+    analysisType?: string;
+    userBrands?: string[];
+  }): Promise<any> {
+    try {
+      console.log('📊 开始执行时效分析...', filters);
+
+      const response = await this.performanceFetch(`${this.baseURL}/upload/analyze-timeliness`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(filters),
+      });
+
+      const result = await this.parseApiResponse<any>(response, '时效分析');
+
+      return result;
+    } catch (error: any) {
+      console.error('❌ 时效分析执行失败:', error);
       throw error;
     }
   }
@@ -280,7 +422,7 @@ class ApiServiceClass {
     try {
       console.log('📊 开始导出时效分析RawData...', filters);
       
-      const response = await fetch(`${this.baseURL}/upload/export-timeliness-rawdata`, {
+      const response = await this.performanceFetch(`${this.baseURL}/upload/export-timeliness-rawdata`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -288,16 +430,7 @@ class ApiServiceClass {
         body: JSON.stringify(filters),
       });
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || '导出失败');
-      }
-
-      const result = await response.json();
-      
-      if (!result.success) {
-        throw new Error(result.error || '导出失败');
-      }
+      const result = await this.parseApiResponse<any>(response, '时效分析RawData导出');
 
       console.log(`✅ 时效分析RawData获取功: ${result.data?.length || 0} 条`);
       
@@ -394,9 +527,9 @@ class ApiServiceClass {
       console.log('🔄 [ApiService] Token刷新进行中，请求加入队列');
       
       return new Promise<boolean>((resolve) => {
-        this.failedRequestsQueue.push(() => {
+        this.failedRequestsQueue.push((success) => {
           // 刷新完成后，队列中的请求会被唤醒
-          resolve(true);
+          resolve(success);
         });
       });
     }
@@ -416,20 +549,39 @@ class ApiServiceClass {
         console.log('✅ [ApiService] Token刷新成功，处理队列中的请求');
         
         // 刷新成功，处理队列中的所有请求
-        this.failedRequestsQueue.forEach(callback => callback());
+        this.failedRequestsQueue.forEach(callback => callback(true));
         this.failedRequestsQueue = [];
         
         return true;
       } else {
         console.error('❌ [ApiService] Token刷新失败');
         
-        // 刷新失败，清空队列
+        // 刷新失败，通知队列中的请求并清空
+        this.failedRequestsQueue.forEach(callback => callback(false));
         this.failedRequestsQueue = [];
         
         return false;
       }
     } finally {
       this.isRefreshing = false;
+    }
+  }
+
+  private isTokenExpiringSoon(token: string, thresholdSeconds: number = 60): boolean {
+    try {
+      const tokenParts = token.split('.');
+      if (tokenParts.length < 2) return false;
+
+      const payloadBase64 = tokenParts[1].replace(/-/g, '+').replace(/_/g, '/');
+      const payloadJson = atob(payloadBase64);
+      const payload = JSON.parse(payloadJson);
+
+      if (!payload?.exp) return false;
+
+      const nowSeconds = Math.floor(Date.now() / 1000);
+      return payload.exp - nowSeconds <= thresholdSeconds;
+    } catch {
+      return false;
     }
   }
 
@@ -440,6 +592,19 @@ class ApiServiceClass {
     let error: string | undefined;
 
     try {
+      // 优先做“到期前预刷新”，降低请求命中过期token的概率
+      if (this.getAuthToken && this.refreshTokenFn && !url.includes('/api/auth/login') && !url.includes('/api/auth/refresh')) {
+        const currentToken = this.getAuthToken();
+        if (currentToken && this.isTokenExpiringSoon(currentToken, 60)) {
+          const now = Date.now();
+          if (now - this.lastProactiveRefreshAt >= this.PROACTIVE_REFRESH_DEBOUNCE_MS) {
+            this.lastProactiveRefreshAt = now;
+            console.log('⏰ [ApiService] Access token即将过期，执行预刷新');
+            await this.handleTokenRefresh();
+          }
+        }
+      }
+
       // 🔥 自动添加认证头
       const headers = options.headers ? { ...options.headers } : {};
       const authHeaders = this.getAuthHeaders();
@@ -461,7 +626,7 @@ class ApiServiceClass {
           const errorData = await response.clone().json();
           
           // 检查是否是TOKEN_EXPIRED错误
-          if (errorData.code === 'TOKEN_EXPIRED') {
+          if (errorData.code === 'AUTH_TOKEN_EXPIRED') {
             console.log('⚠️ [ApiService] Access token已过期，尝试自动刷新...');
 
             // 尝试刷新token
@@ -523,14 +688,19 @@ class ApiServiceClass {
     const now = Date.now();
     
     // 如果有缓存且未过期，直接返回缓存结果
-    if (this.healthCheckCache && 
-        (now - this.healthCheckCache.timestamp) < this.HEALTH_CHECK_CACHE_DURATION) {
-      return this.healthCheckCache.isHealthy;
+    if (this.healthCheckCache) {
+      const cacheTtl = this.healthCheckCache.isHealthy
+        ? this.HEALTH_CHECK_CACHE_DURATION
+        : this.FAILED_HEALTH_CHECK_CACHE_DURATION;
+
+      if ((now - this.healthCheckCache.timestamp) < cacheTtl) {
+        return this.healthCheckCache.isHealthy;
+      }
     }
     
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 2000); // 2秒超时
+      const timeoutId = setTimeout(() => controller.abort(), 8000); // 健康检查会触发数据库测试，给足容忍时间
       
       const response = await this.performanceFetch(`${this.baseURL}/health`, {
         method: 'GET',
@@ -552,7 +722,7 @@ class ApiServiceClass {
       
       return isHealthy;
     } catch (error: any) {
-      // 更新缓存为失败状态
+      // 失败结果仅短暂缓存，避免登录成功后仍被旧失败状态拦住
       this.healthCheckCache = {
         isHealthy: false,
         timestamp: now
@@ -578,11 +748,7 @@ class ApiServiceClass {
 
       clearTimeout(timeoutId);
 
-      if (!response.ok) {
-        throw new Error(`健康检查失败: ${response.status}`);
-      }
-
-      return await this.safeJsonParse(response, '健康检查');
+      return await this.parseApiResponse(response, '健康检查');
     } catch (error: any) {
       if (error.name === 'AbortError') {
         throw new Error('健康检查超时');
@@ -674,7 +840,8 @@ class ApiServiceClass {
       console.log('📋 [ApiService] Query parameters:', params.toString());
       
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10秒超时
+      const timeoutMs = 180000; // 管理员全量查询耗时较长，避免前端过早超时回落空态
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
       
       const response = await this.performanceFetch(url, {
         method: 'GET',
@@ -686,11 +853,7 @@ class ApiServiceClass {
 
       clearTimeout(timeoutId);
 
-      if (!response.ok) {
-        throw new Error(`API请求失败: ${response.status} ${response.statusText}`);
-      }
-
-      const data = await this.safeJsonParse(response, '总览数据获取（含同比环比）');
+      const data = await this.parseApiResponse<any>(response, '总览数据获取（含同比环比）');
       
       // 🔥 新增：调试 crossAnalysisData 是否包含效率指标
       console.log('🔍 [ApiService] 原始 API 响应 - crossAnalysisData 结构检查:', {
@@ -745,9 +908,13 @@ class ApiServiceClass {
       }
       
       // 如果新的API不存在，回退到原来的API
-      if (error.message.includes('404')) {
+      if (error instanceof ApiClientError && error.status === 404) {
         console.warn('⚠️ [ApiService] 新API不存在，回退到原API');
         return this.getOverviewDataFallback(options);
+      }
+
+      if (error instanceof ApiClientError) {
+        throw error;
       }
       
       if (error.message.includes('fetch')) {
@@ -809,7 +976,8 @@ class ApiServiceClass {
       console.log('🔄 [ApiService] Fallback to original API:', url);
       
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000);
+      const timeoutMs = 180000; // 回退接口同样使用较长超时预算
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
       
       const response = await this.performanceFetch(url, {
         method: 'GET',
@@ -821,11 +989,7 @@ class ApiServiceClass {
 
       clearTimeout(timeoutId);
 
-      if (!response.ok) {
-        throw new Error(`API请求失败: ${response.status} ${response.statusText}`);
-      }
-
-      const data = await this.safeJsonParse(response, '总览数据获取（回退版）');
+      const data = await this.parseApiResponse<any>(response, '总览数据获取（回退版）');
       
       // 添加空的同比环比数据，确保前端兼容性
       if (data.data && data.data.kpi) {
@@ -839,6 +1003,10 @@ class ApiServiceClass {
       
       return data;
     } catch (error: any) {
+      if (error instanceof ApiClientError) {
+        throw error;
+      }
+
       console.error('❌ [ApiService] 回退API也败了:', error);
       throw error;
     }
@@ -846,7 +1014,7 @@ class ApiServiceClass {
 
   // 🔥 修复：获取物流数据，支持异常数据接口
   async getLogisticsData(options: APIRequestOptions = {}): Promise<any> {
-    const { dateRange, brand, selfFlag, signal } = options;
+    const { dateRange, brand, platform, selfFlag, userBrands, signal } = options;
     
     try {
       const params = new URLSearchParams();
@@ -870,6 +1038,16 @@ class ApiServiceClass {
           params.append('brand', mappedBrand);
         }
       }
+
+      if (userBrands && Array.isArray(userBrands) && userBrands.length > 0) {
+        params.append('userBrands', userBrands.join(','));
+        console.log('🔐 [ApiService.getLogisticsData] 传递用户品牌权限:', userBrands.join(','));
+      }
+
+      if (platform && platform !== 'all') {
+        const mappedPlatform = this.PLATFORM_MAPPING[platform as keyof typeof this.PLATFORM_MAPPING] || platform;
+        params.append('platform', mappedPlatform);
+      }
       
       // 🔥 修复：自管筛选参数
       if (selfFlag && selfFlag !== 'all') {
@@ -881,7 +1059,7 @@ class ApiServiceClass {
         params.append('selfFlag', 'Y'); // 仅当selfFlag为空时默认为自管
       }
 
-      console.log('🚚 [ApiService] 获取物流数据，参数:', { dateRange, brand, selfFlag });
+      console.log('🚚 [ApiService] 获取物流数据，参数:', { dateRange, brand, platform, selfFlag, userBrands });
 
       // 🔥 同时获取快递商数据和异常数据
       const [couriersResponse, exceptionsResponse] = await Promise.all([
@@ -915,6 +1093,10 @@ class ApiServiceClass {
       if (error.name === 'AbortError') {
         throw error;
       }
+
+      if (error instanceof ApiClientError) {
+        throw error;
+      }
       
       if (error.message.includes('fetch')) {
         throw new Error('无法连接到API服务器，请确认后端服务是否已启动');
@@ -922,6 +1104,97 @@ class ApiServiceClass {
       
       console.error('❌ [ApiService] 获取物流数据失败:', error);
       throw new Error(`获取物流数据失败: ${error.message}`);
+    }
+  }
+
+  async getOverviewFlowAnalysis(options: APIRequestOptions = {}): Promise<any> {
+    const { dateRange, brand, platform, selfFlag, userBrands, signal } = options;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+    try {
+      const params = new URLSearchParams();
+
+      if (dateRange?.from) {
+        params.append('dateFrom', dateRange.from);
+      }
+      if (dateRange?.to) {
+        params.append('dateTo', dateRange.to);
+      }
+
+      if (brand && brand !== 'all') {
+        if (Array.isArray(brand)) {
+          brand.forEach((brandCode) => {
+            params.append('brand', brandCode);
+          });
+          console.log('🏷️ [ApiService.getOverviewFlowAnalysis] 多品牌查询（数组）:', brand);
+        } else {
+          const mappedBrand = this.BRAND_MAPPING[brand as keyof typeof this.BRAND_MAPPING] || brand;
+          params.append('brand', mappedBrand);
+        }
+      }
+
+      if (userBrands && Array.isArray(userBrands) && userBrands.length > 0) {
+        params.append('userBrands', userBrands.join(','));
+        console.log('🔐 [ApiService.getOverviewFlowAnalysis] 传递用户品牌权限:', userBrands.join(','));
+      }
+
+      if (platform && platform !== 'all') {
+        params.append('platform', platform);
+      }
+
+      if (selfFlag && selfFlag !== 'all') {
+        params.append('selfFlag', selfFlag);
+      }
+
+      const url = `${this.baseURL}/overview/flow-analysis${params.toString() ? `?${params.toString()}` : ''}`;
+      console.log('🌐 [ApiService.getOverviewFlowAnalysis] 请求URL:', url);
+
+      const controller = new AbortController();
+      const timeoutMs = 180000; // 管理员全量流向分析查询较慢，避免前端过早超时
+      timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+      const response = await this.performanceFetch(url, {
+        method: 'GET',
+        signal: signal || controller.signal,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+
+      const data = await this.parseApiResponse<any>(response, '订单流向分析数据获取');
+
+      console.log('✅ [ApiService.getOverviewFlowAnalysis] 数据获取成功:', {
+        success: data.success,
+        flowRecords: data.data?.flowAnalysisData?.length || 0,
+        totalOrders: data.data?.overallStats?.totalOrders || 0,
+        activeBrands: data.data?.overallStats?.activeBrands || 0,
+        activeCouriers: data.data?.overallStats?.activeCouriers || 0,
+      });
+
+      return data;
+    } catch (error: any) {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+
+      if (error.name === 'AbortError') {
+        throw new Error('订单流向分析请求超时，请稍后重试');
+      }
+
+      if (error instanceof ApiClientError) {
+        throw error;
+      }
+
+      if (error.message.includes('fetch')) {
+        throw new Error('无法连接到API服务器，请确认后端服务是否已启动');
+      }
+
+      console.error('❌ [ApiService.getOverviewFlowAnalysis] 获取订单流向分析失败:', error);
+      throw new Error(`获取订单流向分析失败: ${error.message}`);
     }
   }
 
@@ -943,11 +1216,7 @@ class ApiServiceClass {
 
       clearTimeout(timeoutId);
 
-      if (!response.ok) {
-        throw new Error(`快递商数据API请求失败: ${response.status} ${response.statusText}`);
-      }
-
-      return await this.safeJsonParse(response, '快递商数据获取');
+      return await this.parseApiResponse(response, '快递商数据获取');
     } catch (error) {
       clearTimeout(timeoutId);
       throw error;
@@ -978,10 +1247,11 @@ class ApiServiceClass {
           console.warn('⚠️ [ApiService] 异常数据接口不存在，使用空数据');
           return { success: false, data: { courierExceptions: [], summary: {} } };
         }
-        throw new Error(`异常数据API请求失败: ${response.status} ${response.statusText}`);
+
+        await this.throwApiError(response, '异常数据获取');
       }
 
-      return await this.safeJsonParse(response, '异常数据获取');
+      return await this.parseApiResponse(response, '异常数据获取');
     } catch (error) {
       clearTimeout(timeoutId);
       
@@ -1120,11 +1390,7 @@ class ApiServiceClass {
 
       clearTimeout(timeoutId);
 
-      if (!response.ok) {
-        throw new Error(`品牌物流数据API请求失败: ${response.status} ${response.statusText}`);
-      }
-
-      const data = await this.safeJsonParse(response, '品牌物流数据获取');
+      const data = await this.parseApiResponse<any>(response, '品牌物流数据获取');
       console.log('✅ [ApiService] 品牌物流数据获取成功:', {
         success: data.success,
         brandCount: data.data?.brandExceptions?.length || 0
@@ -1135,6 +1401,10 @@ class ApiServiceClass {
       if (error.name === 'AbortError') {
         throw error;
       }
+
+      if (error instanceof ApiClientError) {
+        throw error;
+      }
       
       if (error.message.includes('fetch')) {
         throw new Error('无法连接到API服务器，请确认后端服务是否已启动');
@@ -1142,6 +1412,150 @@ class ApiServiceClass {
       
       console.error('❌ [ApiService] 获取品牌物流数据失败:', error);
       throw new Error(`获取品牌物流数据失败: ${error.message}`);
+    }
+  }
+
+  // 🔥 新增：获取重量分布分析（支持应收/应付计费重切换）
+  async getWeightDistribution(options: WeightDistributionOptions = {}): Promise<any> {
+    const { dateRange, brand, platform, selfFlag, billingType = 'AR', signal } = options;
+
+    try {
+      const params = new URLSearchParams();
+
+      if (dateRange?.from) params.append('dateFrom', dateRange.from);
+      if (dateRange?.to) params.append('dateTo', dateRange.to);
+
+      if (brand && brand !== 'all') {
+        if (Array.isArray(brand)) {
+          brand.forEach((brandCode) => params.append('brand', brandCode));
+        } else {
+          const mappedBrand = this.BRAND_MAPPING[brand as keyof typeof this.BRAND_MAPPING] || brand;
+          params.append('brand', mappedBrand);
+        }
+      }
+
+      if (platform && platform !== 'all') {
+        const mappedPlatform = this.PLATFORM_MAPPING[platform as keyof typeof this.PLATFORM_MAPPING] || platform;
+        params.append('platform', mappedPlatform);
+      }
+
+      if (selfFlag && selfFlag !== 'all') {
+        params.append('selfFlag', selfFlag);
+      } else if (!selfFlag) {
+        params.append('selfFlag', 'Y');
+      }
+
+      params.append('billingType', billingType);
+
+      const url = `${this.baseURL}/logistics/weight-distribution${params.toString() ? `?${params.toString()}` : ''}`;
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30000);
+
+      const response = await this.performanceFetch(url, {
+        method: 'GET',
+        signal: signal || controller.signal,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      clearTimeout(timeoutId);
+      return await this.parseApiResponse<any>(response, '重量分布数据获取');
+    } catch (error: any) {
+      if (error.name === 'AbortError') {
+        throw new Error('重量分布数据请求超时，请稍后重试');
+      }
+      throw error;
+    }
+  }
+
+  // 🔥 新增：重量分析（供重量分析页面调用）
+  async getWeightAnalysis(options: WeightAnalysisOptions = {}): Promise<any> {
+    const { dateRange, brand, platform, selfFlag, weightType = 'receivable', userId, signal } = options;
+
+    const params = new URLSearchParams();
+    if (dateRange?.from) params.append('dateFrom', dateRange.from);
+    if (dateRange?.to) params.append('dateTo', dateRange.to);
+
+    if (brand && brand !== 'all') {
+      if (Array.isArray(brand)) {
+        brand.forEach((brandCode) => params.append('brand', brandCode));
+      } else {
+        const mappedBrand = this.BRAND_MAPPING[brand as keyof typeof this.BRAND_MAPPING] || brand;
+        params.append('brand', mappedBrand);
+      }
+    }
+
+    if (platform && platform !== 'all') {
+      const mappedPlatform = this.PLATFORM_MAPPING[platform as keyof typeof this.PLATFORM_MAPPING] || platform;
+      params.append('platform', mappedPlatform);
+    }
+
+    if (selfFlag && selfFlag !== 'all') {
+      params.append('selfFlag', selfFlag);
+    } else if (!selfFlag) {
+      params.append('selfFlag', 'Y');
+    }
+
+    params.append('weightType', weightType);
+    if (userId) {
+      params.append('userId', userId);
+    }
+
+    const controller = new AbortController();
+    // 内部用户常见全量查询范围较大，给重量分析接口更充足的超时预算。
+    const timeoutMs = 120000;
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    const url = `${this.baseURL}/logistics/weight-analysis${params.toString() ? `?${params.toString()}` : ''}`;
+
+    try {
+      const response = await this.performanceFetch(url, {
+        method: 'GET',
+        signal: signal || controller.signal,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      clearTimeout(timeoutId);
+      return await this.parseApiResponse<any>(response, '重量分析数据获取');
+    } catch (error: any) {
+      clearTimeout(timeoutId);
+      if (error.name === 'AbortError') {
+        throw new Error('重量分析数据请求超时，请稍后重试');
+      }
+      throw error;
+    }
+  }
+
+  // 🔥 新增：查询重量分析权限
+  async getWeightAnalysisPermissions(userId?: string, signal?: AbortSignal): Promise<any> {
+    const params = new URLSearchParams();
+    if (userId) {
+      params.append('userId', userId);
+    }
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    const url = `${this.baseURL}/logistics/weight-analysis/permissions${params.toString() ? `?${params.toString()}` : ''}`;
+
+    try {
+      const response = await this.performanceFetch(url, {
+        method: 'GET',
+        signal: signal || controller.signal,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      clearTimeout(timeoutId);
+      return await this.parseApiResponse<any>(response, '重量分析权限获取');
+    } catch (error: any) {
+      clearTimeout(timeoutId);
+      if (error.name === 'AbortError') {
+        throw new Error('重量分析权限请求超时，请稍后重试');
+      }
+      throw error;
     }
   }
 
@@ -1214,11 +1628,7 @@ class ApiServiceClass {
 
       clearTimeout(timeoutId);
 
-      if (!response.ok) {
-        throw new Error(`转寄数据API请求失败: ${response.status} ${response.statusText}`);
-      }
-
-      const data = await this.safeJsonParse(response, '转寄分析数据获取');
+      const data = await this.parseApiResponse<any>(response, '转寄分析数据获取');
       console.log('✅ [ApiService] 转寄分析数据获取成功:', {
         success: data.success,
         addressChangeCount: data.data?.addressChange?.totalCount || 0,
@@ -1233,6 +1643,10 @@ class ApiServiceClass {
       return data;
     } catch (error: any) {
       if (error.name === 'AbortError') {
+        throw error;
+      }
+
+      if (error instanceof ApiClientError) {
         throw error;
       }
       
@@ -1325,23 +1739,13 @@ class ApiServiceClass {
         interceptLocation
       });
 
-      const response = await fetch(apiUrl, {
+      const response = await this.performanceFetch(apiUrl, {
         method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: this.getAuthHeaders(),
         signal: signal || undefined,
       });
 
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-
-      const data = await response.json();
-      
-      if (!data.success) {
-        throw new Error(data.error || '拦截分析数据获取失败');
-      }
+      const data = await this.parseApiResponse<any>(response, '拦截分析数据获取');
       
       console.log('✅ [ApiService] 拦截分析数据获取成功:', {
         totalCount: data.data?.overview?.totalCount,
@@ -1353,6 +1757,10 @@ class ApiServiceClass {
 
       return data;
     } catch (error: any) {
+      if (error instanceof ApiClientError) {
+        throw error;
+      }
+
       console.error('❌ [ApiService] 拦截分析数据获取失败:', error);
       throw new Error(`获取拦截分析数据失败: ${error.message}`);
     }
@@ -1403,12 +1811,8 @@ class ApiServiceClass {
       });
       
       clearTimeout(timeoutId);
-      
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-      
-      const data = await response.json();
+
+      const data = await this.parseApiResponse<any>(response, '异常监控分析数据获取');
       
       console.log('✅ [ApiService] 异常监控分析数据获取成功:', {
         totalExceptions: data.data?.summary?.totalExceptions,
@@ -1420,6 +1824,10 @@ class ApiServiceClass {
       
       return data;
     } catch (error: any) {
+      if (error instanceof ApiClientError) {
+        throw error;
+      }
+
       console.error('❌ [ApiService] 异常监控分析数据获取失败:', error);
       throw new Error(`获取异常监控分析数据失败: ${error.message}`);
     }
@@ -1474,12 +1882,8 @@ class ApiServiceClass {
       });
       
       clearTimeout(timeoutId);
-      
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-      
-      const data = await response.json();
+
+      const data = await this.parseApiResponse<any>(response, `${carrierName}异常详情获取`);
       
       console.log(`✅ [ApiService] ${carrierName} 异常详情获取成功:`, {
         detailsCount: data.data?.details?.length
@@ -1487,6 +1891,10 @@ class ApiServiceClass {
       
       return data;
     } catch (error: any) {
+      if (error instanceof ApiClientError) {
+        throw error;
+      }
+
       console.error(`❌ [ApiService] ${carrierName} 异常详情获取失败:`, error);
       throw new Error(`获取快递商异常详情失败: ${error.message}`);
     }
@@ -1568,11 +1976,7 @@ class ApiServiceClass {
 
       clearTimeout(timeoutId);
 
-      if (!response.ok) {
-        throw new Error(`异常监控分析API请求失败: ${response.status} ${response.statusText}`);
-      }
-
-      const data = await this.safeJsonParse(response, '异常监控分析数据获取');
+      const data = await this.parseApiResponse<any>(response, '异常监控分析数据获取');
       
       console.log('✅ [ApiService] 异常监控分析数据获取成功:', {
         success: data.success,
@@ -1588,6 +1992,10 @@ class ApiServiceClass {
       if (error.name === 'AbortError') {
         throw error;
       }
+
+      if (error instanceof ApiClientError) {
+        throw error;
+      }
       
       if (error.message.includes('fetch')) {
         throw new Error('无法连接到API服务器，请确认后端服务是否已启动');
@@ -1595,6 +2003,198 @@ class ApiServiceClass {
       
       console.error('❌ [ApiService] 获取异常监控分析数据失败:', error);
       throw new Error(`获取异常监控分析数据失败: ${error.message}`);
+    }
+  }
+
+  // 🔥 新增：获取趋势分析-订单趋势数据
+  async getTrendsOrders(options: TrendsOrdersOptions = {}): Promise<any> {
+    const { dateRange, brand, selfFlag, signal, granularity = 'day' } = options;
+
+    const params = new URLSearchParams();
+    if (dateRange?.from) params.append('dateFrom', dateRange.from);
+    if (dateRange?.to) params.append('dateTo', dateRange.to);
+    params.append('granularity', granularity);
+
+    if (brand && brand !== 'all') {
+      if (Array.isArray(brand)) {
+        brand.forEach((brandCode) => params.append('brand', brandCode));
+      } else {
+        const mappedBrand = this.BRAND_MAPPING[brand as keyof typeof this.BRAND_MAPPING] || brand;
+        params.append('brand', mappedBrand);
+      }
+    }
+
+    if (selfFlag && selfFlag !== 'all') {
+      params.append('selfFlag', selfFlag);
+    } else if (!selfFlag) {
+      params.append('selfFlag', 'Y');
+    }
+
+    const url = `${this.baseURL}/trends/orders${params.toString() ? `?${params.toString()}` : ''}`;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 90000);
+
+    try {
+      const response = await this.performanceFetch(url, {
+        method: 'GET',
+        signal: signal || controller.signal,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      clearTimeout(timeoutId);
+      return await this.parseApiResponse<any>(response, '趋势订单数据获取');
+    } catch (error: any) {
+      clearTimeout(timeoutId);
+      if (error.name === 'AbortError') {
+        throw new Error('趋势订单数据请求超时，请稍后重试');
+      }
+      throw error;
+    }
+  }
+
+  // 🔥 新增：获取趋势分析-预测数据
+  async getTrendsForecast(options: TrendsForecastOptions = {}): Promise<any> {
+    const { dateRange, brand, selfFlag, signal, days = 7 } = options;
+
+    const params = new URLSearchParams();
+    if (dateRange?.from) params.append('dateFrom', dateRange.from);
+    if (dateRange?.to) params.append('dateTo', dateRange.to);
+    params.append('days', String(days));
+
+    if (brand && brand !== 'all') {
+      if (Array.isArray(brand)) {
+        brand.forEach((brandCode) => params.append('brand', brandCode));
+      } else {
+        const mappedBrand = this.BRAND_MAPPING[brand as keyof typeof this.BRAND_MAPPING] || brand;
+        params.append('brand', mappedBrand);
+      }
+    }
+
+    if (selfFlag && selfFlag !== 'all') {
+      params.append('selfFlag', selfFlag);
+    } else if (!selfFlag) {
+      params.append('selfFlag', 'Y');
+    }
+
+    const url = `${this.baseURL}/trends/forecast${params.toString() ? `?${params.toString()}` : ''}`;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 90000);
+
+    try {
+      const response = await this.performanceFetch(url, {
+        method: 'GET',
+        signal: signal || controller.signal,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      clearTimeout(timeoutId);
+      return await this.parseApiResponse<any>(response, '趋势预测数据获取');
+    } catch (error: any) {
+      clearTimeout(timeoutId);
+      if (error.name === 'AbortError') {
+        throw new Error('趋势预测数据请求超时，请稍后重试');
+      }
+      throw error;
+    }
+  }
+
+  // 🔥 新增：获取趋势分析-快递公司趋势数据
+  async getTrendsCarriers(options: TrendsCarriersOptions = {}): Promise<any> {
+    const { dateRange, brand, selfFlag, signal, granularity = 'day' } = options;
+
+    const params = new URLSearchParams();
+    if (dateRange?.from) params.append('dateFrom', dateRange.from);
+    if (dateRange?.to) params.append('dateTo', dateRange.to);
+    params.append('granularity', granularity);
+
+    if (brand && brand !== 'all') {
+      if (Array.isArray(brand)) {
+        brand.forEach((brandCode) => params.append('brand', brandCode));
+      } else {
+        const mappedBrand = this.BRAND_MAPPING[brand as keyof typeof this.BRAND_MAPPING] || brand;
+        params.append('brand', mappedBrand);
+      }
+    }
+
+    if (selfFlag && selfFlag !== 'all') {
+      params.append('selfFlag', selfFlag);
+    } else if (!selfFlag) {
+      params.append('selfFlag', 'Y');
+    }
+
+    const url = `${this.baseURL}/trends/carriers${params.toString() ? `?${params.toString()}` : ''}`;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 90000);
+
+    try {
+      const response = await this.performanceFetch(url, {
+        method: 'GET',
+        signal: signal || controller.signal,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      clearTimeout(timeoutId);
+      return await this.parseApiResponse<any>(response, '趋势快递公司数据获取');
+    } catch (error: any) {
+      clearTimeout(timeoutId);
+      if (error.name === 'AbortError') {
+        throw new Error('趋势快递公司数据请求超时，请稍后重试');
+      }
+      throw error;
+    }
+  }
+
+  // 🔥 新增：获取趋势分析-异常趋势数据
+  async getTrendsExceptions(options: TrendsExceptionsOptions = {}): Promise<any> {
+    const { dateRange, brand, selfFlag, signal, granularity = 'day' } = options;
+
+    const params = new URLSearchParams();
+    if (dateRange?.from) params.append('dateFrom', dateRange.from);
+    if (dateRange?.to) params.append('dateTo', dateRange.to);
+    params.append('granularity', granularity);
+
+    if (brand && brand !== 'all') {
+      if (Array.isArray(brand)) {
+        brand.forEach((brandCode) => params.append('brand', brandCode));
+      } else {
+        const mappedBrand = this.BRAND_MAPPING[brand as keyof typeof this.BRAND_MAPPING] || brand;
+        params.append('brand', mappedBrand);
+      }
+    }
+
+    if (selfFlag && selfFlag !== 'all') {
+      params.append('selfFlag', selfFlag);
+    } else if (!selfFlag) {
+      params.append('selfFlag', 'Y');
+    }
+
+    const url = `${this.baseURL}/trends/exceptions${params.toString() ? `?${params.toString()}` : ''}`;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 90000);
+
+    try {
+      const response = await this.performanceFetch(url, {
+        method: 'GET',
+        signal: signal || controller.signal,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      clearTimeout(timeoutId);
+      return await this.parseApiResponse<any>(response, '趋势异常数据获取');
+    } catch (error: any) {
+      clearTimeout(timeoutId);
+      if (error.name === 'AbortError') {
+        throw new Error('趋势异常数据请求超时，请稍后重试');
+      }
+      throw error;
     }
   }
 }
@@ -1605,13 +2205,22 @@ export const ApiService = new ApiServiceClass();
 export const getHealthStatus = () => ApiService.getHealthStatus();
 export const quickHealthCheck = () => ApiService.quickHealthCheck();
 export const getOverviewData = (options?: APIRequestOptions) => ApiService.getOverviewData(options);
+export const getOverviewFlowAnalysis = (options?: APIRequestOptions) => ApiService.getOverviewFlowAnalysis(options);
 export const getLogisticsData = (options?: APIRequestOptions) => ApiService.getLogisticsData(options);
 export const getLogisticsBrands = (options?: APIRequestOptions) => ApiService.getLogisticsBrands(options);
+export const getWeightDistribution = (options?: WeightDistributionOptions) => ApiService.getWeightDistribution(options);
+export const getWeightAnalysis = (options?: WeightAnalysisOptions) => ApiService.getWeightAnalysis(options);
+export const getWeightAnalysisPermissions = (userId?: string) => ApiService.getWeightAnalysisPermissions(userId);
 export const getForwardingData = (options?: APIRequestOptions) => ApiService.getForwardingData(options);
 export const getInterceptionData = (options?: any) => ApiService.getInterceptionData(options);
 export const getPlatformList = () => ApiService.getPlatformList(); // 🔥 导出平台列表方法
 export const exportOrderDetails = (options: APIRequestOptions) => ApiService.exportOrderDetails(options); // 🔥 导出订单明细
 export const exportTimelinessRawData = (options: any) => ApiService.exportTimelinessRawData(options); // 🔥 导出时效分析RawData
+export const analyzeTimeliness = (options: any) => ApiService.analyzeTimeliness(options); // 🔥 执行时效分析
 export const getExceptionAnalysisData = (options?: any) => ApiService.getExceptionAnalysisData(options); // 🔥 异常监控分析数据
 export const getCarrierExceptionDetails = (carrierName: string, options?: any) => ApiService.getCarrierExceptionDetails(carrierName, options); // 🔥 快递商异常详情
 export const getExceptionAnalysis = (options?: APIRequestOptions) => ApiService.getExceptionAnalysis(options); // 🔥 异常监控分析数据（基于责任方和异常原因）
+export const getTrendsOrders = (options?: TrendsOrdersOptions) => ApiService.getTrendsOrders(options); // 🔥 趋势分析-订单趋势
+export const getTrendsForecast = (options?: TrendsForecastOptions) => ApiService.getTrendsForecast(options); // 🔥 趋势分析-预测数据
+export const getTrendsCarriers = (options?: TrendsCarriersOptions) => ApiService.getTrendsCarriers(options); // 🔥 趋势分析-快递公司趋势
+export const getTrendsExceptions = (options?: TrendsExceptionsOptions) => ApiService.getTrendsExceptions(options); // 🔥 趋势分析-异常趋势

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import { Button } from "../ui/button";
 import { Badge } from "../ui/badge";
@@ -7,12 +7,14 @@ import { CourierMonitoring } from "../CourierMonitoring";
 import { ForwardingAnalysis } from "../ForwardingAnalysis";
 import { InterceptionAnalysis } from "../InterceptionAnalysis";
 import { TimeEfficiencyAnalysis } from "../TimeEfficiencyAnalysis";
+import { DataLoadingState } from "../DataLoadingState";
 
 interface LogisticsPageProps {
   data: any;
   selectedBrand?: string;
   selectedPlatform?: string;  // ✅ 新增：平台筛选参数
   selectedSelfFlag?: string;  // ✅ 新增：自管筛选参数
+  onRefetchData?: () => void;
   dateRange?: { from: string; to: string };
   exceptionFilter?: {
     type?: string;
@@ -26,6 +28,7 @@ interface LogisticsPageProps {
     courier?: string;
   }) => void;
   useRealData?: boolean;
+  apiLoading?: boolean;
   rawApiData?: any;
   unifiedCourierData?: any;
 }
@@ -35,11 +38,13 @@ export function LogisticsPage({
   selectedBrand,
   selectedPlatform,  // ✅ 新增：传递platform参数
   selectedSelfFlag,  // ✅ 新增：传递selfFlag参数
+  onRefetchData,
   dateRange,
   exceptionFilter, 
   onClearExceptionFilter,
   onNavigateToMonitoring,
   useRealData = false,
+  apiLoading = false,
   rawApiData,
   unifiedCourierData
 }: LogisticsPageProps) {
@@ -54,6 +59,27 @@ export function LogisticsPage({
       setActiveTab("monitoring");
     }
   }, [exceptionFilter]);
+
+  // 保持最新回调引用，避免因为函数引用变化导致副作用重复触发
+  const onRefetchDataRef = useRef(onRefetchData);
+  const hasTriggeredMonitoringRefetchRef = useRef(false);
+
+  useEffect(() => {
+    onRefetchDataRef.current = onRefetchData;
+  }, [onRefetchData]);
+
+  // 仅在“进入全程监控标签页”时触发一次刷新，避免无限重刷
+  useEffect(() => {
+    if (activeTab === 'monitoring' && useRealData && !hasTriggeredMonitoringRefetchRef.current) {
+      onRefetchDataRef.current?.();
+      hasTriggeredMonitoringRefetchRef.current = true;
+      return;
+    }
+
+    if (activeTab !== 'monitoring') {
+      hasTriggeredMonitoringRefetchRef.current = false;
+    }
+  }, [activeTab, useRealData]);
 
   // 获取异常类型的显示名称
   const getExceptionTypeName = (type?: string) => {
@@ -161,34 +187,61 @@ export function LogisticsPage({
         </div>
 
         <TabsContent value="time-analysis" className="space-y-6">
-          <TimeEfficiencyAnalysis 
-            selectedBrand={selectedBrand}
-            selectedSelfFlag={selectedSelfFlag}  // ✅ 新增：传递selfFlag参数
-            dateRange={dateRange}
-          />
+          {useRealData && apiLoading ? (
+            <DataLoadingState
+              loading={true}
+              dataType="时效分析"
+              loadingMessage="正在加载时效分析数据..."
+              minHeight="360px"
+            />
+          ) : (
+            <TimeEfficiencyAnalysis 
+              selectedBrand={selectedBrand}
+              selectedSelfFlag={selectedSelfFlag}  // ✅ 新增：传递selfFlag参数
+              dateRange={dateRange}
+            />
+          )}
         </TabsContent>
 
         <TabsContent value="monitoring" className="space-y-6">
-          <CourierMonitoring 
-            selectedBrand={selectedBrand}
-            selectedPlatform={selectedPlatform}  // ✅ 新增：传递platform参数
-            selectedSelfFlag={selectedSelfFlag}  // ✅ 新增：传递selfFlag参数
-            exceptionFilter={exceptionFilter}
-            onNavigateToMonitoring={onNavigateToMonitoring}
-            useRealData={useRealData}
-            rawApiData={rawApiData}
-            unifiedCourierData={unifiedCourierData}
-          />
+          {useRealData && apiLoading ? (
+            <DataLoadingState
+              loading={true}
+              dataType="全程监控"
+              loadingMessage="正在加载全程监控数据..."
+              minHeight="420px"
+            />
+          ) : (
+            <CourierMonitoring 
+              selectedBrand={selectedBrand}
+              selectedPlatform={selectedPlatform}  // ✅ 新增：传递platform参数
+              selectedSelfFlag={selectedSelfFlag}  // ✅ 新增：传递selfFlag参数
+              exceptionFilter={exceptionFilter}
+              onNavigateToMonitoring={onNavigateToMonitoring}
+              useRealData={useRealData}
+              rawApiData={rawApiData}
+              unifiedCourierData={unifiedCourierData}
+            />
+          )}
         </TabsContent>
 
         <TabsContent value="forwarding" className="space-y-6">
-          <ForwardingAnalysis 
-            useRealData={true}
-            dateRange={dateRange}
-            selectedBrand={selectedBrand}
-            selectedPlatform={selectedPlatform}
-            selectedSelfFlag={selectedSelfFlag}
-          />
+          {useRealData && apiLoading ? (
+            <DataLoadingState
+              loading={true}
+              dataType="转寄分析"
+              loadingMessage="正在加载转寄分析数据..."
+              minHeight="360px"
+            />
+          ) : (
+            <ForwardingAnalysis 
+              useRealData={true}
+              dateRange={dateRange}
+              selectedBrand={selectedBrand}
+              selectedPlatform={selectedPlatform}
+              selectedSelfFlag={selectedSelfFlag}
+            />
+          )}
         </TabsContent>
 
         <TabsContent value="interception" className="space-y-6">

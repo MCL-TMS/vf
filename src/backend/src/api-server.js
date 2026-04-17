@@ -9,19 +9,26 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const compression = require('compression');
-const rateLimit = require('express-rate-limit');
+const { randomUUID } = require('crypto');
 const { testConnection, initializeDatabase } = require('./config/database-api');
+const { ERROR_CODES, normalizeError, sendError } = require('./utils/apiError');
+const { getRedisStatus, getRedisKeyPrefix } = require('./utils/redisStore');
 
 // 路由导入
 const overviewRoutes = require('./routes/overview');
 const regionalRoutes = require('./routes/regional');
-const trendsRoutes = require('./routes/trends');
+const trendsRoutes = require('./routes/trends-esm');
 const logisticsRoutes = require('./routes/logistics');
+const weightAnalysisRoutes = require('./routes/weight-analysis-esm');
 const uploadRoutes = require('./routes/upload-commonjs');
 const diagnosticRoutes = require('./routes/bas-area-diagnostic');
 const authRoutes = require('./routes/auth'); // 新增认证路由
+const brandsRoutes = require('./routes/brands');
+const platformRoutes = require('./routes/platforms');
 const orderDetailsRoutes = require('./routes/order-details'); // 🔥 订单明细导出路由
 const exceptionAnalysisRoutes = require('./routes/exception-analysis'); // 🔥 异常监控分析路由
+const { verifyToken } = require('./middleware/authMiddleware');
+const { globalRateLimiter } = require('./middleware/rateLimitMiddleware');
 
 // 🔍 调试：检查 authRoutes 是否正确导入
 console.log('🔍 调试信息:');
@@ -35,10 +42,195 @@ if (authRoutes && authRoutes.stack) {
 const app = express();
 const PORT = process.env.API_PORT || 3001;
 
+app.use((req, res, next) => {
+  const requestId = req.headers['x-request-id'] || randomUUID();
+  req.requestId = requestId;
+  res.setHeader('X-Request-Id', requestId);
+  next();
+});
+
+function parseBooleanEnv(value, defaultValue = false) {
+  if (value === undefined) {
+    return defaultValue;
+  }
+
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (['true', '1', 'yes', 'on'].includes(normalized)) {
+      return true;
+    }
+    if (['false', '0', 'no', 'off'].includes(normalized)) {
+      return false;
+    }
+  }
+
+  return Boolean(value);
+}
+
+function parseTrustProxySetting(value) {
+  if (value === undefined || value === null || value === '') {
+    return false;
+  }
+
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (['true', '1', 'yes', 'on'].includes(normalized)) {
+      return 1;
+    }
+    if (['false', '0', 'no', 'off'].includes(normalized)) {
+      return false;
+    }
+    if (/^\d+$/.test(normalized)) {
+      return Number.parseInt(normalized, 10);
+    }
+    return value.trim();
+  }
+
+  return value;
+}
+
+function sanitizeRedisUrl(url) {
+  if (!url || typeof url !== 'string') {
+    return null;
+  }
+
+  try {
+    const parsedUrl = new URL(url);
+    if (parsedUrl.password) {
+      parsedUrl.password = '***';
+    }
+    return parsedUrl.toString();
+  } catch (_error) {
+    return url.replace(/:(.*?)@/, ':***@');
+  }
+}
+
+function toPrometheusLabelValue(value) {
+  return String(value ?? '')
+    .replace(/\\/g, '\\\\')
+    .replace(/\n/g, '\\n')
+    .replace(/"/g, '\\"');
+}
+
+function buildRedisPrometheusMetrics(redisStatus) {
+  const env = process.env.NODE_ENV || 'development';
+  const service = 'vf_logistics_api';
+  const keyPrefix = getRedisKeyPrefix();
+  const labels = `service="${toPrometheusLabelValue(service)}",env="${toPrometheusLabelValue(env)}",key_prefix="${toPrometheusLabelValue(keyPrefix)}"`;
+  const metrics = redisStatus.metrics || {};
+  const fallbackReasons = metrics.fallbackReasons || {};
+  const lastFallbackTimestamp = metrics.lastFallbackAt
+    ? Date.parse(metrics.lastFallbackAt) / 1000
+    : 0;
+
+  return [
+    '# HELP vf_logistics_redis_enabled Redis feature flag status (1 enabled, 0 disabled).',
+    '# TYPE vf_logistics_redis_enabled gauge',
+    `vf_logistics_redis_enabled{${labels}} ${redisStatus.enabled ? 1 : 0}`,
+    '# HELP vf_logistics_redis_up Redis connectivity status (1 available, 0 unavailable).',
+    '# TYPE vf_logistics_redis_up gauge',
+    `vf_logistics_redis_up{${labels}} ${redisStatus.available ? 1 : 0}`,
+    '# HELP vf_logistics_redis_fallback_total Total fallback count from Redis to memory.',
+    '# TYPE vf_logistics_redis_fallback_total counter',
+    `vf_logistics_redis_fallback_total{${labels}} ${metrics.fallbackCount || 0}`,
+    '# HELP vf_logistics_redis_fallback_reason_total Fallback count by reason.',
+    '# TYPE vf_logistics_redis_fallback_reason_total counter',
+    `vf_logistics_redis_fallback_reason_total{${labels},reason="disabled"} ${fallbackReasons.disabled || 0}`,
+    `vf_logistics_redis_fallback_reason_total{${labels},reason="connect_failed"} ${fallbackReasons.connectFailed || 0}`,
+    `vf_logistics_redis_fallback_reason_total{${labels},reason="error_event"} ${fallbackReasons.errorEvent || 0}`,
+    '# HELP vf_logistics_redis_connection_error_total Redis connection error event count.',
+    '# TYPE vf_logistics_redis_connection_error_total counter',
+    `vf_logistics_redis_connection_error_total{${labels}} ${metrics.connectionErrorCount || 0}`,
+    '# HELP vf_logistics_redis_last_fallback_timestamp_seconds Unix timestamp for the last fallback event.',
+    '# TYPE vf_logistics_redis_last_fallback_timestamp_seconds gauge',
+    `vf_logistics_redis_last_fallback_timestamp_seconds{${labels}} ${Number.isFinite(lastFallbackTimestamp) ? lastFallbackTimestamp : 0}`
+  ].join('\n');
+}
+
+function ensureAdminForOps(req, res) {
+  if (!req.user?.isAdmin) {
+    sendError(res, req, {
+      status: 403,
+      code: ERROR_CODES.AUTH_FAILED,
+      error: '仅管理员可访问Redis运维指标'
+    });
+    return false;
+  }
+
+  return true;
+}
+
+function handleRedisHealthOps(req, res) {
+  if (!ensureAdminForOps(req, res)) {
+    return;
+  }
+
+  const redisStatus = getRedisStatus();
+  const requestedFormat = String(req.query?.format || '').trim().toLowerCase();
+
+  if (requestedFormat === 'prometheus') {
+    res.setHeader('Content-Type', 'text/plain; version=0.0.4; charset=utf-8');
+    return res.send(buildRedisPrometheusMetrics(redisStatus));
+  }
+
+  return res.json({
+    success: true,
+    status: redisStatus.available ? 'healthy' : 'degraded',
+    timestamp: new Date().toISOString(),
+    requestId: req.requestId,
+    redis: {
+      enabled: redisStatus.enabled,
+      available: redisStatus.available,
+      keyPrefix: getRedisKeyPrefix(),
+      url: sanitizeRedisUrl(redisStatus.url),
+      metrics: redisStatus.metrics
+    }
+  });
+}
+
 /**
  * 中间件配置
  */
 const isProduction = process.env.NODE_ENV === 'production';
+const forceHttpsEnv = process.env.FORCE_HTTPS ?? process.env.ENFORCE_HTTPS;
+const shouldEnforceHttps = parseBooleanEnv(forceHttpsEnv, isProduction);
+const shouldRedirectToHttps = isProduction && parseBooleanEnv(process.env.HTTPS_REDIRECT, false);
+const trustProxySetting = parseTrustProxySetting(process.env.TRUST_PROXY);
+const hstsMaxAge = Number.parseInt(process.env.HSTS_MAX_AGE || '31536000', 10);
+const hstsIncludeSubDomains = parseBooleanEnv(process.env.HSTS_INCLUDE_SUBDOMAINS, true);
+const hstsPreload = parseBooleanEnv(process.env.HSTS_PRELOAD, true);
+
+if (trustProxySetting !== false) {
+  app.set('trust proxy', trustProxySetting);
+}
+
+function isSecureRequest(req) {
+  if (req.secure || req.protocol === 'https') {
+    return true;
+  }
+
+  const forwardedProto = req.headers['x-forwarded-proto'];
+  if (typeof forwardedProto === 'string') {
+    const firstProto = forwardedProto.split(',')[0].trim().toLowerCase();
+    if (firstProto === 'https') {
+      return true;
+    }
+  }
+
+  return req.headers['x-forwarded-ssl'] === 'on';
+}
+
+function getHttpsRedirectUrl(req) {
+  const forwardedHost = req.headers['x-forwarded-host'];
+  const host = (typeof forwardedHost === 'string' && forwardedHost.trim()) || req.headers.host;
+
+  if (!host) {
+    return null;
+  }
+
+  return `https://${host}${req.originalUrl}`;
+}
+
 const helmetConfig = isProduction
   ? {
       // 在生产环境启用内容安全策略，尽量减少 XSS 等风险
@@ -52,6 +244,11 @@ const helmetConfig = isProduction
           "connect-src": ["'self'"],
           "frame-ancestors": ["'self'"]
         }
+      },
+      strictTransportSecurity: {
+        maxAge: Number.isFinite(hstsMaxAge) && hstsMaxAge > 0 ? hstsMaxAge : 31536000,
+        includeSubDomains: hstsIncludeSubDomains,
+        preload: hstsPreload
       },
       // 如需兼容跨源资源（如 WebAssembly、SharedArrayBuffer），可根据需要调整该配置
       crossOriginEmbedderPolicy: false
@@ -73,6 +270,28 @@ const helmetConfig = isProduction
     };
 
 app.use(helmet(helmetConfig));
+app.disable('x-powered-by');
+
+if (shouldEnforceHttps) {
+  app.use((req, res, next) => {
+    if (isSecureRequest(req)) {
+      return next();
+    }
+
+    if (shouldRedirectToHttps) {
+      const redirectUrl = getHttpsRedirectUrl(req);
+      if (redirectUrl) {
+        return res.redirect(308, redirectUrl);
+      }
+    }
+
+    return sendError(res, req, {
+      status: 403,
+      code: ERROR_CODES.HTTPS_REQUIRED,
+      error: '当前环境仅允许通过 HTTPS 访问 API'
+    });
+  });
+}
 
 app.use(compression()); // 启用Gzip压缩
 
@@ -96,44 +315,40 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 // 请求日志中间件
 app.use((req, res, next) => {
   const timestamp = new Date().toISOString();
-  console.log(`[${timestamp}] ${req.method} ${req.path} - ${req.ip}`);
+  console.log(`[${timestamp}] [${req.requestId}] ${req.method} ${req.path} - ${req.ip}`);
   next();
 });
 
-// API速率限制
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15分钟
-  max: 1000, // 每个IP最多1000次请求
-  message: {
-    error: '请求过于频繁',
-    message: '请稍后再试'
-  },
-  standardHeaders: true,
-  legacyHeaders: false,
-});
-app.use('/api/', limiter);
+// API速率限制（Redis优先，内存回退）
+app.use('/api/', globalRateLimiter);
 
 /**
  * API路由注册
  */
 console.log('🔧 注册API路由...');
-app.use('/api/overview', overviewRoutes);
-console.log('✅ 已注册: /api/overview');
-app.use('/api/regional', regionalRoutes);
-console.log('✅ 已注册: /api/regional');
-app.use('/api/trends', trendsRoutes);
-console.log('✅ 已注册: /api/trends');
-app.use('/api/logistics', logisticsRoutes);
-console.log('✅ 已注册: /api/logistics');
-app.use('/api/upload', uploadRoutes);
-console.log('✅ 已注册: /api/upload');
-app.use('/api/diagnostic', diagnosticRoutes);
-console.log('✅ 已注册: /api/diagnostic');
 app.use('/api/auth', authRoutes); // 注册认证路由
 console.log('✅ 已注册: /api/auth');
-app.use('/api/order-details', orderDetailsRoutes); // 注册订单明细导出路由
+app.use('/api/brands', brandsRoutes); // 品牌映射（无需认证）
+console.log('✅ 已注册: /api/brands');
+app.use('/api/platform', platformRoutes); // 平台映射（无需认证）
+console.log('✅ 已注册: /api/platform');
+app.use('/api/overview', verifyToken, overviewRoutes);
+console.log('✅ 已注册: /api/overview');
+app.use('/api/regional', verifyToken, regionalRoutes);
+console.log('✅ 已注册: /api/regional');
+app.use('/api/trends', verifyToken, trendsRoutes);
+console.log('✅ 已注册: /api/trends');
+app.use('/api/logistics', verifyToken, logisticsRoutes);
+console.log('✅ 已注册: /api/logistics');
+app.use('/api/logistics', verifyToken, weightAnalysisRoutes);
+console.log('✅ 已注册: /api/logistics (weight-analysis)');
+app.use('/api/upload', verifyToken, uploadRoutes);
+console.log('✅ 已注册: /api/upload');
+app.use('/api/diagnostic', verifyToken, diagnosticRoutes);
+console.log('✅ 已注册: /api/diagnostic');
+app.use('/api/order-details', verifyToken, orderDetailsRoutes); // 注册订单明细导出路由
 console.log('✅ 已注册: /api/order-details');
-app.use('/api/exception-analysis', exceptionAnalysisRoutes); // 注册异常监控分析路由
+app.use('/api/exception-analysis', verifyToken, exceptionAnalysisRoutes); // 注册异常监控分析路由
 console.log('✅ 已注册: /api/exception-analysis');
 console.log('📋 所有路由注册完成\n');
 
@@ -144,36 +359,69 @@ app.get('/api/health', async (req, res) => {
   try {
     // 测试数据库连接
     const dbStatus = await testConnection();
-    
-    res.json({
+
+    const healthPayload = {
       status: 'healthy',
       timestamp: new Date().toISOString(),
       version: '1.0.0',
       database: dbStatus ? 'connected' : 'disconnected',
-      uptime: process.uptime(),
-      memory: process.memoryUsage(),
-      environment: process.env.NODE_ENV || 'development'
-    });
+      requestId: req.requestId
+    };
+
+    if (!isProduction) {
+      healthPayload.uptime = process.uptime();
+      healthPayload.memory = process.memoryUsage();
+      healthPayload.environment = process.env.NODE_ENV || 'development';
+    }
+
+    res.json(healthPayload);
   } catch (error) {
     console.error('健康检查失败:', error);
-    res.status(503).json({
-      status: 'unhealthy',
-      timestamp: new Date().toISOString(),
-      error: error.message,
-      database: 'error'
+    return sendError(res, req, {
+      status: 503,
+      code: ERROR_CODES.HEALTH_CHECK_FAILED,
+      error: '健康检查失败',
+      details: isProduction
+        ? { database: 'error' }
+        : { database: 'error', cause: error.message }
     });
   }
 });
 
 /**
+ * Redis健康检查与指标（运维）
+ */
+app.get('/api/health/redis', verifyToken, (req, res) => {
+  return handleRedisHealthOps(req, res);
+});
+
+/**
+ * Redis监控抓取端点（Prometheus）
+ */
+app.get('/api/health/redis/metrics', verifyToken, (req, res) => {
+  req.query.format = 'prometheus';
+  return handleRedisHealthOps(req, res);
+});
+
+/**
  * API信息端点
  */
-app.get('/api/info', (req, res) => {
-  res.json({
+app.get('/api/info', verifyToken, (req, res) => {
+  const payload = {
     name: 'VF物流数据分析平台API',
     version: '1.0.0',
     description: 'VF物流数据分析平台后端API服务',
-    endpoints: {
+    requestId: req.requestId,
+    supportedBrands: ['DICKIES', 'TNF', 'ICEBREAKER', 'VANS', 'TIMBERLAND', 'SMARTWOOL'],
+    supportedDateFormats: ['YYYY-MM-DD'],
+    rateLimits: {
+      requests: '1000 per 15 minutes per IP',
+      window: '15 minutes'
+    }
+  };
+
+  if (!isProduction) {
+    payload.endpoints = {
       overview: {
         '/api/overview/kpi': '获取总览KPI指标',
         '/api/overview/status-distribution': '获取状态分布统计',
@@ -210,31 +458,29 @@ app.get('/api/info', (req, res) => {
       },
       system: {
         '/api/health': '健康检查',
+        '/api/health/redis': 'Redis健康与回退指标（管理员，支持format=prometheus）',
+        '/api/health/redis/metrics': 'Redis Prometheus抓取端点（管理员）',
         '/api/info': 'API信息'
       }
-    },
-    database: {
+    };
+    payload.database = {
       type: 'Oracle',
       schema: 'APP_CMS',
       tables: ['TSK_LIST_TASK', 'BAS_CODES', 'DOC_COMPLAINT']
-    },
-    supportedBrands: ['DICKIES', 'TNF', 'ICEBREAKER', 'VANS', 'TIMBERLAND', 'SMARTWOOL'],
-    supportedDateFormats: ['YYYY-MM-DD'],
-    rateLimits: {
-      requests: '1000 per 15 minutes per IP',
-      window: '15 minutes'
-    }
-  });
+    };
+  }
+
+  res.json(payload);
 });
 
 /**
  * 404处理
  */
 app.use('/api/*', (req, res) => {
-  res.status(404).json({
-    error: 'API端点不存在',
-    message: `路径 ${req.path} 未找到`,
-    availableEndpoints: '/api/info'
+  return sendError(res, req, {
+    status: 404,
+    code: ERROR_CODES.RESOURCE_NOT_FOUND,
+    error: `路径 ${req.path} 未找到`
   });
 });
 
@@ -242,32 +488,16 @@ app.use('/api/*', (req, res) => {
  * 全局错误处理中间件
  */
 app.use((error, req, res, next) => {
-  console.error('API错误:', error);
-  
-  // Oracle数据库连接错误
-  if (error.code && error.code.startsWith('ORA-')) {
-    return res.status(503).json({
-      error: '数据库连接错误',
-      message: '暂时无法连接到数据库，请稍后重试',
-      code: error.code
-    });
-  }
-  
-  // 请求超时错误
-  if (error.code === 'TIMEOUT') {
-    return res.status(408).json({
-      error: '请求超时',
-      message: '数据查询超时，请缩小查询范围后重试'
-    });
-  }
-  
-  // 默认服务器错误
-  res.status(500).json({
-    error: '服务器内部错误',
-    message: '服务器遇到了一个意外的情况',
-    requestId: req.headers['x-request-id'] || 'unknown',
-    timestamp: new Date().toISOString()
+  console.error('API错误:', {
+    requestId: req.requestId,
+    path: req.path,
+    method: req.method,
+    message: error.message,
+    stack: error.stack
   });
+
+  const normalizedError = normalizeError(error, { isProduction });
+  return sendError(res, req, normalizedError);
 });
 
 /**
@@ -317,6 +547,10 @@ async function startServer() {
       console.log('🚀 VF物流数据分析平台API服务器启动成功');
       console.log(`📡 服务器地址: http://localhost:${PORT}`);
       console.log(`📊 API文档: http://localhost:${PORT}/api/info`);
+      console.log(`🔒 HTTPS强制: ${shouldEnforceHttps ? 'enabled' : 'disabled'}`);
+      console.log(`🔀 HTTPS重定向: ${shouldRedirectToHttps ? 'enabled' : 'disabled'}`);
+      console.log(`🛡️ HSTS: max-age=${Number.isFinite(hstsMaxAge) && hstsMaxAge > 0 ? hstsMaxAge : 31536000}; includeSubDomains=${hstsIncludeSubDomains}; preload=${hstsPreload}`);
+      console.log(`🌐 trust proxy: ${trustProxySetting === false ? 'disabled' : trustProxySetting}`);
       console.log(`💓 健康检查: http://localhost:${PORT}/api/health`);
       console.log(`🔍 环境: ${process.env.NODE_ENV || 'development'}`);
       console.log(`📦 版本: 1.0.0`);

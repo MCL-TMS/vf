@@ -13,6 +13,9 @@ const express = require('express');
 const router = express.Router();
 const { getConnection } = require('../config/database-api');
 const oracledb = require('oracledb'); // 🔥 新增：导入 oracledb 以使用 OUT_FORMAT_OBJECT
+const { getBrandMapping } = require('../utils/brandMapping');
+const { buildScopedBrandFilter, getAuthorizedCustomerNos } = require('../utils/brandScope');
+const { ERROR_CODES, sendError, sendRouteError } = require('../utils/apiError');
 
 /**
  * 🎯 异常监控分析 - 主接口
@@ -24,8 +27,6 @@ const oracledb = require('oracledb'); // 🔥 新增：导入 oracledb 以使用
  * - brand: 品牌代码 (可选，默认: all)
  * - platform: 平台 (可选，默认: all)
  * - selfFlag: 自管标识 (可选，Y/N)
- * - userBrands: 用户品牌权限 (可选，逗号分隔的品牌代码)
- * 
  * 返回数据：
  * {
  *   success: true,
@@ -42,18 +43,20 @@ router.get('/overview', async (req, res) => {
   let connection;
   
   try {
-    const { dateFrom, dateTo, brand, platform, selfFlag, userBrands } = req.query;
+    const { dateFrom, dateTo, brand, platform, selfFlag } = req.query;
+    const authorizedCustomerNos = getAuthorizedCustomerNos(req.user);
     
     console.log('🔄 [Exception-Analysis] 收到异常监控分析请求:', { 
-      dateFrom, dateTo, brand, platform, selfFlag, userBrands 
+      dateFrom, dateTo, brand, platform, selfFlag, authorizedCustomerNos 
     });
     
     // 🔒 参数验证
     if (!dateFrom || !dateTo) {
-      return res.status(400).json({
-        success: false,
+      return sendError(res, req, {
+        status: 400,
+        code: ERROR_CODES.VALIDATION_ERROR,
         error: '缺少必需的日期参数',
-        message: '请提供dateFrom和dateTo参数'
+        details: { requiredFields: ['dateFrom', 'dateTo'] }
       });
     }
     
@@ -66,36 +69,16 @@ router.get('/overview', async (req, res) => {
       dateFrom,
       dateTo
     };
+    const brandMapping = await getBrandMapping();
     
-    // 🔥 构建用户品牌权限过滤条件
-    let userBrandsFilter = '';
-    if (userBrands) {
-      const brandArray = Array.isArray(userBrands) 
-        ? userBrands 
-        : userBrands.split(',').map(b => b.trim()).filter(Boolean);
-      
-      console.log('🔐 [Exception-Analysis] 用户品牌权限:', brandArray);
-      
-      // 非管理员 - 限制品牌范围
-      if (brandArray.length > 0 && !brandArray.includes('all') && !brandArray.includes('ALL')) {
-        const placeholders = brandArray.map((_, index) => `:userBrand${index}`).join(', ');
-        userBrandsFilter = ` AND t.CUSTOMERNO IN (${placeholders})`;
-        
-        brandArray.forEach((brandCode, index) => {
-          queryParams[`userBrand${index}`] = brandCode;
-        });
-        
-        console.log(`✅ [Exception-Analysis] 应用品牌权限过滤: ${brandArray.join(', ')}`);
-      }
-    }
-    
-    // 🔥 构建品牌筛选条件
-    let brandFilter = '';
-    if (brand && brand !== 'all') {
-      brandFilter = ` AND t.CUSTOMERNO = :brand`;
-      queryParams.brand = brand;
-      console.log(`🏷️ [Exception-Analysis] 品牌筛选: ${brand}`);
-    }
+    const brandFilter = buildScopedBrandFilter({
+      queryParams,
+      requestedBrands: brand,
+      authorizedCustomerNos,
+      brandMapping,
+      fieldName: 't.CUSTOMERNO',
+      paramPrefix: 'brand'
+    });
     
     // 🔥 构建平台筛选条件
     let platformFilter = '';
@@ -135,7 +118,6 @@ router.get('/overview', async (req, res) => {
       )
         AND t.TSK_MERGE_NO IS NOT NULL
         AND t.PATCH_REASON_GS IS NOT NULL
-        ${userBrandsFilter}
         ${brandFilter}
         ${platformFilter}
         ${selfFlagFilter}
@@ -183,7 +165,6 @@ router.get('/overview', async (req, res) => {
       )
         AND t.TSK_MERGE_NO IS NOT NULL
         AND t.PATCH_REASON_GS IS NOT NULL
-        ${userBrandsFilter}
         ${brandFilter}
         ${platformFilter}
         ${selfFlagFilter}
@@ -214,7 +195,6 @@ router.get('/overview', async (req, res) => {
       )
         AND t.TSK_MERGE_NO IS NOT NULL
         AND t.PATCH_REASON_GS IS NOT NULL
-        ${userBrandsFilter}
         ${brandFilter}
         ${platformFilter}
         ${selfFlagFilter}
@@ -243,7 +223,6 @@ router.get('/overview', async (req, res) => {
       )
         AND t.TSK_MERGE_NO IS NOT NULL
         AND t.PATCH_REASON_GS IS NOT NULL
-        ${userBrandsFilter}
         ${brandFilter}
         ${platformFilter}
         ${selfFlagFilter}
@@ -273,7 +252,6 @@ router.get('/overview', async (req, res) => {
       )
         AND t.TSK_MERGE_NO IS NOT NULL
         AND t.PATCH_REASON_GS IS NOT NULL
-        ${userBrandsFilter}
         ${brandFilter}
         ${platformFilter}
         ${selfFlagFilter}
@@ -354,13 +332,8 @@ router.get('/overview', async (req, res) => {
     
   } catch (error) {
     console.error('❌ [Exception-Analysis] 查询异常:', error);
-    
-    res.status(500).json({
-      success: false,
-      error: '异常监控分析查询失败',
-      message: error.message,
-      timestamp: new Date().toISOString()
-    });
+
+    return sendRouteError(res, req, error, { fallbackError: '异常监控分析查询失败' });
   } finally {
     if (connection) {
       try {
@@ -384,7 +357,8 @@ router.get('/carrier/:carrierName', async (req, res) => {
   
   try {
     const { carrierName } = req.params;
-    const { dateFrom, dateTo, brand, platform, selfFlag, userBrands } = req.query;
+    const { dateFrom, dateTo, brand, platform, selfFlag } = req.query;
+    const authorizedCustomerNos = getAuthorizedCustomerNos(req.user);
     
     console.log(`🔄 [Exception-Analysis] 查询快递商异常详情: ${carrierName}`, { 
       dateFrom, dateTo, brand, platform 
@@ -392,9 +366,11 @@ router.get('/carrier/:carrierName', async (req, res) => {
     
     // 🔒 参数验证
     if (!dateFrom || !dateTo) {
-      return res.status(400).json({
-        success: false,
-        error: '缺少必需的日期参数'
+      return sendError(res, req, {
+        status: 400,
+        code: ERROR_CODES.VALIDATION_ERROR,
+        error: '缺少必需的日期参数',
+        details: { requiredFields: ['dateFrom', 'dateTo'] }
       });
     }
     
@@ -407,29 +383,16 @@ router.get('/carrier/:carrierName', async (req, res) => {
       dateTo,
       carrierName
     };
+    const brandMapping = await getBrandMapping();
     
-    // 🔥 构建筛选条件
-    let userBrandsFilter = '';
-    if (userBrands) {
-      const brandArray = Array.isArray(userBrands) 
-        ? userBrands 
-        : userBrands.split(',').map(b => b.trim()).filter(Boolean);
-      
-      if (brandArray.length > 0 && !brandArray.includes('all') && !brandArray.includes('ALL')) {
-        const placeholders = brandArray.map((_, index) => `:userBrand${index}`).join(', ');
-        userBrandsFilter = ` AND t.CUSTOMERNO IN (${placeholders})`;
-        
-        brandArray.forEach((brandCode, index) => {
-          queryParams[`userBrand${index}`] = brandCode;
-        });
-      }
-    }
-    
-    let brandFilter = '';
-    if (brand && brand !== 'all') {
-      brandFilter = ` AND t.CUSTOMERNO = :brand`;
-      queryParams.brand = brand;
-    }
+    const brandFilter = buildScopedBrandFilter({
+      queryParams,
+      requestedBrands: brand,
+      authorizedCustomerNos,
+      brandMapping,
+      fieldName: 't.CUSTOMERNO',
+      paramPrefix: 'brand'
+    });
     
     let platformFilter = '';
     if (platform && platform !== 'all') {
@@ -464,7 +427,6 @@ router.get('/carrier/:carrierName', async (req, res) => {
         AND t.TSK_MERGE_NO IS NOT NULL
         AND t.CARRIERID_NAME = :carrierName
         AND t.PATCH_REASON_GS IS NOT NULL
-        ${userBrandsFilter}
         ${brandFilter}
         ${platformFilter}
         ${selfFlagFilter}
@@ -498,13 +460,8 @@ router.get('/carrier/:carrierName', async (req, res) => {
     
   } catch (error) {
     console.error('❌ [Exception-Analysis] 快递商异常详情查询失败:', error);
-    
-    res.status(500).json({
-      success: false,
-      error: '快递商异常详情查询失败',
-      message: error.message,
-      timestamp: new Date().toISOString()
-    });
+
+    return sendRouteError(res, req, error, { fallbackError: '快递商异常详情查询失败' });
   } finally {
     if (connection) {
       try {

@@ -57,8 +57,8 @@ const menuItems = [
       { id: "overview-logistics", label: "物流监控", icon: Truck },
       { id: "overview-regional", label: "地域分析", icon: Map, hidden: true },  // 🔒 隐藏未完成功能
       { id: "overview-exceptions", label: "异常监控", icon: AlertTriangle, hidden: false },  // 🔒 隐藏未完成功能
-      { id: "overview-trends", label: "趋势分析", icon: TrendingUp, hidden: true },  // 🔒 隐藏未完成功能
-      { id: "overview-weight", label: "重量分析", icon: Scale, hidden: true }  // 🔒 隐藏未完成功能
+      { id: "overview-trends", label: "趋势分析", icon: TrendingUp, hidden:false },  // 🔒 隐藏未完成功能
+      { id: "overview-weight", label: "重量分析", icon: Scale, hidden: false }  // 🔒 隐藏未完成功能
     ]
   },
   {

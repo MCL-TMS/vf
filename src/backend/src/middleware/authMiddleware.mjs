@@ -5,9 +5,22 @@
 
 import jwt from 'jsonwebtoken';
 
-// JWT密钥（从环境变量读取，开发环境使用默认值）
-const JWT_SECRET = process.env.JWT_SECRET || 'vf-logistics-default-secret-key-2025';
-const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || 'vf-logistics-refresh-secret-key-2025';
+// JWT密钥必须通过环境变量配置，禁止使用代码中的默认回退
+function getJwtSecret() {
+  const secret = process.env.JWT_SECRET;
+  if (!secret) {
+    throw new Error('JWT_SECRET is required but not configured');
+  }
+  return secret;
+}
+
+function getJwtRefreshSecret() {
+  const secret = process.env.JWT_REFRESH_SECRET;
+  if (!secret) {
+    throw new Error('JWT_REFRESH_SECRET is required but not configured');
+  }
+  return secret;
+}
 
 // Token有效期
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '15m'; // Access token: 15分钟
@@ -22,7 +35,7 @@ const tokenBlacklist = new Set();
  * @returns {string} JWT Token
  */
 export function generateToken(payload) {
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
+  return jwt.sign(payload, getJwtSecret(), { expiresIn: JWT_EXPIRES_IN });
 }
 
 /**
@@ -36,7 +49,7 @@ export function generateRefreshToken(payload) {
     userId: payload.userId,
     type: 'refresh'
   };
-  return jwt.sign(refreshPayload, JWT_REFRESH_SECRET, { expiresIn: JWT_REFRESH_EXPIRES_IN });
+  return jwt.sign(refreshPayload, getJwtRefreshSecret(), { expiresIn: JWT_REFRESH_EXPIRES_IN });
 }
 
 /**
@@ -45,7 +58,7 @@ export function generateRefreshToken(payload) {
  * @returns {Object} 解码后的payload
  */
 export function verifyRefreshToken(token) {
-  return jwt.verify(token, JWT_REFRESH_SECRET);
+  return jwt.verify(token, getJwtRefreshSecret());
 }
 
 /**
@@ -119,7 +132,7 @@ export function verifyToken(req, res, next) {
     }
 
     // 验证token
-    const decoded = jwt.verify(token, JWT_SECRET);
+    const decoded = jwt.verify(token, getJwtSecret());
     
     // 将解码后的用户信息附加到请求对象上
     req.user = {
@@ -184,8 +197,8 @@ export function optionalVerifyToken(req, res, next) {
 }
 
 export {
-  JWT_SECRET,
+  getJwtSecret,
   JWT_EXPIRES_IN,
-  JWT_REFRESH_SECRET,
+  getJwtRefreshSecret,
   JWT_REFRESH_EXPIRES_IN
 };

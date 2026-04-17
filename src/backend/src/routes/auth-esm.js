@@ -5,10 +5,13 @@
 
 import express from 'express';
 import oracledb from 'oracledb';
+import { createRequire } from 'module';
 import { generateToken, generateRefreshToken, verifyRefreshToken, revokeToken, verifyToken } from '../middleware/authMiddleware.mjs';
 import { loginRateLimit, clearAttempts } from '../middleware/rateLimitMiddleware.mjs';
 
 const router = express.Router();
+const require = createRequire(import.meta.url);
+const { verifyAndUpgradePassword } = require('../utils/passwordUtils');
 
 /**
  * POST /api/auth/login
@@ -17,7 +20,7 @@ const router = express.Router();
  * Request Body:
  * {
  *   userId: string,    // 登录账号
- *   password: string   // 密码（MD5哈希）
+ *   password: string   // 明文密码（仅通过HTTPS传输）
  * }
  * 
  * Response:
@@ -92,12 +95,17 @@ router.post('/login', loginRateLimit, async (req, res) => {
       });
     }
 
-    // 验证密码（MD5哈希对比）
-    if (user.PASSWORD !== password) {
+    const passwordCheck = await verifyAndUpgradePassword(password, user.PASSWORD);
+
+    if (!passwordCheck.isValid) {
       return res.status(401).json({
         success: false,
         error: '用户名或密码错误'
       });
+    }
+
+    if (passwordCheck.needsUpgrade) {
+      console.warn(`⚠️ [Auth] 用户 ${user.USERID} 使用${passwordCheck.legacyFormat}密码格式登录，当前账号仅具备查询权限，未执行密码升级`);
     }
 
     // 🔥 准备JWT载荷

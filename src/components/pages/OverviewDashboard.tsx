@@ -9,6 +9,7 @@ import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, 
 import { OrderKPIData } from "../../data/orderData";
 import { FilteredData } from "../../utils/dataFilter";
 import { getUnifiedExceptionData } from "../../utils/exceptionDataCalculator";
+import { DataLoadingState } from "../DataLoadingState";
 
 interface OverviewDashboardProps {
   filteredData: FilteredData;
@@ -17,6 +18,7 @@ interface OverviewDashboardProps {
   onKPIDetailClick: (kpi: OrderKPIData) => void; // 修改为接受OrderKPIData对象
   onExceptionClick?: (exceptionType: string, brand?: string, courier?: string) => void;
   useRealData?: boolean;
+  apiLoading?: boolean;
   dateRange?: { from: string; to: string };
   rawApiData?: any; // 新增：API原始数据，用于获取异常统计
   unifiedCourierData?: any; // 新增：统一的快递商数据
@@ -29,6 +31,7 @@ export function OverviewDashboard({
   onKPIDetailClick, 
   onExceptionClick,
   useRealData = false,
+  apiLoading = false,
   dateRange,
   rawApiData
 }: OverviewDashboardProps) {
@@ -38,6 +41,43 @@ export function OverviewDashboard({
       <div className="flex items-center justify-center h-64">
         <div className="text-center">
           <div className="text-lg font-medium text-muted-foreground">加载中...</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (useRealData && apiLoading) {
+    return (
+      <div className="space-y-6">
+        <div className="grid grid-cols-1 gap-4">
+          <DataLoadingState
+            loading={true}
+            dataType="总览指标"
+            loadingMessage="正在加载总览指标..."
+            minHeight="140px"
+          />
+        </div>
+        <div className="grid grid-cols-1 gap-4">
+          <DataLoadingState
+            loading={true}
+            dataType="KPI卡片"
+            loadingMessage="正在加载KPI卡片..."
+            minHeight="240px"
+          />
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <DataLoadingState
+            loading={true}
+            dataType="异常监控模块"
+            loadingMessage="正在加载异常监控模块..."
+            minHeight="260px"
+          />
+          <DataLoadingState
+            loading={true}
+            dataType="快递占比模块"
+            loadingMessage="正在加载快递占比模块..."
+            minHeight="260px"
+          />
         </div>
       </div>
     );
@@ -293,20 +333,19 @@ export function OverviewDashboard({
                 <div className="grid grid-cols-2 gap-2 text-xs mt-2">
                   <div className="flex items-center space-x-1">
                     <span className="text-muted-foreground">环比:</span>
-                    <div className={`flex items-center space-x-1 ${(momGrowth ?? 12.5) >= 0 ? 'text-accent-mid-red' : 'text-accent-mid-green'}`}>
-                      {(() => {
-                        const displayValue = momGrowth ?? 12.5; // 使用虚拟数值12.5%作为默认值
-                        return (
-                          <>
-                            {displayValue >= 0 ? (
-                              <TrendingUp className="h-3 w-3" />
-                            ) : (
-                              <TrendingDown className="h-3 w-3" />
-                            )}
-                            <span>{formatGrowth(displayValue)}</span>
-                          </>
-                        );
-                      })()}
+                    <div className={`flex items-center space-x-1 ${momGrowth !== null && momGrowth >= 0 ? 'text-accent-mid-red' : 'text-accent-mid-green'}`}>
+                      {momGrowth !== null ? (
+                        <>
+                          {momGrowth >= 0 ? (
+                            <TrendingUp className="h-3 w-3" />
+                          ) : (
+                            <TrendingDown className="h-3 w-3" />
+                          )}
+                          <span>{formatGrowth(momGrowth)}</span>
+                        </>
+                      ) : (
+                        <span className="text-muted-foreground">-</span>
+                      )}
                     </div>
                   </div>
                   <div className="flex items-center space-x-1">

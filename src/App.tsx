@@ -17,6 +17,8 @@ import { getPageTitle, getCurrentDateRange, scrollToTop } from "./utils/appUtils
 import { useAuth, AuthProvider } from "./contexts/AuthContext";
 import { BrandProvider } from "./contexts/BrandContext";
 import { PlatformProvider } from "./contexts/PlatformContext";
+import { chinaProvinceData } from "./data/chinaMapData";
+import { WEIGHT_RANGE_LABELS } from "./constants/weightRanges";
 
 import { ApiService } from "./services/apiService";
 import { Toaster } from "./components/ui/sonner";
@@ -33,8 +35,11 @@ function AppContent() {
   useEffect(() => {
     ApiService.setAuthTokenGetter(getToken);
     ApiService.setRefreshTokenCallbacks(getRefreshToken, refreshToken); // 🔥 新增：设置refresh token回调
+    ApiService.setAuthFailureHandler(async () => {
+      await logout();
+    });
     console.log('✅ [App] API Service完全配置完成（包含token刷新）');
-  }, [getToken, getRefreshToken, refreshToken]);
+  }, [getToken, getRefreshToken, refreshToken, logout]);
 
   const {
     activeMenu,
@@ -149,13 +154,38 @@ function AppContent() {
   }, [user, isLoading]); // 只在用户信息变化时执行
 
   const currentDateRange = getCurrentDateRange(activeMenu, dateRange, regionalDateRange);
+  const coveredProvinceCount = chinaProvinceData.filter((item) => Number(item.orders || 0) > 0).length;
+  const weightRangeCount = WEIGHT_RANGE_LABELS.length;
 
-  // 判断是否应该使用真实数据 - 基于API连接状态，支持总览和物流页面
-  const shouldUseRealDataInApp = (
-    activeMenu === 'overview-dashboard' || 
-    activeMenu === 'overview-logistics' || 
+  // 判断是否应该使用真实数据：
+  // 物流页优先使用hook返回的数据状态，避免被短暂的健康检查状态误伤导致“有数据却显示空”
+  const isDataDrivenMenu = (
+    activeMenu === 'overview-dashboard' ||
+    activeMenu === 'overview-logistics' ||
     activeMenu === 'overview-exceptions'
-  ) && apiConnectionStatus === 'connected';
+  );
+
+  const shouldUseRealDataInApp = isDataDrivenMenu;
+
+  const refetchDataRef = React.useRef(refetchData);
+  useEffect(() => {
+    refetchDataRef.current = refetchData;
+  }, [refetchData]);
+
+  // 兜底：已登录且处于真实数据页面但尚未拿到数据时，主动重拉一次
+  useEffect(() => {
+    if (!isLoading && isAuthenticated && shouldUseRealDataInApp && !apiLoading && !hasData && !apiError) {
+      refetchDataRef.current();
+    }
+  }, [
+    isLoading,
+    isAuthenticated,
+    shouldUseRealDataInApp,
+    apiLoading,
+    hasData,
+    apiError
+  ]);
+
   
   // 🔍 调试实时数据状态
   if (activeMenu === 'overview-logistics') {
@@ -294,6 +324,8 @@ function AppContent() {
               logisticsExceptionFilter={logisticsExceptionFilter}
               onClearExceptionFilter={eventHandlers.handleClearExceptionFilter}
               useRealData={shouldUseRealDataInApp}
+              apiLoading={apiLoading}
+              onRefetchData={refetchData}
               rawApiData={rawApiData}
               unifiedCourierData={unifiedCourierData}
               userBrands={user?.customerNos || []} // 🔥 新增：传递用户品牌权限
@@ -313,25 +345,25 @@ function AppContent() {
                   {activeMenu === "overview-logistics" && logisticsExceptionFilter.type && (
                     <span className="inline-flex items-center px-2 py-1 rounded-full bg-accent-bright-orange text-accent-dark-orange font-medium text-xs animate-pulse">
                       <AlertTriangle className="h-3 w-3 mr-1" />
-                      异常监控激活
+                       监控激活
                     </span>
                   )}
                 </div>
                 <div className="flex items-center space-x-6">
                   <div className="flex items-center space-x-2">
-                    <span>异常监控:</span>
+                    <span>监控:</span>
                     <span className="text-accent-mid-orange font-medium">已启用</span>
                   </div>
                   {activeMenu === "overview-regional" && (
                     <div className="flex items-center space-x-2">
                       <span>地图覆盖:</span>
-                      <span className="text-maersk-blue font-medium">34省份</span>
+                      <span className="text-maersk-blue font-medium">{coveredProvinceCount}省份</span>
                     </div>
                   )}
                   {activeMenu === "overview-weight" && (
                     <div className="flex items-center space-x-2">
                       <span>重量区间:</span>
-                      <span className="text-maersk-blue font-medium">8个档次</span>
+                      <span className="text-maersk-blue font-medium">{weightRangeCount}个区间</span>
                     </div>
                   )}
                   {activeMenu === "overview-logistics" && (
@@ -342,7 +374,7 @@ function AppContent() {
                   )}
                   <div className="flex items-center space-x-2">
                     <span>Maersk</span>
-                    <span className="text-maersk-blue font-medium">© 2025</span>
+                    <span className="text-maersk-blue font-medium">© 2026</span>
                   </div>
                 </div>
               </div>

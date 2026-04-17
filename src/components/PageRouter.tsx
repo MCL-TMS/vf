@@ -27,9 +27,11 @@ interface PageRouterProps {
   onDateRangeChange: (from: string, to: string) => void;
   onKPIDetailClick: (kpi: any) => void;
   onExceptionClick: (filter: LogisticsExceptionFilter) => void;
+  onRefetchData?: () => void;
   logisticsExceptionFilter: LogisticsExceptionFilter;
   onClearExceptionFilter: () => void;
   useRealData?: boolean;
+  apiLoading?: boolean;
   rawApiData?: any;
   unifiedCourierData?: any;
   userBrands?: string[]; // 🔥 新增：用户品牌权限
@@ -47,9 +49,11 @@ export function PageRouter({
   onDateRangeChange,
   onKPIDetailClick,
   onExceptionClick,
+  onRefetchData,
   logisticsExceptionFilter,
   onClearExceptionFilter,
   useRealData = false,
+  apiLoading = false,
   rawApiData,
   unifiedCourierData,
   userBrands // 🔥 新增：接收用户品牌权限
@@ -73,6 +77,7 @@ export function PageRouter({
           {...commonProps}
           onKPIDetailClick={onKPIDetailClick}
           onExceptionClick={onExceptionClick}
+          apiLoading={apiLoading}
         />
       );
       
@@ -107,6 +112,8 @@ export function PageRouter({
           onClearExceptionFilter={onClearExceptionFilter}
           onNavigateToMonitoring={onExceptionClick}
           useRealData={useRealData}
+          apiLoading={apiLoading}
+          onRefetchData={onRefetchData}
           rawApiData={rawApiData}
           unifiedCourierData={unifiedCourierData}
         />
@@ -128,6 +135,7 @@ export function PageRouter({
           dateRange={dateRange}
           onDateRangeChange={onDateRangeChange}
           useRealData={useRealData}
+          apiLoading={apiLoading}
         />
       );
       

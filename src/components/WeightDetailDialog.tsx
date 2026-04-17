@@ -84,7 +84,7 @@ export function WeightDetailDialog({ isOpen, onClose, weightRange }: WeightDetai
   // 数据驱动的优化洞察生成
   const generateOptimizationInsights = (): OptimizationInsight[] => {
     const insights: OptimizationInsight[] = [];
-    const isLightWeight = weightRange.range === '0-1kg' || weightRange.range === '1-3kg';
+    const isLightWeight = weightRange.range === '0-0.5kg' || weightRange.range === '0.5-1kg';
 
     // 1. 基于重量区间的包装优化
     if (isLightWeight) {
@@ -193,7 +193,7 @@ export function WeightDetailDialog({ isOpen, onClose, weightRange }: WeightDetai
   const optimizationInsights = generateOptimizationInsights();
   const totalPotentialSaving = optimizationInsights.reduce((sum, insight) => sum + insight.expectedSaving, 0);
 
-  const isLightWeight = weightRange.range === '0-1kg' || weightRange.range === '1-3kg';
+  const isLightWeight = weightRange.range === '0-0.5kg' || weightRange.range === '0.5-1kg';
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>

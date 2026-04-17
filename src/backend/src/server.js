@@ -85,6 +85,7 @@ import brandsRouter from './routes/brands-esm.js';  // 🔥 品牌映射路由 (
 import platformsRouter from './routes/platforms-esm.js';  // 🔥 平台映射路由 (ES6版本)
 import orderDetailsRouter from './routes/order-details.mjs';  // 🔥 订单明细导出路由 (MJS版本)
 import exceptionAnalysisRouter from './routes/exception-analysis.js';  // 🔥 异常监控分析路由
+import trendsRouter from './routes/trends-esm.js';  // 🔥 趋势分析路由 (ES6版本)
 // import regionalRouter from './routes/regional.js';
 // import trendsRouter from './routes/trends.js';
 
@@ -103,8 +104,8 @@ app.use('/api/logistics', verifyToken, logisticsRouter);  // 🔥 关键：注�
 app.use('/api/upload', verifyToken, uploadRouter);  // 🔥 文件上传路由（需要认证）
 app.use('/api/order-details', verifyToken, orderDetailsRouter);  // 🔥 订单明细导出路由（需要认证）
 app.use('/api/exception-analysis', verifyToken, exceptionAnalysisRouter);  // 🔥 异常监控分析路由（需要认证）
+app.use('/api/trends', verifyToken, trendsRouter);  // 🔥 趋势分析路由（需要认证）
 // app.use('/api/regional', regionalRouter);    // 地域分析路由
-// app.use('/api/trends', trendsRouter);        // 趋势分析路由
 
 // 添加健康检查到API路由中
 app.get('/api/health', async (req, res) => {
@@ -275,6 +276,11 @@ async function startServer() {
       console.log(`   GET  /api/upload/history   - 上传历史记录`);
       console.log(`   GET  /api/upload/city-mapping - 城市区域映射`);
       console.log(`   POST /api/upload/validate-format - 文件格式验证`);
+      console.log('\n📊 趋势分析API (新增):');
+      console.log(`   GET  /api/trends/orders    - 订单趋势数据`);
+      console.log(`   GET  /api/trends/performance - 性能趋势数据`);
+      console.log(`   GET  /api/trends/carriers  - 快递商趋势对比`);
+      console.log(`   GET  /api/trends/forecast  - 趋势预测`);
       console.log('='.repeat(60));
     });
     

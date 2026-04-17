@@ -7,6 +7,14 @@ const jwt = require('jsonwebtoken');
 const rateLimit = require('express-rate-limit');
 const { body, query, validationResult } = require('express-validator');
 
+function getJwtSecret() {
+  const secret = process.env.JWT_SECRET;
+  if (!secret) {
+    throw new Error('JWT_SECRET is required but not configured');
+  }
+  return secret;
+}
+
 // ========================================
 // 1. JWT Token认证中间件
 // ========================================
@@ -29,7 +37,7 @@ function authenticateToken(req, res, next) {
   }
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
+    const decoded = jwt.verify(token, getJwtSecret());
     req.user = decoded; // 将解码后的用户信息附加到request
     next();
   } catch (err) {
@@ -57,7 +65,7 @@ function authenticateToken(req, res, next) {
 function generateToken(payload, expiresIn = '8h') {
   return jwt.sign(
     payload,
-    process.env.JWT_SECRET || 'your-secret-key',
+    getJwtSecret(),
     { expiresIn }
   );
 }
@@ -70,7 +78,7 @@ function refreshToken(oldToken) {
   try {
     const decoded = jwt.verify(
       oldToken,
-      process.env.JWT_SECRET || 'your-secret-key',
+      getJwtSecret(),
       { ignoreExpiration: true } // 允许过期的token刷新
     );
     

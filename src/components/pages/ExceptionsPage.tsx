@@ -41,6 +41,7 @@ import {
 } from "lucide-react";
 import type { FilteredData } from "../../utils/dataFilter";
 import { ApiService } from "../../services/apiService";
+import { DataLoadingState } from "../DataLoadingState";
 
 interface ExceptionsPageProps {
   filteredData: FilteredData;
@@ -48,6 +49,7 @@ interface ExceptionsPageProps {
   dateRange?: { from: string; to: string };
   onDateRangeChange?: (from: string, to: string) => void;
   useRealData?: boolean;
+  apiLoading?: boolean;
   selectedPlatform?: string | null;
   selectedSelfFlag?: string;
   userBrands?: string[];
@@ -58,6 +60,7 @@ export function ExceptionsPage({
   selectedBrand, 
   dateRange,
   useRealData = true,
+  apiLoading = false,
   selectedPlatform,
   selectedSelfFlag,
   userBrands
@@ -474,34 +477,47 @@ export function ExceptionsPage({
   const filteredExceptions = getFilteredExceptions();
   const highPriorityCount = filteredExceptions.filter(ex => ex.severity === "high").length;
 
-  // 🔥 Loading状态
-  if (isLoading) {
+  // 🔥 Loading状态（模块级）
+  if (isLoading || (useRealData && apiLoading)) {
     return (
-      <div className="flex items-center justify-center h-96">
-        <div className="text-center">
-          <Loader2 className="h-12 w-12 animate-spin text-maersk-blue mx-auto mb-4" />
-          <p className="text-functional-mid-grey">正在加载异常数据...</p>
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-semibold text-maersk-black">⚠️ 异常监控分析</h1>
+            <p className="text-functional-mid-grey">
+              基于实际业务数据的异常类型分析，按责任归属精准分类统计
+            </p>
+          </div>
         </div>
+        <DataLoadingState
+          loading={true}
+          dataType="异常监控模块"
+          loadingMessage="正在加载异常分析数据..."
+          minHeight="420px"
+        />
       </div>
     );
   }
 
-  // 🔥 Error状态
+  // 🔥 Error状态（模块级）
   if (error) {
     return (
-      <div className="flex items-center justify-center h-96">
-        <Card className="max-w-md">
-          <CardContent className="p-6">
-            <div className="text-center">
-              <AlertCircle className="h-12 w-12 text-accent-dark-red mx-auto mb-4" />
-              <h3 className="text-lg font-semibold text-maersk-black mb-2">数据加载失败</h3>
-              <p className="text-functional-mid-grey mb-4">{error}</p>
-              <p className="text-sm text-functional-mid-grey">
-                请检查后端服务是否启动（cd backend && npm start）
-              </p>
-            </div>
-          </CardContent>
-        </Card>
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-semibold text-maersk-black">⚠️ 异常监控分析</h1>
+            <p className="text-functional-mid-grey">
+              基于实际业务数据的异常类型分析，按责任归属精准分类统计
+            </p>
+          </div>
+        </div>
+        <DataLoadingState
+          error={error}
+          hasData={false}
+          dataType="异常监控模块"
+          noDataMessage="异常数据加载失败，请稍后重试"
+          minHeight="420px"
+        />
       </div>
     );
   }

@@ -10,6 +10,8 @@ const express = require('express');
 const router = express.Router();
 const { getConnection, DateHelper } = require('../config/database-api');
 const { getBrandMapping } = require('../utils/brandMapping'); // ✅ 导入动态品牌映射
+const { buildScopedBrandFilter, getAuthorizedCustomerNos } = require('../utils/brandScope');
+const { ERROR_CODES, sendError, sendRouteError } = require('../utils/apiError');
 
 // 🔧 共享工具函数 - 与overview.js保持一致
 const QueryUtils = {
@@ -27,7 +29,6 @@ const QueryUtils = {
   BASE_WHERE_CONDITIONS: `
     WHERE (
       (t.WMS_OUTBOUND_TIME IS NOT NULL AND to_char(t.WMS_OUTBOUND_TIME,'yyyy-mm-dd') >= :dateFrom AND to_char(t.WMS_OUTBOUND_TIME,'yyyy-mm-dd') <= :dateTo)
-      AND t.CUSTOMERNO IN ('18405', '18405-1', '18405-2', '18405-3', '18405-4', '18405-5')
       AND t.TSK_MERGE_NO IS NOT NULL
     )`,
 
@@ -67,49 +68,20 @@ const QueryUtils = {
   },
 
   // 🔧 修复：构建筛选条件和参数 - 支持多品牌数组和用户权限
-  buildFilters(queryParams, brand, platform, selfFlag, userBrands) {
+  buildFilters(queryParams, brand, platform, selfFlag, authorizedCustomerNos) {
     let brandFilter = '';
     let platformFilter = '';
     let selfFlagFilter = '';
     
     // 🔐 品牌筛选：支持单个品牌、多个品牌（数组）、用户权限范围
-    if (brand && brand !== 'all') {
-      if (Array.isArray(brand)) {
-        // 多个品牌：使用 IN 查询
-        const brandCodes = brand.map(b => this.BRAND_MAPPING[b] || b);
-        const placeholders = brandCodes.map((_, index) => `:brand${index}`).join(', ');
-        brandFilter = ` AND t.CUSTOMERNO IN (${placeholders})`;
-        
-        // 绑定每个品牌参数
-        brandCodes.forEach((code, index) => {
-          queryParams[`brand${index}`] = code;
-        });
-        
-        console.log(`🏷️ [Brand Filter] 多品牌筛选 (${brandCodes.length}个):`, brandCodes);
-      } else {
-        // 单个品牌：使用 = 查询
-        brandFilter = ` AND t.CUSTOMERNO = :brand`;
-        queryParams.brand = this.BRAND_MAPPING[brand] || brand;
-        console.log(`🏷️ [Brand Filter] 单品牌筛选:`, queryParams.brand);
-      }
-    } else {
-      // 🔥 修复：当选择"全部品牌"时，使用用户权限范围
-      if (userBrands && Array.isArray(userBrands) && userBrands.length > 0) {
-        const placeholders = userBrands.map((_, index) => `:userBrand${index}`).join(', ');
-        brandFilter = ` AND t.CUSTOMERNO IN (${placeholders})`;
-        
-        // 绑定每个用户品牌参数
-        userBrands.forEach((code, index) => {
-          queryParams[`userBrand${index}`] = code;
-        });
-        
-        console.log('🔐 [Brand Filter] 全部品牌 - 基于用户权限 (%d个): %o', userBrands.length, userBrands);
-      } else {
-        // 回退：如果没有userBrands，使用VF品牌范围
-        brandFilter = ` AND t.CUSTOMERNO IN ('18405', '18405-1', '18405-2', '18405-3', '18405-4', '18405-5')`;
-        console.log(`🏷️ [Brand Filter] 全部品牌 - 回退到VF品牌范围（未提供userBrands）`);
-      }
-    }
+    brandFilter = buildScopedBrandFilter({
+      queryParams,
+      requestedBrands: brand,
+      authorizedCustomerNos,
+      brandMapping: this.BRAND_MAPPING_FALLBACK,
+      fieldName: 't.CUSTOMERNO',
+      paramPrefix: 'brand'
+    });
     
     if (platform && platform !== 'all') {
       platformFilter = ` AND EXISTS (
@@ -143,52 +115,32 @@ const QueryUtils = {
   },
 
   // ✅ 异步构建筛选条件和参数（支持动态品牌映射）
-  async buildFiltersAsync(queryParams, brand, platform, selfFlag, userBrands) {
+  async buildFiltersAsync(queryParams, brand, platform, selfFlag, authorizedCustomerNos) {
     let brandFilter = '';
     let platformFilter = '';
     let selfFlagFilter = '';
+
+    const normalizedBrand = Array.isArray(brand)
+      ? brand.filter(v => typeof v === 'string' && v.trim()).map(v => v.trim())
+      : (typeof brand === 'string' && brand.trim() ? brand.trim() : undefined);
+    const hasRequestedBrand = Array.isArray(normalizedBrand)
+      ? normalizedBrand.length > 0 && !normalizedBrand.includes('all')
+      : Boolean(normalizedBrand && normalizedBrand !== 'all');
+    const hasAuthorizedCustomerNos = Array.isArray(authorizedCustomerNos) && authorizedCustomerNos.length > 0;
+
+    // 仅在需要品牌过滤/转换时加载映射，管理员全量查询不触发
+    const BRAND_MAPPING = (hasRequestedBrand || hasAuthorizedCustomerNos)
+      ? await getBrandMapping()
+      : {};
     
-    // 🔥 获取动态品牌映射
-    const BRAND_MAPPING = await getBrandMapping();
-    
-    // 🔐 品牌筛选：支持单个品牌、多个品牌（数组）、用户权限范围
-    if (brand && brand !== 'all') {
-      if (Array.isArray(brand)) {
-        // 多个品牌：使用 IN 查询
-        const brandCodes = brand.map(b => BRAND_MAPPING[b] || b);
-        const placeholders = brandCodes.map((_, index) => `:brand${index}`).join(', ');
-        brandFilter = ` AND t.CUSTOMERNO IN (${placeholders})`;
-        
-        // 绑定每个品牌参数
-        brandCodes.forEach((code, index) => {
-          queryParams[`brand${index}`] = code;
-        });
-        
-        console.log(`🏷️ [Brand Filter] 多品牌筛选 (${brandCodes.length}个):`, brandCodes);
-      } else {
-        // 单个品牌：使用 = 查询
-        brandFilter = ` AND t.CUSTOMERNO = :brand`;
-        queryParams.brand = BRAND_MAPPING[brand] || brand;
-        console.log(`🏷️ [Brand Filter] 单品牌筛选:`, queryParams.brand);
-      }
-    } else {
-      // 🔥 修复：当选择"全部品牌"时，使用用户权限范围
-      if (userBrands && Array.isArray(userBrands) && userBrands.length > 0) {
-        const placeholders = userBrands.map((_, index) => `:userBrand${index}`).join(', ');
-        brandFilter = ` AND t.CUSTOMERNO IN (${placeholders})`;
-        
-        // 绑定每个用户品牌参数
-        userBrands.forEach((code, index) => {
-          queryParams[`userBrand${index}`] = code;
-        });
-        
-        console.log('🔐 [Brand Filter] 全部品牌 - 基于用户权限 (%d个): %o', userBrands.length, userBrands);
-      } else {
-        // 回退：如果没有userBrands，使用VF品牌范围
-        brandFilter = ` AND t.CUSTOMERNO IN ('18405', '18405-1', '18405-2', '18405-3', '18405-4', '18405-5')`;
-        console.log(`🏷️ [Brand Filter] 全部品��� - 回退到VF品牌范围（未提供userBrands）`);
-      }
-    }
+    brandFilter = buildScopedBrandFilter({
+      queryParams,
+      requestedBrands: normalizedBrand,
+      authorizedCustomerNos,
+      brandMapping: BRAND_MAPPING,
+      fieldName: 't.CUSTOMERNO',
+      paramPrefix: 'brand'
+    });
     
     if (platform && platform !== 'all') {
       platformFilter = ` AND EXISTS (
@@ -231,45 +183,34 @@ router.get('/brands', async (req, res) => {
   let connection;
   
   try {
-    const { dateFrom, dateTo, brand, platform, selfFlag, userBrands } = req.query;
+    const { dateFrom, dateTo, brand, platform, selfFlag } = req.query;
+    const authorizedCustomerNos = getAuthorizedCustomerNos(req.user);
     
-    console.log('🔄 [Logistics-Brands查询] 收到请求参数:', { dateFrom, dateTo, brand, platform, selfFlag, userBrands });
+    console.log('🔄 [Logistics-Brands查询] 收到请求参数:', { dateFrom, dateTo, brand, platform, selfFlag, authorizedCustomerNos });
     
     if (!dateFrom || !dateTo) {
-      return res.status(400).json({
+      return sendError(res, req, {
+        status: 400,
+        code: ERROR_CODES.VALIDATION_ERROR,
         error: '缺少必需的日期参数',
-        message: '请提供dateFrom和dateTo参数'
+        details: { requiredFields: ['dateFrom', 'dateTo'] }
       });
     }
 
     if (!DateHelper.isValidDateString(dateFrom) || !DateHelper.isValidDateString(dateTo)) {
-      return res.status(400).json({
+      return sendError(res, req, {
+        status: 400,
+        code: ERROR_CODES.VALIDATION_ERROR,
         error: '日期格式无效',
-        message: '请提供有效的YYYY-MM-DD格式日期'
+        details: { expectedFormat: 'YYYY-MM-DD' }
       });
     }
 
     connection = await getConnection();
     
-    // 🔧 解析userBrands参数（可能是字符串或数组）
-    let parsedUserBrands = null;
-    if (userBrands) {
-      if (Array.isArray(userBrands)) {
-        parsedUserBrands = userBrands;
-      } else if (typeof userBrands === 'string') {
-        try {
-          parsedUserBrands = JSON.parse(userBrands);
-        } catch (e) {
-          // 如果不是JSON，尝试按逗号分隔
-          parsedUserBrands = userBrands.split(',').map(b => b.trim());
-        }
-      }
-      console.log('🔐 [Logistics-Brands] 解析后的userBrands:', parsedUserBrands);
-    }
-    
-    // 🔧 使用统一的筛选条件构建逻辑（传递userBrands）
+    // 🔧 使用统一的筛选条件构建逻辑（基于登录态品牌范围）
     const params = { dateFrom, dateTo };
-    const { brandFilter, platformFilter, selfFlagFilter } = await QueryUtils.buildFiltersAsync(params, brand, platform, selfFlag, parsedUserBrands);
+    const { brandFilter, platformFilter, selfFlagFilter } = await QueryUtils.buildFiltersAsync(params, brand, platform, selfFlag, authorizedCustomerNos);
 
     // 🔥 品牌物流异常数据详细统计查询（✅ 从数据库查询品牌名称）
     const brandsQuery = `
@@ -379,10 +320,7 @@ router.get('/brands', async (req, res) => {
 
   } catch (error) {
     console.error('品牌物流异常数据查询失败:', error);
-    res.status(500).json({
-      error: '服务器内部错误',
-      message: '获取品牌物流异常数据失败'
-    });
+    return sendRouteError(res, req, error, { fallbackError: '获取品牌物流异常数据失败' });
   } finally {
     if (connection) {
       try {
@@ -403,20 +341,25 @@ router.get('/couriers', async (req, res) => {
   
   try {
     const { dateFrom, dateTo, brand, platform, selfFlag } = req.query;
+    const authorizedCustomerNos = getAuthorizedCustomerNos(req.user);
     
     console.log('🔄 [Logistics-Couriers查询] 收到请求参数:', { dateFrom, dateTo, brand, platform, selfFlag });
     
     if (!dateFrom || !dateTo) {
-      return res.status(400).json({
+      return sendError(res, req, {
+        status: 400,
+        code: ERROR_CODES.VALIDATION_ERROR,
         error: '缺少必需的日期参数',
-        message: '请提供dateFrom和dateTo参数'
+        details: { requiredFields: ['dateFrom', 'dateTo'] }
       });
     }
 
     if (!DateHelper.isValidDateString(dateFrom) || !DateHelper.isValidDateString(dateTo)) {
-      return res.status(400).json({
+      return sendError(res, req, {
+        status: 400,
+        code: ERROR_CODES.VALIDATION_ERROR,
         error: '日期格式无效',
-        message: '请提供有效的YYYY-MM-DD格式日期'
+        details: { expectedFormat: 'YYYY-MM-DD' }
       });
     }
 
@@ -424,7 +367,7 @@ router.get('/couriers', async (req, res) => {
     
     // 🔧 使用统一的筛选条件构建逻辑
     const params = { dateFrom, dateTo };
-    const { brandFilter, platformFilter, selfFlagFilter } = await QueryUtils.buildFiltersAsync(params, brand, platform, selfFlag);
+    const { brandFilter, platformFilter, selfFlagFilter } = await QueryUtils.buildFiltersAsync(params, brand, platform, selfFlag, authorizedCustomerNos);
 
     // 🔥 快递公司性能统计查询
     const couriersQuery = `
@@ -542,10 +485,7 @@ router.get('/couriers', async (req, res) => {
 
   } catch (error) {
     console.error('快递商性能查询失败:', error);
-    res.status(500).json({
-      error: '服务器内部错误',
-      message: '获取快递商性能数据失败'
-    });
+    return sendRouteError(res, req, error, { fallbackError: '获取快递商性能数据失败' });
   } finally {
     if (connection) {
       try {
@@ -566,17 +506,23 @@ router.get('/status-distribution', async (req, res) => {
   
   try {
     const { dateFrom, dateTo, brand, platform, selfFlag } = req.query;
+    const authorizedCustomerNos = getAuthorizedCustomerNos(req.user);
     
     if (!dateFrom || !dateTo) {
-      return res.status(400).json({
-        error: '缺少必需的日期参数'
+      return sendError(res, req, {
+        status: 400,
+        code: ERROR_CODES.VALIDATION_ERROR,
+        error: '缺少必需的日期参数',
+        details: { requiredFields: ['dateFrom', 'dateTo'] }
       });
     }
 
     if (!DateHelper.isValidDateString(dateFrom) || !DateHelper.isValidDateString(dateTo)) {
-      return res.status(400).json({
+      return sendError(res, req, {
+        status: 400,
+        code: ERROR_CODES.VALIDATION_ERROR,
         error: '日期格式无效',
-        message: '请提供有效的YYYY-MM-DD格式日期'
+        details: { expectedFormat: 'YYYY-MM-DD' }
       });
     }
 
@@ -584,7 +530,7 @@ router.get('/status-distribution', async (req, res) => {
     
     // 🔧 使用统一的筛选条件构建逻辑
     const params = { dateFrom, dateTo };
-    const { brandFilter, platformFilter, selfFlagFilter } = await QueryUtils.buildFiltersAsync(params, brand, platform, selfFlag);
+    const { brandFilter, platformFilter, selfFlagFilter } = await QueryUtils.buildFiltersAsync(params, brand, platform, selfFlag, authorizedCustomerNos);
 
     const statusDistributionQuery = `
       SELECT 
@@ -694,10 +640,7 @@ router.get('/status-distribution', async (req, res) => {
 
   } catch (error) {
     console.error('状态分布查询失败:', error);
-    res.status(500).json({
-      error: '服务器内部错误',
-      message: '获取状态分布数据失败'
-    });
+    return sendRouteError(res, req, error, { fallbackError: '获取状态分布数据失败' });
   } finally {
     if (connection) {
       try {
@@ -718,17 +661,23 @@ router.get('/weight-distribution', async (req, res) => {
   
   try {
     const { dateFrom, dateTo, brand, platform, selfFlag } = req.query;
+    const authorizedCustomerNos = getAuthorizedCustomerNos(req.user);
     
     if (!dateFrom || !dateTo) {
-      return res.status(400).json({
-        error: '缺少必需的日期参数'
+      return sendError(res, req, {
+        status: 400,
+        code: ERROR_CODES.VALIDATION_ERROR,
+        error: '缺少必需的日期参数',
+        details: { requiredFields: ['dateFrom', 'dateTo'] }
       });
     }
 
     if (!DateHelper.isValidDateString(dateFrom) || !DateHelper.isValidDateString(dateTo)) {
-      return res.status(400).json({
+      return sendError(res, req, {
+        status: 400,
+        code: ERROR_CODES.VALIDATION_ERROR,
         error: '日期格式无效',
-        message: '请提供有效的YYYY-MM-DD格式日期'
+        details: { expectedFormat: 'YYYY-MM-DD' }
       });
     }
 
@@ -736,7 +685,7 @@ router.get('/weight-distribution', async (req, res) => {
     
     // 🔧 使用统一的筛选条件构建逻辑
     const params = { dateFrom, dateTo };
-    const { brandFilter, platformFilter, selfFlagFilter } = await QueryUtils.buildFiltersAsync(params, brand, platform, selfFlag);
+    const { brandFilter, platformFilter, selfFlagFilter } = await QueryUtils.buildFiltersAsync(params, brand, platform, selfFlag, authorizedCustomerNos);
 
     const weightQuery = `
       WITH weight_categories AS (
@@ -835,10 +784,7 @@ router.get('/weight-distribution', async (req, res) => {
 
   } catch (error) {
     console.error('重量分布查询失败:', error);
-    res.status(500).json({
-      error: '服务器内部错误',
-      message: '获取重量分布数据失败'
-    });
+    return sendRouteError(res, req, error, { fallbackError: '获取重量分布数据失败' });
   } finally {
     if (connection) {
       try {
@@ -862,7 +808,6 @@ router.get('/weight-distribution', async (req, res) => {
  * - brand: 品牌筛选 (可选)
  * - platform: 平台筛选 (可选)
  * - selfFlag: 自管筛选 (可选)
- * - userBrands: 用户品牌筛选 (可选)
  * 
  * 返回数据:
  * {
@@ -877,37 +822,22 @@ router.get('/forwarding', async (req, res) => {
   let connection;
   
   try {
-    const { startDate, endDate, brand, platform, selfFlag, userBrands } = req.query; // 🔥 新增：接收userBrands参数
+    const { startDate, endDate, brand, platform, selfFlag } = req.query;
+    const authorizedCustomerNos = getAuthorizedCustomerNos(req.user);
     
-    console.log('🔁 [Forwarding API] 接收请求参数:', { startDate, endDate, brand, platform, selfFlag, userBrands }); // 🔥 新增：记录userBrands
+    console.log('🔁 [Forwarding API] 接收请求参数:', { startDate, endDate, brand, platform, selfFlag, authorizedCustomerNos });
     
     // 参数验证
     if (!startDate || !endDate) {
-      return res.status(400).json({
-        success: false,
+      return sendError(res, req, {
+        status: 400,
+        code: ERROR_CODES.VALIDATION_ERROR,
         error: '缺少必需参数',
-        message: '请提供startDate和endDate参数'
+        details: { requiredFields: ['startDate', 'endDate'] }
       });
     }
     
     connection = await getConnection();
-    
-    // 🔥 新增：解析userBrands（可能是JSON字符串）
-    let parsedUserBrands = null;
-    if (userBrands) {
-      if (Array.isArray(userBrands)) {
-        parsedUserBrands = userBrands;
-      } else if (typeof userBrands === 'string') {
-        try {
-          parsedUserBrands = JSON.parse(userBrands);
-          console.log('🔐 [Forwarding API] 解析userBrands成功:', parsedUserBrands);
-        } catch (e) {
-          // 如果不是JSON，尝试按逗号分隔
-          parsedUserBrands = userBrands.split(',').map(b => b.trim());
-          console.log('🔐 [Forwarding API] 逗号分隔userBrands:', parsedUserBrands);
-        }
-      }
-    }
     
     // 快递公司名称映射
     const COURIER_NAME_MAPPING = {
@@ -938,7 +868,7 @@ router.get('/forwarding', async (req, res) => {
       brand, 
       platform, 
       selfFlag,
-      parsedUserBrands // 🔥 修复：传递解析后的userBrands
+      authorizedCustomerNos
     );
     
     const totalOrdersSql = `
@@ -946,7 +876,6 @@ router.get('/forwarding', async (req, res) => {
       FROM APP_CMS.TSK_LIST_TASK t
       WHERE WMS_OUTBOUND_TIME >= TO_DATE(:startDate, 'YYYY-MM-DD')
         AND WMS_OUTBOUND_TIME <= TO_DATE(:endDate, 'YYYY-MM-DD') + 1
-        AND t.CUSTOMERNO IN ('18405', '18405-1', '18405-2', '18405-3', '18405-4', '18405-5')
         ${brandFilter}
         ${platformFilter}
         ${selfFlagFilter}
@@ -971,7 +900,6 @@ router.get('/forwarding', async (req, res) => {
       
         AND WMS_OUTBOUND_TIME >= TO_DATE(:startDate, 'YYYY-MM-DD')
         AND WMS_OUTBOUND_TIME <= TO_DATE(:endDate, 'YYYY-MM-DD') + 1
-        AND t.CUSTOMERNO IN ('18405', '18405-1', '18405-2', '18405-3', '18405-4', '18405-5')
         ${brandFilter}
         ${platformFilter}
         ${selfFlagFilter}
@@ -1006,7 +934,6 @@ router.get('/forwarding', async (req, res) => {
       WHERE TR_FLAG2 = 'Y'
         AND WMS_OUTBOUND_TIME >= TO_DATE(:startDate, 'YYYY-MM-DD')
         AND WMS_OUTBOUND_TIME <= TO_DATE(:endDate, 'YYYY-MM-DD') + 1
-        AND t.CUSTOMERNO IN ('18405', '18405-1', '18405-2', '18405-3', '18405-4', '18405-5')
         ${brandFilter}
         ${platformFilter}
         ${selfFlagFilter}
@@ -1040,7 +967,6 @@ router.get('/forwarding', async (req, res) => {
         WHERE TR_FLAG2 = 'Y'
           AND WMS_OUTBOUND_TIME >= TO_DATE(:startDate, 'YYYY-MM-DD')
           AND WMS_OUTBOUND_TIME <= TO_DATE(:endDate, 'YYYY-MM-DD') + 1
-          AND t.CUSTOMERNO IN ('18405', '18405-1', '18405-2', '18405-3', '18405-4', '18405-5')
           ${brandFilter}
           ${platformFilter}
           ${selfFlagFilter}
@@ -1059,7 +985,6 @@ router.get('/forwarding', async (req, res) => {
       WHERE t.TR_FLAG2 = 'Y'
         AND t.WMS_OUTBOUND_TIME >= TO_DATE(:startDate, 'YYYY-MM-DD')
         AND t.WMS_OUTBOUND_TIME <= TO_DATE(:endDate, 'YYYY-MM-DD') + 1
-        AND t.CUSTOMERNO IN ('18405', '18405-1', '18405-2', '18405-3', '18405-4', '18405-5')
         ${brandFilter}
         ${platformFilter}
         ${selfFlagFilter}
@@ -1110,11 +1035,7 @@ router.get('/forwarding', async (req, res) => {
     
   } catch (error) {
     console.error('❌ [Forwarding API] 转寄分析查询失败:', error);
-    res.status(500).json({
-      success: false,
-      error: '服务器内部错误',
-      message: '获取转寄分析数据失败: ' + error.message
-    });
+    return sendRouteError(res, req, error, { fallbackError: '获取转寄分析数据失败' });
   } finally {
     if (connection) {
       try {
@@ -1160,8 +1081,8 @@ router.get('/interception', async (req, res) => {
     selfFlag,
     interceptionStatus = 'all',
     interceptLocation = 'all',
-    userBrands // 🔥 新增：接收userBrands参数
   } = req.query;
+  const authorizedCustomerNos = getAuthorizedCustomerNos(req.user);
   
   console.log('📋 查询参数:', {
     startDate,
@@ -1171,14 +1092,16 @@ router.get('/interception', async (req, res) => {
     selfFlag,
     interceptionStatus,
     interceptLocation,
-    userBrands // 🔥 新增：记录userBrands
+    authorizedCustomerNos
   });
 
   // 参数验证
   if (!startDate || !endDate) {
-    return res.status(400).json({
-      success: false,
-      error: '缺少必需参数：startDate 和 endDate'
+    return sendError(res, req, {
+      status: 400,
+      code: ERROR_CODES.VALIDATION_ERROR,
+      error: '缺少必需参数：startDate 和 endDate',
+      details: { requiredFields: ['startDate', 'endDate'] }
     });
   }
 
@@ -1188,31 +1111,14 @@ router.get('/interception', async (req, res) => {
     connection = await getConnection();
     console.log('✅ 数据库连接成功');
     
-    // 🔥 新增：解析userBrands（可能是JSON字符串）
-    let parsedUserBrands = null;
-    if (userBrands) {
-      if (Array.isArray(userBrands)) {
-        parsedUserBrands = userBrands;
-      } else if (typeof userBrands === 'string') {
-        try {
-          parsedUserBrands = JSON.parse(userBrands);
-          console.log('🔐 [Interception API] 解析userBrands成功:', parsedUserBrands);
-        } catch (e) {
-          // 如果不是JSON，尝试按逗号分隔
-          parsedUserBrands = userBrands.split(',').map(b => b.trim());
-          console.log('🔐 [Interception API] 逗号分隔userBrands:', parsedUserBrands);
-        }
-      }
-    }
-
-      // 🔧 使用统一的筛选条件构建逻辑（传递userBrands）
+      // 🔧 使用统一的筛选条件构建逻辑（基于登录态品牌范围）
     const queryParams = { startDate, endDate };
     const { brandFilter, platformFilter, selfFlagFilter } = await QueryUtils.buildFiltersAsync(
       queryParams, 
       brand, 
       platform, 
       selfFlag,
-      parsedUserBrands // 🔥 传递解析后的userBrands
+      authorizedCustomerNos
     );
     
     // 🔥 拦截分析特殊处理：将表别名从 t. 替换为 tsk.
@@ -1543,12 +1449,8 @@ router.get('/interception', async (req, res) => {
   } catch (error) {
     console.error('❌ 拦截分析查询失败:', error);
     console.log('========================================\n');
-    
-    res.status(500).json({
-      success: false,
-      error: '查询拦截数据失败',
-      message: error.message
-    });
+
+    return sendRouteError(res, req, error, { fallbackError: '查询拦截数据失败' });
   } finally {
     if (connection) {
       try {
@@ -1563,5 +1465,75 @@ router.get('/interception', async (req, res) => {
 // 🔥 注册订单明细子路由
 const orderDetailsRouter = require('./order-details');
 router.use('/order-details', orderDetailsRouter);
+
+/**
+ * 重量分析权限接口（兼容入口）
+ * GET /api/logistics/weight-analysis/permissions
+ */
+router.get('/weight-analysis/permissions', async (req, res) => {
+  let connection;
+
+  try {
+    const queryUserId = req.query.userId;
+    const internalRoleIds = new Set(['WPSAMIN', 'WPSADMIN']);
+    const externalRoleIds = new Set(['CUSTOMER', 'CS', 'BRAND', 'VF_BRAND', 'LFAM']);
+
+    let userId = req.user?.userId || queryUserId;
+    let roleId = String(req.user?.roleId || '').toUpperCase();
+    let userName = req.user?.userName || '';
+
+    if ((!roleId || !userName) && userId) {
+      connection = await getConnection();
+      const roleResult = await connection.execute(
+        `
+          SELECT ROLE_ID, USER_NAME_C
+          FROM APP_CMS.RWSYS_USER
+          WHERE UPPER(USERID) = UPPER(:userId)
+        `,
+        { userId }
+      );
+
+      if (roleResult.rows?.length > 0) {
+        roleId = String(roleResult.rows[0][0] || '').toUpperCase();
+        userName = userName || String(roleResult.rows[0][1] || '');
+      }
+    }
+
+    if (!userId) {
+      return sendError(res, req, {
+        status: 401,
+        code: ERROR_CODES.AUTH_FAILED,
+        error: '未提供用户ID'
+      });
+    }
+
+    const isInternalUser = internalRoleIds.has(roleId) || Boolean(req.user?.isAdmin);
+    const isExternalUser = externalRoleIds.has(roleId) || !isInternalUser;
+
+    return res.json({
+      success: true,
+      data: {
+        userId,
+        userName,
+        roleId,
+        isInternalUser,
+        isExternalUser,
+        allowedWeightTypes: isInternalUser ? ['payable', 'receivable'] : ['receivable'],
+        defaultWeightType: 'receivable'
+      }
+    });
+  } catch (error) {
+    console.error('❌ [Logistics] 重量分析权限查询失败:', error);
+    return sendRouteError(res, req, error, { fallbackError: '获取重量分析权限失败' });
+  } finally {
+    if (connection) {
+      try {
+        await connection.close();
+      } catch (err) {
+        console.error('关闭数据库连接失败:', err);
+      }
+    }
+  }
+});
 
 module.exports = router;

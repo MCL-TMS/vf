@@ -103,14 +103,14 @@ export function ForwardingAnalysis({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [apiData, setApiData] = useState<any>(null);
-  const [isUsingRealData, setIsUsingRealData] = useState(false); // 🔥 新增：标记当前是否使用真实数据
   const { user } = useAuth(); // 🔥 新增：获取当前用户信息
 
   // 🔥 获取真实API数据
   useEffect(() => {
     if (!useRealData) {
       console.log('📊 [ForwardingAnalysis] 使用模拟数据模式');
-      setIsUsingRealData(false);
+      setError(null);
+      setApiData(null);
       return;
     }
 
@@ -140,9 +140,8 @@ export function ForwardingAnalysis({
         });
 
         if (response.success && response.data) {
-          console.log('✅ [ForwardingAnalysis] 转寄数据获取成功，切换到真实数据:', response.data);
+          console.log('✅ [ForwardingAnalysis] 转寄数据获取成功:', response.data);
           setApiData(response);
-          setIsUsingRealData(true); // ✅ 成功获取真实数据
         } else {
           throw new Error('API返回失败状态');
         }
@@ -153,10 +152,9 @@ export function ForwardingAnalysis({
           return;
         }
         
-        console.warn('⚠️ [ForwardingAnalysis] API连接失败，继续使用虚拟数据:', err.message);
+        console.warn('⚠️ [ForwardingAnalysis] API连接失败:', err.message);
         setError(err.message || '获取数据失败');
-        setIsUsingRealData(false); // ❌ API失败，使用虚拟数据
-        setApiData(null); // 清空API数据
+        setApiData(null);
       } finally {
         setLoading(false);
       }
@@ -171,10 +169,13 @@ export function ForwardingAnalysis({
     };
   }, [useRealData, dateRange, selectedBrand, selectedPlatform, selectedSelfFlag]);
 
-  // 🔥 数据处理逻辑 - 优先使用虚拟数据，只有API成功时才用真实数据
+  // 🔥 数据处理逻辑 - 真实模式仅使用API数据；模拟模式仅在显式关闭真实数据时使用
   const getProcessedData = () => {
-    // ✅ 只有当isUsingRealData=true且apiData存在时才使用真实数据
-    if (isUsingRealData && apiData?.data) {
+    if (useRealData) {
+      if (!apiData?.data) {
+        return null;
+      }
+
       const { addressChange, outOfRange } = apiData.data;
       
       console.log('🔄 [ForwardingAnalysis] 使用API真实数据:', { addressChange, outOfRange });
@@ -228,7 +229,7 @@ export function ForwardingAnalysis({
       };
     }
 
-    // 🔥 默认使用虚拟数据
+    // 显式模拟数据模式
     console.log('📊 [ForwardingAnalysis] 使用虚拟模拟数据');
     const addressChangeData = forwardingData.find(d => d.type === 'address_change');
     const outOfRangeData = forwardingData.find(d => d.type === 'out_of_range');
@@ -245,10 +246,49 @@ export function ForwardingAnalysis({
     };
   };
 
-  const { addressChange, outOfRange, provincesByCourier, forwardingData: chartData } = getProcessedData();
+  const processedData = getProcessedData();
 
-  // 🔥 加载状态显示（不阻塞UI，显示虚拟数据）
-  // 移除了阻塞式的loading和error状态，改为在标题处显示数据源
+  if (useRealData && loading) {
+    return (
+      <Card className="maersk-card">
+        <CardContent className="p-6">
+          <div className="flex items-center justify-center h-64 text-functional-mid-grey gap-2">
+            <Loader2 className="h-5 w-5 animate-spin" />
+            正在加载转寄数据...
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (useRealData && error) {
+    return (
+      <Card className="maersk-card">
+        <CardContent className="p-6">
+          <Alert variant="destructive">
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>
+              转寄分析数据加载失败：{error}
+            </AlertDescription>
+          </Alert>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (useRealData && !processedData) {
+    return (
+      <Card className="maersk-card">
+        <CardContent className="p-6">
+          <div className="flex items-center justify-center h-64 text-functional-mid-grey">
+            当前筛选条件下暂无转寄数据
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const { addressChange, outOfRange, provincesByCourier, forwardingData: chartData } = processedData!;
 
   // 获取所有快递商的省份数据（用于超区转寄Tab）
   const courierKeys = Object.keys(provincesByCourier);
@@ -261,7 +301,7 @@ export function ForwardingAnalysis({
             <span>🔁</span>
             <span>转寄单分析</span>
           </div>
-          {isUsingRealData && apiData && (
+          {useRealData && apiData && (
             <Badge variant="outline" className="maersk-badge-primary">
               实时数据
             </Badge>

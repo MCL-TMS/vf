@@ -380,8 +380,7 @@ router.post('/change-password',
       // 更新密码
       await connection.execute(
         `UPDATE APP_CMS.RWSYS_USER 
-         SET PASSWORD = :newPassword,
-             UPDATE_TIME = SYSDATE
+         SET PASSWORD = :newPassword
          WHERE USERID = :userId`,
         {
           newPassword: hashedNewPassword,

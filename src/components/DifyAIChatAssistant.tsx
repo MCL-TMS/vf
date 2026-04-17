@@ -38,15 +38,14 @@ interface DifyAIChatAssistantProps {
  * 配置步骤：
  * 1. 在Dify创建聊天助手应用
  * 2. 复制 /DIFY_CHATBOT_PROMPT.md 中的提示词到Dify系统提示词
- * 3. 获取Dify API密钥，替换下面的 DIFY_API_KEY
- * 4. 配置DIFY_API_URL（如使用自建Dify服务器）
+ * 3. 在前端环境变量中配置 VITE_DIFY_API_KEY
+ * 4. 配置 VITE_DIFY_API_URL（如使用自建Dify服务器）
  */
 
-// 🔧 配置项 - 请替换为你的实际值
+// 🔧 配置项 - 从环境变量读取
 const DIFY_CONFIG = {
-  API_KEY: 'YOUR_DIFY_API_KEY_HERE', // ⚠️ 请替换为你的Dify API Key
-  API_URL: 'https://api.dify.ai/v1', // Dify API地址（云服务）
-  // API_URL: 'http://your-dify-server.com/v1', // 自建Dify服务器
+  API_KEY: (import.meta.env.VITE_DIFY_API_KEY || '').trim(),
+  API_URL: import.meta.env.VITE_DIFY_API_URL || 'https://api.dify.ai/v1',
 };
 
 export function DifyAIChatAssistant({ 
@@ -65,7 +64,7 @@ export function DifyAIChatAssistant({
   const scrollAreaRef = useRef<HTMLDivElement>(null);
 
   // 检查API配置
-  const isConfigured = DIFY_CONFIG.API_KEY !== 'YOUR_DIFY_API_KEY_HERE';
+  const isConfigured = DIFY_CONFIG.API_KEY.length > 0 && DIFY_CONFIG.API_KEY.startsWith('app-');
 
   // 初始欢迎消息
   useEffect(() => {
@@ -75,7 +74,7 @@ export function DifyAIChatAssistant({
         role: 'assistant',
         content: isConfigured 
           ? `你好！我是VF物流时效分析助手 🤖\n\n我由**GPT大模型**驱动，可以帮你：\n\n📊 **深度数据分析**\n• 分析${metricType}时效数据\n• 计算多维度指标\n• 对比快递商表现\n\n🎯 **专业建议**\n• 生成优化改进方案\n• 评估快递商绩效\n• ROI成本效益分析\n\n💡 **快速开始**\n试着问我：\n"哪个快递商表现最好？"\n"如何提升时效达成率？"\n"给我一份完整的优化建议报告"`
-          : `⚠️ AI助手尚未配置\n\n请按以下步骤配置Dify：\n\n1️⃣ 在Dify创建聊天助手应用\n2️⃣ 复制 /DIFY_CHATBOT_PROMPT.md 中的提示词\n3️⃣ 获取API密钥\n4️⃣ 在 DifyAIChatAssistant.tsx 中配置密钥\n\n配置完成后即可使用GPT分析数据！`,
+          : `⚠️ AI助手尚未配置\n\n请按以下步骤配置Dify：\n\n1️⃣ 在Dify创建聊天助手应用\n2️⃣ 复制 /DIFY_CHATBOT_PROMPT.md 中的提示词\n3️⃣ 获取API密钥\n4️⃣ 在前端环境变量中配置 VITE_DIFY_API_KEY\n\n配置完成后即可使用GPT分析数据！`,
         timestamp: new Date()
       };
       setMessages([welcomeMessage]);
