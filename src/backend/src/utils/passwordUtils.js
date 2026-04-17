@@ -1,9 +1,64 @@
 /**
  * 密码加密工具
- * 使用bcrypt进行密码哈希和验证
+ * 使用Node内置crypto进行密码哈希、验证和旧口令迁移
  */
 
-const bcrypt = require('bcrypt');
+const crypto = require('crypto');
+
+const SCRYPT_PREFIX = 'scrypt';
+const SCRYPT_KEY_LENGTH = 64;
+
+function timingSafeEqualHex(leftHex, rightHex) {
+  try {
+    const left = Buffer.from(leftHex, 'hex');
+    const right = Buffer.from(rightHex, 'hex');
+
+    if (left.length !== right.length) {
+      return false;
+    }
+
+    return crypto.timingSafeEqual(left, right);
+  } catch (error) {
+    return false;
+  }
+}
+
+function isScryptHash(password) {
+  return typeof password === 'string' && password.startsWith(`${SCRYPT_PREFIX}$`);
+}
+
+function isBcryptHash(password) {
+  return typeof password === 'string' && password.startsWith('$2');
+}
+
+function isLegacyMd5Hash(password) {
+  return typeof password === 'string' && /^[a-f0-9]{32}$/i.test(password);
+}
+
+function hashLegacyMd5(plainPassword) {
+  return crypto.createHash('md5').update(plainPassword, 'utf8').digest('hex');
+}
+
+function verifyScryptPassword(plainPassword, storedPassword) {
+  const [, salt, derivedKey] = storedPassword.split('$');
+
+  if (!salt || !derivedKey) {
+    return false;
+  }
+
+  const computed = crypto.scryptSync(plainPassword, salt, SCRYPT_KEY_LENGTH).toString('hex');
+  return timingSafeEqualHex(computed, derivedKey);
+}
+
+async function verifyBcryptPassword(plainPassword, storedPassword) {
+  try {
+    const bcrypt = require('bcrypt');
+    return await bcrypt.compare(plainPassword, storedPassword);
+  } catch (error) {
+    console.error('bcrypt校验失败或依赖缺失:', error.message);
+    return false;
+  }
+}
 
 /**
  * 加密密码
@@ -12,10 +67,9 @@ const bcrypt = require('bcrypt');
  */
 async function hashPassword(plainPassword) {
   try {
-    // 使用10轮加密（安全性和性能的平衡）
-    const saltRounds = 10;
-    const hashedPassword = await bcrypt.hash(plainPassword, saltRounds);
-    return hashedPassword;
+    const salt = crypto.randomBytes(16).toString('hex');
+    const derivedKey = crypto.scryptSync(plainPassword, salt, SCRYPT_KEY_LENGTH).toString('hex');
+    return `${SCRYPT_PREFIX}$${salt}$${derivedKey}`;
   } catch (error) {
     console.error('密码加密失败:', error);
     throw new Error('密码加密失败');
@@ -30,12 +84,57 @@ async function hashPassword(plainPassword) {
  */
 async function verifyPassword(plainPassword, hashedPassword) {
   try {
-    const isMatch = await bcrypt.compare(plainPassword, hashedPassword);
-    return isMatch;
+    if (!hashedPassword) {
+      return false;
+    }
+
+    if (isScryptHash(hashedPassword)) {
+      return verifyScryptPassword(plainPassword, hashedPassword);
+    }
+
+    if (isBcryptHash(hashedPassword)) {
+      return verifyBcryptPassword(plainPassword, hashedPassword);
+    }
+
+    return false;
   } catch (error) {
     console.error('密码验证失败:', error);
     return false;
   }
+}
+
+/**
+ * 验证密码并在命中旧格式时返回升级后的哈希
+ * 旧格式兼容：明文、MD5
+ */
+async function verifyAndUpgradePassword(plainPassword, storedPassword) {
+  if (!storedPassword) {
+    return { isValid: false, needsUpgrade: false, upgradedHash: null, legacyFormat: null };
+  }
+
+  if (isScryptHash(storedPassword) || isBcryptHash(storedPassword)) {
+    const isValid = await verifyPassword(plainPassword, storedPassword);
+    return {
+      isValid,
+      needsUpgrade: false,
+      upgradedHash: null,
+      legacyFormat: null
+    };
+  }
+
+  const plainMatch = storedPassword === plainPassword;
+  const md5Match = isLegacyMd5Hash(storedPassword) && timingSafeEqualHex(hashLegacyMd5(plainPassword), storedPassword.toLowerCase());
+
+  if (!plainMatch && !md5Match) {
+    return { isValid: false, needsUpgrade: false, upgradedHash: null, legacyFormat: null };
+  }
+
+  return {
+    isValid: true,
+    needsUpgrade: true,
+    upgradedHash: await hashPassword(plainPassword),
+    legacyFormat: plainMatch ? 'plain' : 'md5'
+  };
 }
 
 /**
@@ -72,8 +171,7 @@ async function updateAllPasswords(connection) {
     
     for (const user of result.rows) {
       try {
-        // 检查密码是否已经是bcrypt哈希（以$2开头）
-        if (user.PASSWORD.startsWith('$2')) {
+        if (isScryptHash(user.PASSWORD) || isBcryptHash(user.PASSWORD)) {
           console.log(`⏩ 跳过用户 ${user.USERID}（密码已加密）`);
           continue;
         }
@@ -84,8 +182,7 @@ async function updateAllPasswords(connection) {
         // 更新数据库
         await connection.execute(
           `UPDATE APP_CMS.RWSYS_USER 
-           SET PASSWORD = :hashedPassword, 
-               UPDATE_TIME = SYSDATE
+           SET PASSWORD = :hashedPassword
            WHERE USERID = :userId`,
           {
             hashedPassword,
@@ -181,6 +278,9 @@ function validatePasswordStrength(password) {
 module.exports = {
   hashPassword,
   verifyPassword,
+  verifyAndUpgradePassword,
   updateAllPasswords,
-  validatePasswordStrength
+  validatePasswordStrength,
+  isScryptHash,
+  isLegacyMd5Hash
 };

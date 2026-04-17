@@ -12,6 +12,12 @@ const express = require('express');
 const router = express.Router();
 const { getConnection, executeQuery, DateHelper } = require('../config/database-api');
 const { getBrandMapping } = require('../utils/brandMapping'); // ✅ 导入动态品牌映射
+const { buildScopedBrandFilter, getAuthorizedCustomerNos } = require('../utils/brandScope');
+const { ERROR_CODES, sendError, sendRouteError } = require('../utils/apiError');
+
+// 高频看板请求短缓存，降低大数据量场景下重复聚合压力
+const KPI_CACHE_TTL_MS = 30000;
+const kpiResponseCache = new Map();
 
 // 🔧 共享工具函数 - 避免重复代码
 const QueryUtils = {
@@ -36,11 +42,11 @@ const QueryUtils = {
     return `UPPER(COALESCE(bc_brand.COMPANY_ABNAME, t.CUSTOMERNO)) as brand_name`;
   },
 
-  // 🔥 基础WHERE条件 - 移除硬编码的品牌过滤（⚡ 性能优化：使用TRUNC代替to_char）
+  // 🔥 基础WHERE条件 - 移除硬编码品牌过滤（⚡ 性能优化：半开区间避免对列做函数，便于走索引）
   BASE_WHERE_CONDITIONS: `
     WHERE (t.WMS_OUTBOUND_TIME IS NOT NULL 
-           AND TRUNC(t.WMS_OUTBOUND_TIME) >= TO_DATE(:dateFrom, 'YYYY-MM-DD')
-           AND TRUNC(t.WMS_OUTBOUND_TIME) <= TO_DATE(:dateTo, 'YYYY-MM-DD'))
+           AND t.WMS_OUTBOUND_TIME >= TO_DATE(:dateFrom, 'YYYY-MM-DD')
+           AND t.WMS_OUTBOUND_TIME < TO_DATE(:dateTo, 'YYYY-MM-DD') + INTERVAL '1' DAY)
       AND t.TSK_MERGE_NO IS NOT NULL`,
 
   // 平台映射配置 - 前端选择器值到数据库BAS_CODES表中UDF1字段的映射
@@ -103,66 +109,31 @@ const QueryUtils = {
   },
 
   // ✅ 异步构建筛选条件和参数（支持动态品牌映射）
-  async buildFiltersAsync(queryParams, brand, platform, selfFlag, userBrands) {
+  async buildFiltersAsync(queryParams, brand, platform, selfFlag, authorizedCustomerNos) {
     let brandFilter = '';
     let platformFilter = '';
     let selfFlagFilter = '';
-    
-    // 🔥 获取动态品牌映射
-    const BRAND_MAPPING = await getBrandMapping();
-    
+
     // 先对 brand 做类型规范化，避免字符串 / 数组混用导致的类型混淆
     const normalizedBrand = this.normalizeStringOrStringArray(brand);
+    const hasRequestedBrand = Array.isArray(normalizedBrand)
+      ? normalizedBrand.length > 0
+      : Boolean(normalizedBrand);
+    const hasAuthorizedCustomerNos = Array.isArray(authorizedCustomerNos) && authorizedCustomerNos.length > 0;
+
+    // 仅在需要做品牌名<->CUSTOMERNO转换或权限品牌过滤时加载品牌映射
+    const BRAND_MAPPING = (hasRequestedBrand || hasAuthorizedCustomerNos)
+      ? await getBrandMapping()
+      : {};
     
-    // 🔐 品牌筛选：支持单个品牌、多个品牌（数组或逗号分隔字符串）
-    if (normalizedBrand && normalizedBrand !== 'all') {
-      // 🔥 新增：如果是逗号分隔的字符串，拆分为数组
-      let brandArray = normalizedBrand;
-      if (typeof normalizedBrand === 'string' && normalizedBrand.includes(',')) {
-        brandArray = normalizedBrand.split(',').map(b => b.trim()).filter(b => b);
-        console.log(`🔧 [Brand Filter] 检测到逗号分隔字符串，拆分为数组:`, brandArray);
-      } else if (!Array.isArray(normalizedBrand)) {
-        brandArray = [normalizedBrand]; // 单个品牌也转为数组统一处理
-      }
-      
-      if (brandArray.length > 1) {
-        // 多个品牌：使用 IN 查询
-        const brandCodes = brandArray.map(b => BRAND_MAPPING[b] || b);
-        const placeholders = brandCodes.map((_, index) => `:brand${index}`).join(', ');
-        brandFilter = ` AND t.CUSTOMERNO IN (${placeholders})`;
-        
-        // 绑定每个品牌参数
-        brandCodes.forEach((code, index) => {
-          queryParams[`brand${index}`] = code;
-        });
-        
-        console.log(`🏷️ [Brand Filter] 多品牌筛选 (${brandCodes.length}个):`, brandCodes);
-      } else if (brandArray.length === 1) {
-        // 单个品牌：使用 = 查询
-        brandFilter = ` AND t.CUSTOMERNO = :brand`;
-        queryParams.brand = BRAND_MAPPING[brandArray[0]] || brandArray[0];
-        console.log(`🏷️ [Brand Filter] 单品牌筛选:`, queryParams.brand);
-      }
-    } else {
-      // 🔥 修复：当选择"全部品牌"时，使用用户权限范围
-      if (userBrands && Array.isArray(userBrands) && userBrands.length > 0) {
-        const placeholders = userBrands.map((_, index) => `:userBrand${index}`).join(', ');
-        brandFilter = ` AND t.CUSTOMERNO IN (${placeholders})`;
-        
-        // 绑定每个用户品牌参数
-        userBrands.forEach((code, index) => {
-          queryParams[`userBrand${index}`] = code;
-        });
-        
-        //console.log(`🔐 [Brand Filter] 全部品牌 - 基于用户权限 (${userBrands.length}个):`, userBrands);
-        // 使用显式占位符 %d (代表数字) 或 %s (代表字符串)
-        console.log('🔐 [Brand Filter] 全部品牌 - 基于用户权限 (%d个):', userBrands.length, userBrands);
-      } else {
-        // 回退：如果没有userBrands，使用VF品牌范围（包含18405-5）
-        brandFilter = ` AND t.CUSTOMERNO IN ('18405', '18405-1', '18405-2', '18405-3', '18405-4', '18405-5')`;
-        console.log(`🏷️ [Brand Filter] 全部品牌 - 回退到VF品牌范围（未提供userBrands）`);
-      }
-    }
+    brandFilter = buildScopedBrandFilter({
+      queryParams,
+      requestedBrands: normalizedBrand,
+      authorizedCustomerNos,
+      brandMapping: BRAND_MAPPING,
+      fieldName: 't.CUSTOMERNO',
+      paramPrefix: 'brand'
+    });
     
     if (platform && platform !== 'all') {
       platformFilter = ` AND v.PLATFORM_CLASS = :platform`;
@@ -198,42 +169,47 @@ router.get('/kpi', async (req, res) => {
   let connection;
   
   try {
-    const { dateFrom, dateTo, brand, platform, selfFlag, userBrands } = req.query;
+    const { dateFrom, dateTo, brand, platform, selfFlag } = req.query;
+    const authorizedCustomerNos = getAuthorizedCustomerNos(req.user);
     
-    console.log('🔄 [KPI查询] 收到请求参数:', { dateFrom, dateTo, brand, platform, selfFlag, userBrands });
+    console.log('🔄 [KPI查询] 收到请求参数:', { dateFrom, dateTo, brand, platform, selfFlag, authorizedCustomerNos });
     
     // 参数验证
     if (!dateFrom || !dateTo) {
-      return res.status(400).json({
+      return sendError(res, req, {
+        status: 400,
+        code: ERROR_CODES.VALIDATION_ERROR,
         error: '缺少必需的日期参数',
-        message: '请提供dateFrom和dateTo参数'
+        details: { requiredFields: ['dateFrom', 'dateTo'] }
       });
     }
 
     if (!DateHelper.isValidDateString(dateFrom) || !DateHelper.isValidDateString(dateTo)) {
-      return res.status(400).json({
+      return sendError(res, req, {
+        status: 400,
+        code: ERROR_CODES.VALIDATION_ERROR,
         error: '日期格式无效',
-        message: '请提供有效的YYYY-MM-DD格式日期'
+        details: { expectedFormat: 'YYYY-MM-DD' }
       });
     }
 
-    connection = await getConnection();
-    
-    // 🔧 解析userBrands参数（可能是字符串或数组）
-    let parsedUserBrands = null;
-    if (userBrands) {
-      if (Array.isArray(userBrands)) {
-        parsedUserBrands = userBrands;
-      } else if (typeof userBrands === 'string') {
-        try {
-          parsedUserBrands = JSON.parse(userBrands);
-        } catch (e) {
-          // 如果不是JSON，尝试按逗号分隔
-          parsedUserBrands = userBrands.split(',').map(b => b.trim());
-        }
-      }
-      console.log('🔐 [KPI查询] 解析后的userBrands:', parsedUserBrands);
+    const kpiCacheKey = JSON.stringify({
+      userId: req.user?.userId || 'anonymous',
+      authorizedCustomerNos: Array.isArray(authorizedCustomerNos) ? authorizedCustomerNos : 'all',
+      dateFrom,
+      dateTo,
+      brand,
+      platform,
+      selfFlag
+    });
+
+    const cachedEntry = kpiResponseCache.get(kpiCacheKey);
+    if (cachedEntry && (Date.now() - cachedEntry.timestamp) < KPI_CACHE_TTL_MS) {
+      console.log('⚡ [KPI查询] 命中缓存，直接返回结果');
+      return res.json(cachedEntry.payload);
     }
+
+    connection = await getConnection();
     
     // 计算历史日期范围用于同比环比
     const momRange = DateHelper.calculateMoMDateRange(dateFrom, dateTo);
@@ -245,7 +221,7 @@ router.get('/kpi', async (req, res) => {
     const lastYearParams = { dateFrom: yoyRange.lastYearFrom, dateTo: yoyRange.lastYearTo };
     
     // 构建筛选条件（只用当前期间参数）
-    const { brandFilter, platformFilter, selfFlagFilter } = await QueryUtils.buildFiltersAsync(currentParams, brand, platform, selfFlag, parsedUserBrands);
+    const { brandFilter, platformFilter, selfFlagFilter } = await QueryUtils.buildFiltersAsync(currentParams, brand, platform, selfFlag, authorizedCustomerNos);
 
     // 复制筛选参数到其他时间段
     Object.keys(currentParams).forEach(key => {
@@ -461,8 +437,8 @@ router.get('/kpi', async (req, res) => {
       FROM APP_CMS.TSK_LIST_TASK t
       LEFT JOIN APP_CMS.VIEW_TSK_LIST_TASK v ON t.TSK_MERGE_NO = v.TSK_MERGE_NO
       WHERE t.WMS_OUTBOUND_TIME IS NOT NULL
-        AND TRUNC(t.WMS_OUTBOUND_TIME) >= TO_DATE(:dateFrom, 'YYYY-MM-DD')
-        AND TRUNC(t.WMS_OUTBOUND_TIME) <= TO_DATE(:dateTo, 'YYYY-MM-DD')
+        AND t.WMS_OUTBOUND_TIME >= TO_DATE(:dateFrom, 'YYYY-MM-DD')
+        AND t.WMS_OUTBOUND_TIME < TO_DATE(:dateTo, 'YYYY-MM-DD') + INTERVAL '1' DAY
         AND t.TSK_MERGE_NO IS NOT NULL
         AND t.CARRIERID IS NOT NULL
         ${brandFilter}
@@ -720,13 +696,24 @@ router.get('/kpi', async (req, res) => {
     }));
 
     // 🔥 新增：按品牌维度查询历史数据（上月和去年同期）
+    // 管理员全量查询时品牌数量很大，逐品牌两次历史查询会显著拖慢接口。
+    const hasExplicitBrandFilter = Array.isArray(brand)
+      ? brand.length > 0 && !brand.includes('all')
+      : Boolean(brand && brand !== 'all');
+    const shouldSkipBrandHistoricalQuery = !Array.isArray(authorizedCustomerNos) && !hasExplicitBrandFilter;
+
     console.log('\n' + '='.repeat(80));
-    console.log('📊 [品牌历史数据] 开始查询各品牌的历史数据...');
+    if (shouldSkipBrandHistoricalQuery) {
+      console.log('⏭️ [品牌历史数据] 管理员全量查询，跳过逐品牌历史明细查询以提升响应速度');
+    } else {
+      console.log('📊 [品牌历史数据] 开始查询各品牌的历史数据...');
+    }
     console.log('='.repeat(80));
     
     const brandHistoricalDataMap = {};
     
-    for (const brand of brandData) {
+    if (!shouldSkipBrandHistoricalQuery) {
+      for (const brand of brandData) {
       const brandCustomerno = brand.customerno;
       
       // 构建品牌历史数据查询SQL（不需要品牌JOIN，因为已经用CUSTOMERNO过滤）
@@ -850,6 +837,7 @@ router.get('/kpi', async (req, res) => {
           lastMonth: { totalOrders: 0, forwardedOrders: 0, returnedOrders: 0, cancelledOrders: 0, avgDeliveryHours: 0, avgFirstDispatchHours: 0, firstDispatchSuccessRate: 0, performanceMetrics: {} },
           lastYear: { totalOrders: 0, forwardedOrders: 0, returnedOrders: 0, cancelledOrders: 0, avgDeliveryHours: 0, avgFirstDispatchHours: 0, firstDispatchSuccessRate: 0, performanceMetrics: {} }
         };
+      }
       }
     }
     
@@ -1096,8 +1084,8 @@ router.get('/kpi', async (req, res) => {
       LEFT JOIN APP_CMS.VIEW_TSK_LIST_TASK v ON t.TSK_MERGE_NO = v.TSK_MERGE_NO
       ${QueryUtils.getBrandJoin('t')}
       ${QueryUtils.BASE_WHERE_CONDITIONS}
-        ${brand && brand !== 'all' ? brandFilter : ''}
-        ${platform && platform !== 'all' ? platformFilter : ''}
+        ${brandFilter}
+        ${platformFilter}
         ${selfFlagFilter}
       GROUP BY t.CUSTOMERNO, bc_brand.COMPANY_ABNAME, COALESCE(v.PLATFORM_CLASS, '未知平台')
       HAVING COUNT(DISTINCT t.TSK_MERGE_NO) > 0
@@ -1195,13 +1183,17 @@ router.get('/kpi', async (req, res) => {
     
     // 🔥 修复：复制所有品牌参数（支持多品牌数组）
     Object.keys(baseParams).forEach(key => {
-      if (key.startsWith('brand')) {
+      if (key.startsWith('brand') || key.startsWith('userBrand')) {
         exceptionQueryParams[key] = baseParams[key];
       }
     });
     
     if (platform && platform !== 'all') {
       exceptionQueryParams.platform = baseParams.platform;
+    }
+
+    if (baseParams.selfFlag) {
+      exceptionQueryParams.selfFlag = baseParams.selfFlag;
     }
 
     const exceptionQuery = `
@@ -1237,13 +1229,14 @@ router.get('/kpi', async (req, res) => {
       FROM APP_CMS.TSK_LIST_TASK t
       LEFT JOIN APP_CMS.VIEW_TSK_LIST_TASK v ON t.TSK_MERGE_NO = v.TSK_MERGE_NO
       WHERE (
-        (t.WMS_OUTBOUND_TIME IS NOT NULL AND to_char(t.WMS_OUTBOUND_TIME,'yyyy-mm-dd') >= :dateFrom AND to_char(t.WMS_OUTBOUND_TIME,'yyyy-mm-dd') <= :dateTo)
-        OR
-        (t.WMS_OUTBOUND_TIME IS NULL AND t.PAYMENTDATE_D IS NOT NULL AND to_char(t.PAYMENTDATE_D,'yyyy-mm-dd') >= :dateFrom AND to_char(t.PAYMENTDATE_D,'yyyy-mm-dd') <= :dateTo)
-      )
+        t.WMS_OUTBOUND_TIME IS NOT NULL
+        AND t.WMS_OUTBOUND_TIME >= TO_DATE(:dateFrom, 'YYYY-MM-DD')
+        AND t.WMS_OUTBOUND_TIME < TO_DATE(:dateTo, 'YYYY-MM-DD') + INTERVAL '1' DAY
         AND t.TSK_MERGE_NO IS NOT NULL
         ${brandFilter}
         ${platformFilter}
+        ${selfFlagFilter}
+      )
     `;
 
     console.log('执行异常监控查询，参数:', exceptionQueryParams);
@@ -1314,15 +1307,16 @@ router.get('/kpi', async (req, res) => {
       }
     };
 
+    kpiResponseCache.set(kpiCacheKey, {
+      timestamp: Date.now(),
+      payload: response
+    });
+
     res.json(response);
 
   } catch (error) {
     console.error('❌ [KPI查询] 查询失败:', error);
-    res.status(500).json({
-      error: '服务器内部错误',
-      message: error.message || 'KPI数据查询失败',
-      timestamp: new Date().toISOString()
-    });
+    return sendRouteError(res, req, error, { fallbackError: 'KPI数据查询失败' });
   } finally {
     if (connection) {
       try {
@@ -1342,41 +1336,31 @@ router.get('/status-flow-analysis', async (req, res) => {
   let connection;
   
   try {
-    const { dateFrom, dateTo, brand, platform, selfFlag, userBrands } = req.query;
+    const { dateFrom, dateTo, brand, platform, selfFlag } = req.query;
+    const authorizedCustomerNos = getAuthorizedCustomerNos(req.user);
     
-    console.log('🔄 [Flow Analysis查询] 收到请求参数:', { dateFrom, dateTo, brand, platform, selfFlag, userBrands });
+    console.log('🔄 [Flow Analysis查询] 收到请求参数:', { dateFrom, dateTo, brand, platform, selfFlag, authorizedCustomerNos });
     
     // 参数验证
     if (!dateFrom || !dateTo) {
-      return res.status(400).json({
+      return sendError(res, req, {
+        status: 400,
+        code: ERROR_CODES.VALIDATION_ERROR,
         error: '缺少必需的日期参数',
-        message: '请提供dateFrom和dateTo参数'
+        details: { requiredFields: ['dateFrom', 'dateTo'] }
       });
     }
 
     if (!DateHelper.isValidDateString(dateFrom) || !DateHelper.isValidDateString(dateTo)) {
-      return res.status(400).json({
+      return sendError(res, req, {
+        status: 400,
+        code: ERROR_CODES.VALIDATION_ERROR,
         error: '日期格式无效',
-        message: '请提供有效的YYYY-MM-DD格式日期'
+        details: { expectedFormat: 'YYYY-MM-DD' }
       });
     }
 
     connection = await getConnection();
-    
-    // 🔧 解析userBrands参数（可能是字符串或数组）
-    let parsedUserBrands = null;
-    if (userBrands) {
-      if (Array.isArray(userBrands)) {
-        parsedUserBrands = userBrands;
-      } else if (typeof userBrands === 'string') {
-        try {
-          parsedUserBrands = JSON.parse(userBrands);
-        } catch (e) {
-          parsedUserBrands = userBrands.split(',').map(b => b.trim());
-        }
-      }
-      console.log('🔐 [Flow Analysis查询] 解析后的userBrands:', parsedUserBrands);
-    }
     
     // 基础参数
     const baseParams = {
@@ -1384,7 +1368,7 @@ router.get('/status-flow-analysis', async (req, res) => {
       dateTo: dateTo
     };
     
-    const { brandFilter, platformFilter, selfFlagFilter } = await QueryUtils.buildFiltersAsync(baseParams, brand, platform, selfFlag, parsedUserBrands);
+    const { brandFilter, platformFilter, selfFlagFilter } = await QueryUtils.buildFiltersAsync(baseParams, brand, platform, selfFlag, authorizedCustomerNos);
 
     // 订单流向分析查询 - 按状态分组统计
     const flowAnalysisQuery = `
@@ -1397,9 +1381,14 @@ router.get('/status-flow-analysis', async (req, res) => {
                FROM APP_CMS.TSK_LIST_TASK t2
                LEFT JOIN APP_CMS.VIEW_TSK_LIST_TASK v2 ON t2.TSK_MERGE_NO = v2.TSK_MERGE_NO
                WHERE (
-                 (t2.WMS_OUTBOUND_TIME IS NOT NULL AND to_char(t2.WMS_OUTBOUND_TIME,'yyyy-mm-dd') >= :dateFrom AND to_char(t2.WMS_OUTBOUND_TIME,'yyyy-mm-dd') <= :dateTo)
+                 (t2.WMS_OUTBOUND_TIME IS NOT NULL
+                  AND t2.WMS_OUTBOUND_TIME >= TO_DATE(:dateFrom, 'YYYY-MM-DD')
+                  AND t2.WMS_OUTBOUND_TIME < TO_DATE(:dateTo, 'YYYY-MM-DD') + INTERVAL '1' DAY)
                  OR
-                 (t2.WMS_OUTBOUND_TIME IS NULL AND t2.PAYMENTDATE_D IS NOT NULL AND to_char(t2.PAYMENTDATE_D,'yyyy-mm-dd') >= :dateFrom AND to_char(t2.PAYMENTDATE_D,'yyyy-mm-dd') <= :dateTo)
+                 (t2.WMS_OUTBOUND_TIME IS NULL
+                  AND t2.PAYMENTDATE_D IS NOT NULL
+                  AND t2.PAYMENTDATE_D >= TO_DATE(:dateFrom, 'YYYY-MM-DD')
+                  AND t2.PAYMENTDATE_D < TO_DATE(:dateTo, 'YYYY-MM-DD') + INTERVAL '1' DAY)
                )
                  AND t2.TSK_MERGE_NO IS NOT NULL
                  ${brandFilter.replace(/t\./g, 't2.')}
@@ -1517,11 +1506,7 @@ router.get('/status-flow-analysis', async (req, res) => {
 
   } catch (error) {
     console.error('❌ [Flow Analysis查询] 查询失败:', error);
-    res.status(500).json({
-      error: '服务器内部错误',
-      message: error.message || '订单流向与异常分类分析数据查询失败',
-      timestamp: new Date().toISOString()
-    });
+    return sendRouteError(res, req, error, { fallbackError: '订单流向与异常分类分析数据查询失败' });
   } finally {
     if (connection) {
       try {
@@ -1544,41 +1529,31 @@ router.get('/flow-analysis', async (req, res) => {
   let connection;
   
   try {
-    const { dateFrom, dateTo, brand, platform, selfFlag, userBrands } = req.query;
+    const { dateFrom, dateTo, brand, platform, selfFlag } = req.query;
+    const authorizedCustomerNos = getAuthorizedCustomerNos(req.user);
     
-    console.log('🔄 [品牌×快递商流向分析] 收到请求参数:', { dateFrom, dateTo, brand, platform, selfFlag, userBrands });
+    console.log('🔄 [品牌×快递商流向分析] 收到请求参数:', { dateFrom, dateTo, brand, platform, selfFlag, authorizedCustomerNos });
     
     // 参数验证
     if (!dateFrom || !dateTo) {
-      return res.status(400).json({
+      return sendError(res, req, {
+        status: 400,
+        code: ERROR_CODES.VALIDATION_ERROR,
         error: '缺少必需的日期参数',
-        message: '请提供dateFrom和dateTo参数'
+        details: { requiredFields: ['dateFrom', 'dateTo'] }
       });
     }
 
     if (!DateHelper.isValidDateString(dateFrom) || !DateHelper.isValidDateString(dateTo)) {
-      return res.status(400).json({
+      return sendError(res, req, {
+        status: 400,
+        code: ERROR_CODES.VALIDATION_ERROR,
         error: '日期格式无效',
-        message: '请提供有效的YYYY-MM-DD格式日期'
+        details: { expectedFormat: 'YYYY-MM-DD' }
       });
     }
 
     connection = await getConnection();
-    
-    // 🔧 解析userBrands参数（可能是字符串或数组）
-    let parsedUserBrands = null;
-    if (userBrands) {
-      if (Array.isArray(userBrands)) {
-        parsedUserBrands = userBrands;
-      } else if (typeof userBrands === 'string') {
-        try {
-          parsedUserBrands = JSON.parse(userBrands);
-        } catch (e) {
-          parsedUserBrands = userBrands.split(',').map(b => b.trim());
-        }
-      }
-      console.log('🔐 [品牌×快递商流向分析] 解析后的userBrands:', parsedUserBrands);
-    }
     
     // 基础参数
     const baseParams = {
@@ -1586,7 +1561,7 @@ router.get('/flow-analysis', async (req, res) => {
       dateTo: dateTo
     };
     
-    const { brandFilter, platformFilter, selfFlagFilter } = await QueryUtils.buildFiltersAsync(baseParams, brand, platform, selfFlag, parsedUserBrands);
+    const { brandFilter, platformFilter, selfFlagFilter } = await QueryUtils.buildFiltersAsync(baseParams, brand, platform, selfFlag, authorizedCustomerNos);
 
     // 🔥 核心查询：品牌×快递商×异常分类流向分析（✅ 从数据库查询品牌名称）
     const flowAnalysisQuery = `
@@ -1740,11 +1715,7 @@ router.get('/flow-analysis', async (req, res) => {
 
   } catch (error) {
     console.error('❌ [品牌×快递商流向分析] 查询失败:', error);
-    res.status(500).json({
-      error: '服务器内部错误',
-      message: error.message || '品牌×快递商流向分析数据查询失败',
-      timestamp: new Date().toISOString()
-    });
+    return sendRouteError(res, req, error, { fallbackError: '品牌×快递商流向分析数据查询失败' });
   } finally {
     if (connection) {
       try {

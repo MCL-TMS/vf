@@ -1,6 +1,58 @@
 const express = require('express');
 const router = express.Router();
 const { getBrandMapping } = require('../utils/brandMapping');
+const { buildScopedBrandFilter, getAuthorizedCustomerNos } = require('../utils/brandScope');
+const { ERROR_CODES, sendError, sendRouteError } = require('../utils/apiError');
+
+const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const BRAND_CODE_PATTERN = /^[A-Za-z0-9_-]+$/;
+const SELF_FLAG_VALUES = new Set(['Y', 'N', 'all']);
+
+function isValidDateValue(value) {
+  if (!DATE_PATTERN.test(value)) {
+    return false;
+  }
+
+  const date = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
+
+function parsePositiveInteger(value, defaultValue, { min = 0, max = Number.MAX_SAFE_INTEGER } = {}) {
+  if (value === undefined || value === null || value === '') {
+    return defaultValue;
+  }
+
+  if (!/^\d+$/.test(String(value))) {
+    return null;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  if (parsed < min || parsed > max) {
+    return null;
+  }
+
+  return parsed;
+}
+
+function normalizeBrandList(value) {
+  if (!value || value === 'all') {
+    return null;
+  }
+
+  const brandList = Array.isArray(value)
+    ? value.map((item) => String(item).trim()).filter(Boolean)
+    : String(value).split(',').map((item) => item.trim()).filter(Boolean);
+
+  if (brandList.length === 0 || brandList.length > 20) {
+    return null;
+  }
+
+  if (!brandList.every((item) => BRAND_CODE_PATTERN.test(item))) {
+    return null;
+  }
+
+  return brandList;
+}
 
 // 🔧 共享工具函数 - 与overview.js保持一致
 const QueryUtils = {
@@ -58,46 +110,32 @@ const QueryUtils = {
   },
 
   // ✅ 异步构建筛选条件和参数（支持动态品牌映射） - 与overview.js保持一致
-  async buildFiltersAsync(queryParams, brand, platform, selfFlag, userBrands) {
+  async buildFiltersAsync(queryParams, brand, platform, selfFlag, authorizedCustomerNos) {
     let brandFilter = '';
     let platformFilter = '';
     let selfFlagFilter = '';
-    
-    // 🔥 获取动态品牌映射
-    const BRAND_MAPPING = await getBrandMapping();
-    
-    // 🔐 品牌筛选：支持单个品牌、多个品牌（数组或逗号分隔字符串）
-    if (brand && brand !== 'all') {
-      let brandArray = brand;
-      if (typeof brand === 'string' && brand.includes(',')) {
-        brandArray = brand.split(',').map(b => b.trim()).filter(b => b);
-      } else if (!Array.isArray(brand)) {
-        brandArray = [brand];
-      }
 
-      const customerNos = brandArray.map(b => BRAND_MAPPING[b] || b);
-      
-      if (customerNos.length === 1) {
-        queryParams.brand0 = customerNos[0];
-        brandFilter = 'AND v.CUSTOMERNO = :brand0';
-      } else {
-        customerNos.forEach((customerNo, index) => {
-          queryParams[`brand${index}`] = customerNo;
-        });
-        const brandPlaceholders = customerNos.map((_, index) => `:brand${index}`).join(', ');
-        brandFilter = `AND v.CUSTOMERNO IN (${brandPlaceholders})`;
-      }
-    } else if (userBrands && userBrands !== 'all') {
-      const brandList = Array.isArray(userBrands) ? userBrands : userBrands.split(',').map(b => b.trim()).filter(Boolean);
-      
-      if (brandList.length > 0) {
-        brandList.forEach((brandCode, index) => {
-          queryParams[`userbrand${index}`] = brandCode;
-        });
-        const userBrandPlaceholders = brandList.map((_, index) => `:userbrand${index}`).join(', ');
-        brandFilter = `AND v.CUSTOMERNO IN (${userBrandPlaceholders})`;
-      }
-    }
+    const normalizedBrand = Array.isArray(brand)
+      ? brand.filter(v => typeof v === 'string' && v.trim()).map(v => v.trim())
+      : (typeof brand === 'string' && brand.trim() ? brand.trim() : undefined);
+    const hasRequestedBrand = Array.isArray(normalizedBrand)
+      ? normalizedBrand.length > 0 && !normalizedBrand.includes('all')
+      : Boolean(normalizedBrand && normalizedBrand !== 'all');
+    const hasAuthorizedCustomerNos = Array.isArray(authorizedCustomerNos) && authorizedCustomerNos.length > 0;
+
+    // 仅在需要品牌过滤/转换时加载映射，管理员全量查询不触发
+    const BRAND_MAPPING = (hasRequestedBrand || hasAuthorizedCustomerNos)
+      ? await getBrandMapping()
+      : {};
+    
+    brandFilter = buildScopedBrandFilter({
+      queryParams,
+      requestedBrands: normalizedBrand,
+      authorizedCustomerNos,
+      brandMapping: BRAND_MAPPING,
+      fieldName: 'v.CUSTOMERNO',
+      paramPrefix: 'brand'
+    }).trim();
     
     // 🔧 平台筛选 - 使用PLATFORM_CLASS字段（VIEW视图已处理好）
     if (platform && platform !== 'all') {
@@ -129,7 +167,6 @@ const QueryUtils = {
  * - brand: 品牌代码 (18405, 18405-1, 等)
  * - platform: 平台名称 (天猫, 京东, 抖音, 等)
  * - selfFlag: 自管标识 (Y/N/all)
- * - userBrands: 用户权限品牌 (逗号分隔)
  * - limit: 导出数量限制 (默认10000，最大50000)
  * - offset: 偏移量 (默认0)
  */
@@ -150,10 +187,10 @@ router.get('/export', async (req, res) => {
       brand, 
       platform, 
       selfFlag = 'Y',
-      userBrands,
       limit = '10000',
       offset = '0' // 🔥 新增：偏移量
     } = req.query;
+    const authorizedCustomerNos = getAuthorizedCustomerNos(req.user);
     
     console.log('📅 查询参数:', {
       startDate,
@@ -161,32 +198,91 @@ router.get('/export', async (req, res) => {
       brand,
       platform,
       selfFlag,
-      userBrands,
+      authorizedCustomerNos,
       limit,
       offset
     });
     
     // 参数验证
     if (!startDate || !endDate) {
-      return res.status(400).json({
-        success: false,
-        error: '缺少必需参数：startDate 和 endDate'
+      return sendError(res, req, {
+        status: 400,
+        code: ERROR_CODES.VALIDATION_ERROR,
+        error: '缺少必需参数：startDate 和 endDate',
+        details: { requiredFields: ['startDate', 'endDate'] }
+      });
+    }
+
+    if (!isValidDateValue(startDate) || !isValidDateValue(endDate)) {
+      return sendError(res, req, {
+        status: 400,
+        code: ERROR_CODES.VALIDATION_ERROR,
+        error: '日期格式无效，请使用 YYYY-MM-DD',
+        details: { expectedFormat: 'YYYY-MM-DD' }
+      });
+    }
+
+    if (new Date(`${startDate}T00:00:00Z`) > new Date(`${endDate}T00:00:00Z`)) {
+      return sendError(res, req, {
+        status: 400,
+        code: ERROR_CODES.VALIDATION_ERROR,
+        error: '开始日期不能晚于结束日期'
+      });
+    }
+
+    const normalizedBrandList = normalizeBrandList(brand);
+    if (brand && brand !== 'all' && !normalizedBrandList) {
+      return sendError(res, req, {
+        status: 400,
+        code: ERROR_CODES.VALIDATION_ERROR,
+        error: 'brand 参数格式无效'
+      });
+    }
+
+    if (platform && String(platform).length > 32) {
+      return sendError(res, req, {
+        status: 400,
+        code: ERROR_CODES.VALIDATION_ERROR,
+        error: 'platform 参数长度超出限制'
+      });
+    }
+
+    if (!SELF_FLAG_VALUES.has(selfFlag)) {
+      return sendError(res, req, {
+        status: 400,
+        code: ERROR_CODES.VALIDATION_ERROR,
+        error: 'selfFlag 参数无效，仅支持 Y、N、all'
       });
     }
     
     // 导出数量限制
-    const exportLimit = Math.min(parseInt(limit, 10) || 10000, 50000);
+    const exportLimit = parsePositiveInteger(limit, 10000, { min: 1, max: 50000 });
+    const exportOffset = parsePositiveInteger(offset, 0, { min: 0, max: 1000000 });
+
+    if (exportLimit === null || exportOffset === null) {
+      return sendError(res, req, {
+        status: 400,
+        code: ERROR_CODES.VALIDATION_ERROR,
+        error: 'limit 或 offset 参数无效'
+      });
+    }
     
     // 构建筛选条件
     const queryParams = {
       dateFrom: startDate,
       dateTo: endDate,
       exportLimit: exportLimit,
-      offset: parseInt(offset, 10) || 0 // 🔥 新增：偏移量
+      offset: exportOffset // 🔥 新增：偏移量
     };
     
     // 异步构建筛选条件和参数
-    const { brandFilter, platformFilter, selfFlagFilter } = await QueryUtils.buildFiltersAsync(queryParams, brand, platform, selfFlag, userBrands);
+    const { brandFilter, platformFilter, selfFlagFilter } = await QueryUtils.buildFiltersAsync(
+      queryParams,
+      normalizedBrandList || brand,
+      platform,
+      selfFlag,
+      authorizedCustomerNos
+    );
     
     console.log('🔍 SQL参数:', queryParams);
     
@@ -358,11 +454,7 @@ router.get('/export', async (req, res) => {
     console.error('详细错误:', error.stack);
     console.log('========================================\n');
     
-    res.status(500).json({
-      success: false,
-      error: '订单明细导出失败',
-      details: error.message
-    });
+    return sendRouteError(res, req, error, { fallbackError: '订单明细导出失败' });
   }
 });
 

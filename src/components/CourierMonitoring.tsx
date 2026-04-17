@@ -108,20 +108,29 @@ export function CourierMonitoring({
     }
 
     // 🔥 详细的数据调试日志
+    const normalizedUnifiedCouriers = Array.isArray(unifiedCourierData)
+      ? unifiedCourierData
+      : Array.isArray(unifiedCourierData?.monitoringFormat)
+        ? unifiedCourierData.monitoringFormat
+        : Array.isArray(unifiedCourierData?.data)
+          ? unifiedCourierData.data
+          : [];
+
     console.log('🔍 [CourierMonitoring] 数据源检查:', {
       hasUnifiedData: !!unifiedCourierData,
-      unifiedDataLength: Array.isArray(unifiedCourierData) ? unifiedCourierData.length : 'not array',
+      unifiedDataLength: normalizedUnifiedCouriers.length,
       unifiedDataType: typeof unifiedCourierData,
-      unifiedDataSample: unifiedCourierData?.[0],
+      unifiedDataSample: normalizedUnifiedCouriers?.[0],
+      unifiedDataKeys: unifiedCourierData && typeof unifiedCourierData === 'object' ? Object.keys(unifiedCourierData) : null,
       hasRawApiData: !!rawApiData,
       rawApiDataKeys: rawApiData ? Object.keys(rawApiData) : 'null'
     });
 
     // 🔥 优先使用统一的快递商数据
-    if (unifiedCourierData && Array.isArray(unifiedCourierData) && unifiedCourierData.length > 0) {
+    if (normalizedUnifiedCouriers.length > 0) {
       console.log('🎯 [CourierMonitoring] 使用统一快递商数据处理器结果');
       
-      const processedCouriers = unifiedCourierData.map(unifiedCourier => {
+      const processedCouriers = normalizedUnifiedCouriers.map(unifiedCourier => {
         console.log('🔍 [CourierMonitoring] 处理统一快递商数据:', {
           name: unifiedCourier.name,
           carrierId: unifiedCourier.carrierId,
@@ -182,13 +191,18 @@ export function CourierMonitoring({
       });
 
       console.log('✅ [CourierMonitoring] 统一快递商数据处理完成:', processedCouriers);
-      return { couriers: processedCouriers, apiCouriers: unifiedCourierData };
+      return { couriers: processedCouriers, apiCouriers: normalizedUnifiedCouriers };
     }
 
     // 🔥 回退逻辑：从物流API数据中获取快递商信息
-    const logisticsApiResponse = rawApiData?.data?.logistics;
+    const logisticsApiResponse =
+      rawApiData?.data?.logistics ||
+      rawApiData?.logisticsData ||
+      rawApiData?.data?.logisticsData ||
+      null;
+
     if (!logisticsApiResponse) {
-      console.log('⚠️ [CourierMonitoring] 无统一数据且rawApiData.data.logistics为空，返回空数据');
+      console.log('⚠️ [CourierMonitoring] 无统一数据且物流回退数据为空，返回空数据');
       return { couriers: [], apiCouriers: [], noData: true };
     }
 
@@ -196,7 +210,10 @@ export function CourierMonitoring({
 
     // 检查不同的API数据路径
     let apiCouriers = [];
-    if (Array.isArray(logisticsApiResponse.data)) {
+    if (Array.isArray(logisticsApiResponse)) {
+      apiCouriers = logisticsApiResponse;
+      console.log('📊 [CourierMonitoring] 使用直接数组格式的物流API数据');
+    } else if (Array.isArray(logisticsApiResponse.data)) {
       apiCouriers = logisticsApiResponse.data;
       console.log('📊 [CourierMonitoring] 使用直接数组格式的物流API数据');
     } else if (logisticsApiResponse.data?.couriers) {
@@ -205,6 +222,12 @@ export function CourierMonitoring({
     } else if (logisticsApiResponse.data?.courierStats) {
       apiCouriers = logisticsApiResponse.data.courierStats;
       console.log('📊 [CourierMonitoring] 使用data.courierStats格式的物流API数据');
+    } else if (Array.isArray(logisticsApiResponse.couriers)) {
+      apiCouriers = logisticsApiResponse.couriers;
+      console.log('📊 [CourierMonitoring] 使用couriers格式的物流API数据');
+    } else if (Array.isArray(logisticsApiResponse.courierStats)) {
+      apiCouriers = logisticsApiResponse.courierStats;
+      console.log('📊 [CourierMonitoring] 使用courierStats格式的物流API数据');
     } else {
       console.log('⚠️ [CourierMonitoring] logisticsApiResponse.data结构未识别，返回空数据');
       return { couriers: [], apiCouriers: [], noData: true };

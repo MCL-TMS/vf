@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="app.diagrams.net" modified="2026-03-30T00:00:00.000Z" agent="Cursor" version="24.7.10" type="device">
+  <diagram id="technical-architecture" name="技术架构图">
+    <mxGraphModel dx="1440" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="900" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        
+        <!-- 客户端/前端 -->
+        <mxCell id="2" value="终端用户&#xa;浏览器" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="40" y="60" width="220" height="60" as="geometry"/>
+        </mxCell>
+        
+        <mxCell id="3" value="前端应用层（Vite + React + TypeScript）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="320" y="30" width="430" height="290" as="geometry"/>
+        </mxCell>
+        <mxCell id="4" value="UI：Tailwind CSS + Radix UI&#xa;组件：Filter/Charts/Map/Dialogs" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="350" y="70" width="370" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="5" value="可视化与报表：Recharts + 地图可视化 + Excel 相关工具（xlsx）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="350" y="170" width="370" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="6" value="数据交互：HTTP 请求（REST/JSON）&#xa;受保护接口带 Authorization: Bearer（JWT）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="350" y="260" width="370" height="55" as="geometry"/>
+        </mxCell>
+        
+        <!-- 后端/API -->
+        <mxCell id="7" value="后端服务层（Node.js + Express）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="800" y="30" width="460" height="320" as="geometry"/>
+        </mxCell>
+        <mxCell id="8" value="通用中间件：helmet / cors / compression / morgan&#xa;限流：express-rate-limit" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ead1dc;strokeColor=#b85475;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="830" y="80" width="400" height="95" as="geometry"/>
+        </mxCell>
+        <mxCell id="9" value="鉴权：JWT verifyToken&#xa;Token黑名单（内存 Set）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ead1dc;strokeColor=#b85475;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="830" y="185" width="400" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="10" value="路由集合：&#xa;overview（KPI/同比环比）/ regional / logistics / exception-analysis&#xa;upload（时效分析/SLA）/ order-details（导出）/ auth + brands/platform" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ead1dc;strokeColor=#b85475;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="830" y="260" width="400" height="90" as="geometry"/>
+        </mxCell>
+        
+        <!-- 业务处理器 -->
+        <mxCell id="11" value="业务计算层：时效分析与解析器" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="800" y="370" width="460" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="17" value="timelinessDataProcessor（file-based / cjs）&#xa;parseTimelinessExcel + 城市映射 + Plan vs Actual&#xa;SLA匹配状态计算" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d8e6ff;strokeColor=#3b82f6;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="830" y="390" width="400" height="85" as="geometry"/>
+        </mxCell>
+        
+        <!-- 数据存储 -->
+        <mxCell id="13" value="数据访问层：Oracle（oracledb）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b45f06;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="1260" y="120" width="300" height="210" as="geometry"/>
+        </mxCell>
+        <mxCell id="14" value="连接池：initializeDatabase + executeQuery/Transaction&#xa;Schema：APP_CMS&#xa;核心对象：TSK_LIST_TASK / VIEW_TSK_LIST_TASK / BAS_CODES / BAS_COMPANY / BAS_AREA / UPLOAD_HISTORY（可选）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce5cd;strokeColor=#d58512;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="1275" y="145" width="270" height="170" as="geometry"/>
+        </mxCell>
+        <mxCell id="15" value="文件存储层：上传目录/模板/时效文件" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b45f06;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="1260" y="360" width="300" height="170" as="geometry"/>
+        </mxCell>
+        <mxCell id="16" value="multer 上传（Excel/CSV）&#xa;解析后可写入文件系统（timelinessFileStore）&#xa;必要时城市映射/Dest_CITY查询回 Oracle" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce5cd;strokeColor=#d58512;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="1275" y="385" width="270" height="130" as="geometry"/>
+        </mxCell>
+        
+        <!-- 边：调用关系 -->
+        <mxCell id="20" style="endArrow=block;strokeWidth=2;html=1;" edge="1" parent="1" source="2" target="3">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="21" value="HTTP/REST + JSON&#xa;Authorization: Bearer" style="endArrow=block;strokeWidth=2;html=1;" edge="1" parent="1" source="3" target="7">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        
+        <mxCell id="22" value="SQL 查询/聚合/导出" style="endArrow=block;strokeWidth=1.5;html=1;dashed=1;" edge="1" parent="1" source="7" target="13">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="23" value="上传文件/解析源数据" style="endArrow=block;strokeWidth=1.5;html=1;dashed=1;" edge="1" parent="1" source="7" target="15">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="24" value="时效计算（读取/写入文件结果）" style="endArrow=block;strokeWidth=1.5;html=1;dashed=1;" edge="1" parent="1" source="11" target="15">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="25" value="城市映射/目的城市查询等回 Oracle" style="endArrow=block;strokeWidth=1.5;html=1;dashed=1;" edge="1" parent="1" source="11" target="13">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        
+        <mxCell id="26" value="响应 JSON（成功/失败/降级数据）" style="endArrow=block;strokeWidth=2;html=1;" edge="1" parent="1" source="7" target="3">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
+

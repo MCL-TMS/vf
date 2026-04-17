@@ -45,7 +45,13 @@ let config = {
   ORACLE_POOL_INCREMENT: '2',
   ORACLE_POOL_TIMEOUT: '60',
   API_PORT: '3001',
-  NODE_ENV: 'development'
+  NODE_ENV: 'development',
+  FORCE_HTTPS: 'false',
+  HTTPS_REDIRECT: 'false',
+  TRUST_PROXY: '1',
+  HSTS_MAX_AGE: '31536000',
+  HSTS_INCLUDE_SUBDOMAINS: 'true',
+  HSTS_PRELOAD: 'true'
 };
 
 /**
@@ -180,6 +186,15 @@ async function apiConfiguration() {
   const envChoice = await question(`请选择环境模式 [1]: `);
   if (envChoice === '2') {
     config.NODE_ENV = 'production';
+
+    const forceHttps = await question(`生产环境强制HTTPS [${config.FORCE_HTTPS}]: `);
+    if (forceHttps.trim()) config.FORCE_HTTPS = forceHttps.trim();
+
+    const httpsRedirect = await question(`HTTP请求是否308重定向到HTTPS [${config.HTTPS_REDIRECT}]: `);
+    if (httpsRedirect.trim()) config.HTTPS_REDIRECT = httpsRedirect.trim();
+
+    const trustProxy = await question(`trust proxy 设置 [${config.TRUST_PROXY}]: `);
+    if (trustProxy.trim()) config.TRUST_PROXY = trustProxy.trim();
   }
   
   console.log();
@@ -244,6 +259,9 @@ function showConfigSummary() {
   console.log('\nAPI服务器配置:');
   console.log(`  端口: ${config.API_PORT}`);
   console.log(`  环境: ${config.NODE_ENV}`);
+  console.log(`  强制HTTPS: ${config.FORCE_HTTPS}`);
+  console.log(`  HTTPS重定向: ${config.HTTPS_REDIRECT}`);
+  console.log(`  trust proxy: ${config.TRUST_PROXY}`);
   
   console.log();
 }

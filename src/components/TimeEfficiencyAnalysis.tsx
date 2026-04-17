@@ -10,6 +10,7 @@ import { useState, useEffect, useCallback, useMemo } from "react"; // 🔥 添�
 import { toast } from "sonner@2.0.3";
 import { COMPETITOR_BENCHMARK_CONFIG } from "./CompetitorBenchmarkConfig"; // 🆕 导入竞品配置
 import { useAuth } from "../contexts/AuthContext"; // 🔥 导入useAuth获取用户权限
+import { analyzeTimeliness } from "../services/apiService";
 
 interface TimeEfficiencyAnalysisProps {
   selectedBrand?: string;
@@ -62,20 +63,7 @@ export function TimeEfficiencyAnalysis({ selectedBrand, selectedSelfFlag, dateRa
 
       console.log(`🔍 自动执行${analysisType}时效分析:`, requestBody);
 
-      const response = await fetch('http://localhost:3001/api/upload/analyze-timeliness', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(requestBody)
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || `${analysisType}时效分析失败`);
-      }
-
-      const result = await response.json();
+      const result = await analyzeTimeliness(requestBody);
       console.log(`✅ ${analysisType}时效分析完成:`, result);
       
       // 🔍 详细检查返回的数据结构
@@ -130,20 +118,7 @@ export function TimeEfficiencyAnalysis({ selectedBrand, selectedSelfFlag, dateRa
 
             console.log(`📡 请求竞品 ${competitorBrand} 数据:`, requestBody);
 
-            const response = await fetch('http://localhost:3001/api/upload/analyze-timeliness', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json'
-              },
-              body: JSON.stringify(requestBody)
-            });
-
-            if (!response.ok) {
-              console.warn(`⚠️ 竞品 ${competitorBrand} 数据加载失败`);
-              return null;
-            }
-
-            const result = await response.json();
+            const result = await analyzeTimeliness(requestBody);
             console.log(`✅ 竞品 ${competitorBrand} 数据加载成功:`, result);
             
             // 🔍 详细检查返回的数据结构

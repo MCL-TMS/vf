@@ -7,4 +7,9 @@ export interface BaseEntity {
   updatedAt: Date;
 }
 
+export interface DateRange {
+  from: string;
+  to: string;
+}
+
 // 在这里添加更多数据类型定义

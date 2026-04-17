@@ -46,16 +46,15 @@ interface UnifiedAIChatAssistantProps {
 
 // 🔧 Dify配置 - Maersk Dify服务配置
 const DIFY_CONFIG = {
-  API_KEY: 'app-0UE3iXbE59c0ud98wd8I5qAw', // ⚠️ 请在这里填写你的Dify API Key（格式：app-xxxxxxxx）
-  API_URL: 'https://service-dify-devs.maersk-digital.net/v1', // Maersk Dify服务地址
+  API_KEY: (import.meta.env.VITE_DIFY_API_KEY || '').trim(),
+  API_URL: import.meta.env.VITE_DIFY_API_URL || 'https://service-dify-devs.maersk-digital.net/v1',
 };
 
 // 🔍 调试：输出配置状态
 console.log('🔧 Dify配置检查:', {
-  apiKey: DIFY_CONFIG.API_KEY,
   apiKeyLength: DIFY_CONFIG.API_KEY.length,
   startsWithApp: DIFY_CONFIG.API_KEY.startsWith('app-'),
-  isDefault: DIFY_CONFIG.API_KEY === 'app-0UE3iXbE59c0ud98wd8I5qAw'
+  isConfigured: DIFY_CONFIG.API_KEY.length > 0
 });
 
 // 🔥 专家系统：快递商映射表
@@ -638,7 +637,7 @@ export function UnifiedAIChatAssistant({
   const userIdRef = useRef('vf-logistics-user-' + Date.now());
 
   // 检查Dify配置
-  const isDifyConfigured = DIFY_CONFIG.API_KEY !== 'YOUR_DIFY_API_KEY_HERE' && DIFY_CONFIG.API_KEY.startsWith('app-');
+  const isDifyConfigured = DIFY_CONFIG.API_KEY.length > 0 && DIFY_CONFIG.API_KEY.startsWith('app-');
 
   // 获取欢迎消息
   const getWelcomeMessage = (mode: 'local' | 'gpt'): string => {
@@ -671,7 +670,7 @@ export function UnifiedAIChatAssistant({
 1️⃣ 在Dify创建聊天助手应用
 2️⃣ 复制 /DIFY_CHATBOT_PROMPT.md 中的提示词
 3️⃣ 获取API密钥
-4️⃣ 在 UnifiedAIChatAssistant.tsx 中配置密钥
+4️⃣ 在前端环境变量中配置 VITE_DIFY_API_KEY
 
 配置完成后即可使用GPT分析数据！
 

@@ -1,53 +1,237 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
-import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from "recharts";
-import { Eye, EyeOff } from "lucide-react";
+import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, ComposedChart } from "recharts";
+import { Eye, EyeOff, Loader2 } from "lucide-react";
 import { FilteredData } from "../../utils/dataFilter";
-import { brandOrderData } from "../../data/brandData";
+import { getTrendsOrders, getTrendsForecast, getTrendsCarriers, getTrendsExceptions } from "../../services/apiService";
+import type { DateRange } from "../../data/types";
 
 interface TrendsPageProps {
   data: FilteredData;
   selectedBrand: string;
+  dateRange?: DateRange;
+  selfFlag?: string;
 }
 
-export function TrendsPage({ data, selectedBrand }: TrendsPageProps) {
+export function TrendsPage({ data: _data, selectedBrand, dateRange, selfFlag }: TrendsPageProps) {
   // AI分析建议的显示状态 - 默认隐藏
   const [showAIAnalysis, setShowAIAnalysis] = useState(false);
   
-  // 模拟趋势数据
-  const monthlyTrendData = [
-    { month: '1月', orders: 41240, growth: 8.2, shipped: 38650, returned: 2590 },
-    { month: '2月', orders: 38650, growth: 12.5, shipped: 36200, returned: 2450 },
-    { month: '3月', orders: 45880, growth: 15.3, shipped: 43320, returned: 2560 },
-    { month: '4月', orders: 48920, growth: 18.7, shipped: 46580, returned: 2340 },
-    { month: '5月', orders: 52340, growth: 22.1, shipped: 50120, returned: 2220 },
-    { month: '6月', orders: 49870, growth: 19.4, shipped: 47890, returned: 1980 }
-  ];
+  // 🔥 真实数据状态
+  const [trendsData, setTrendsData] = useState<any[]>([]);
+  const [courierTrendData, setCourierTrendData] = useState<any[]>([]);
+  const [courierWeekSeries, setCourierWeekSeries] = useState<Array<{ key: string; label: string }>>([]);
+  const [exceptionTrendData, setExceptionTrendData] = useState<any[]>([]);
+  const [forecastData, setForecastData] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const courierTrendData = [
-    { name: '中通', week1: 1200, week2: 1350, week3: 1180, week4: 1420 },
-    { name: '顺丰', week1: 980, week2: 1020, week3: 1150, week4: 1280 },
-    { name: '韵达', week1: 650, week2: 720, week3: 680, week4: 780 },
-    { name: '申通', week1: 420, week2: 450, week3: 380, week4: 520 }
-  ];
+  const monthAxisProps = {
+    dataKey: 'month',
+    interval: 0 as const,
+    minTickGap: 0,
+    padding: { left: 8, right: 24 },
+    tickMargin: 8,
+  };
 
-  const exceptionTrendData = [
-    { date: '06-01', pickupDelay: 15, shipDelay: 23, deliveryDelay: 28, total: 66 },
-    { date: '06-02', pickupDelay: 12, shipDelay: 18, deliveryDelay: 22, total: 52 },
-    { date: '06-03', pickupDelay: 18, shipDelay: 25, deliveryDelay: 35, total: 78 },
-    { date: '06-04', pickupDelay: 8, shipDelay: 15, deliveryDelay: 19, total: 42 },
-    { date: '06-05', pickupDelay: 22, shipDelay: 30, deliveryDelay: 41, total: 93 },
-    { date: '06-06', pickupDelay: 16, shipDelay: 20, deliveryDelay: 25, total: 61 },
-    { date: '06-07', pickupDelay: 14, shipDelay: 19, deliveryDelay: 31, total: 64 }
-  ];
+  function getDefaultSixMonthsRange(): DateRange {
+    const now = new Date();
+    const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    const start = new Date(now.getFullYear(), now.getMonth() - 5, 1);
 
-  // 如果选择了品牌，使用品牌特定数据
-  const brandTrendData = selectedBrand ? 
-    brandOrderData.find(b => b.name === selectedBrand)?.monthlyTrend || monthlyTrendData :
-    monthlyTrendData;
+    return {
+      from: start.toISOString().split('T')[0],
+      to: end.toISOString().split('T')[0]
+    };
+  }
+
+  const sixMonthsRange = getDefaultSixMonthsRange();
+  const forecastSourceRange = dateRange || sixMonthsRange;
+  const forecastDays = 7;
+
+  // 快递公司周度表现：固定使用“当前自然月”范围，按周聚合后动态展示周数
+  function getCurrentMonthRange(): DateRange {
+    const now = new Date();
+    const start = new Date(now.getFullYear(), now.getMonth(), 1);
+    const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    return {
+      from: start.toISOString().split('T')[0],
+      to: end.toISOString().split('T')[0]
+    };
+  }
+
+  // 异常趋势：在“当前筛选时间范围内”取最近N天，默认7天
+  function getRecentDaysRangeWithin(baseRange: DateRange | undefined, days: number): DateRange {
+    const today = new Date();
+
+    const baseFrom = baseRange?.from ? new Date(baseRange.from) : null;
+    const baseTo = baseRange?.to ? new Date(baseRange.to) : null;
+
+    const endCandidate = baseTo && !Number.isNaN(baseTo.getTime()) ? baseTo : today;
+    const end = endCandidate > today ? today : endCandidate;
+
+    const rollingStart = new Date(end);
+    rollingStart.setDate(end.getDate() - (days - 1));
+
+    let start = rollingStart;
+    if (baseFrom && !Number.isNaN(baseFrom.getTime()) && baseFrom > rollingStart) {
+      start = baseFrom;
+    }
+
+    return {
+      from: start.toISOString().split('T')[0],
+      to: end.toISOString().split('T')[0]
+    };
+  }
+
+  // 🔥 加载真实趋势数据
+  useEffect(() => {
+    loadTrendsData();
+  }, [selectedBrand, dateRange?.from, dateRange?.to, selfFlag]);
+
+  async function loadTrendsData() {
+    try {
+      setLoading(true);
+      setError(null);
+
+      // 调用真实API
+      const [ordersResponse, carriersResponse, exceptionsResponse, forecastResponse] = await Promise.all([
+        getTrendsOrders({
+          dateRange: sixMonthsRange,
+          brand: selectedBrand || 'all',
+          granularity: 'month',
+          selfFlag: selfFlag || 'Y'
+        }),
+        getTrendsCarriers({
+          dateRange: getCurrentMonthRange(),
+          brand: selectedBrand || 'all',
+          granularity: 'week',
+          selfFlag: selfFlag || 'Y'
+        }),
+        getTrendsExceptions({
+          dateRange: getRecentDaysRangeWithin(dateRange, 7),
+          brand: selectedBrand || 'all',
+          granularity: 'day',
+          selfFlag: selfFlag || 'Y'
+        }),
+        getTrendsForecast({
+          dateRange: forecastSourceRange,
+          brand: selectedBrand || 'all',
+          days: forecastDays,
+          selfFlag: selfFlag || 'Y'
+        })
+      ]);
+
+      if (ordersResponse.success && ordersResponse.data) {
+        // 转换API数据格式到图表需要的格式
+        const chartData = ordersResponse.data.map((item: any) => ({
+          month: item.timePeriod,
+          orders: item.totalOrders || 0,
+          delivered: item.deliveredOrders || 0,
+          inTransit: item.inTransitOrders || 0,
+          pending: item.pendingOrders || 0,
+          returned: item.returnOrders || 0,
+          cancelled: item.cancelledOrders || 0,
+          deliveryRate: item.deliveryRate || 0, // 使用签收率作为增长率替代
+        }));
+        
+        setTrendsData(chartData);
+      }
+
+      if (carriersResponse.success && carriersResponse.data) {
+        const carrierRows = carriersResponse.data as any[];
+        const periods = Array.from(new Set(carrierRows.map((row: any) => row.timePeriod))).sort();
+
+        const carrierTotals = new Map<string, number>();
+        carrierRows.forEach((row: any) => {
+          const name = row.carrierName || row.carrierId || '未知快递';
+          carrierTotals.set(name, (carrierTotals.get(name) || 0) + (row.totalOrders || 0));
+        });
+
+        const topCarriers = Array.from(carrierTotals.entries())
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 8)
+          .map(([name]) => name);
+
+        const pivotedCarriers = topCarriers.map((carrierName) => {
+          const row: Record<string, any> = { name: carrierName };
+          periods.forEach((period, index) => {
+            const matched = carrierRows.find(
+              (item: any) => (item.carrierName || item.carrierId || '未知快递') === carrierName && item.timePeriod === period
+            );
+            row[`week${index + 1}`] = matched?.totalOrders || 0;
+          });
+          return row;
+        });
+
+        setCourierWeekSeries(periods.map((period, index) => ({ key: `week${index + 1}`, label: period })));
+        setCourierTrendData(pivotedCarriers);
+      }
+
+      if (exceptionsResponse.success && exceptionsResponse.data) {
+        const exceptionRows = (exceptionsResponse.data as any[]).map((row: any) => {
+          const pickupDelay = row.pickupDelay || 0;
+          const shipDelay = row.shipDelay || 0;
+          const deliveryDelay = row.deliveryDelay || 0;
+
+          return {
+            date: row.timePeriod,
+            pickupDelay,
+            shipDelay,
+            deliveryDelay,
+            // 后端字段是 totalExceptions；若缺失则回退到旧字段或三类异常求和
+            total: row.totalExceptions ?? row.total ?? (pickupDelay + shipDelay + deliveryDelay),
+          };
+        });
+        setExceptionTrendData(exceptionRows);
+      }
+
+      if (forecastResponse.success && forecastResponse.data) {
+        setForecastData(forecastResponse.data);
+      }
+
+    } catch (err: any) {
+      console.error('❌ 加载趋势数据失败:', err);
+      setError(err.message || '加载趋势数据失败');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function getExceptionAvg(key: 'pickupDelay' | 'shipDelay' | 'deliveryDelay' | 'total') {
+    if (!exceptionTrendData.length) return 0;
+    return Math.round(exceptionTrendData.reduce((sum: number, item: any) => sum + (item[key] || 0), 0) / exceptionTrendData.length);
+  }
+
+  // 加载中状态
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-96">
+        <div className="text-center">
+          <Loader2 className="h-8 w-8 animate-spin text-maersk-blue mx-auto mb-4" />
+          <p className="text-muted-foreground">加载趋势数据中...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // 错误状态
+  if (error) {
+    return (
+      <div className="flex items-center justify-center h-96">
+        <div className="text-center">
+          <div className="text-red-500 mb-4">⚠️ 加载失败</div>
+          <p className="text-muted-foreground">{error}</p>
+          <Button onClick={loadTrendsData} className="mt-4">
+            重新加载
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -56,7 +240,7 @@ export function TrendsPage({ data, selectedBrand }: TrendsPageProps) {
         <div>
           <h1 className="text-2xl font-semibold text-maersk-black">📈 趋势分析</h1>
           <p className="text-muted-foreground">
-            分析订单处理的历史趋势和未来预测
+            基于真实数据的订单处理历史趋势和未来预测
           </p>
         </div>
         {selectedBrand && (
@@ -76,81 +260,118 @@ export function TrendsPage({ data, selectedBrand }: TrendsPageProps) {
 
         {/* 月度趋势 */}
         <TabsContent value="monthly" className="space-y-6">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <Card className="maersk-card">
-              <CardHeader>
-                <CardTitle className="text-maersk-black">订单量趋势</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="h-80">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={brandTrendData}>
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="month" />
-                      <YAxis />
-                      <Tooltip formatter={(value) => [value, '订单数']} />
-                      <Line 
-                        type="monotone" 
-                        dataKey="orders" 
-                        stroke="var(--maersk-blue)" 
-                        strokeWidth={3}
-                        dot={{ fill: 'var(--maersk-blue)', strokeWidth: 2, r: 6 }}
-                      />
-                    </LineChart>
-                  </ResponsiveContainer>
-                </div>
-              </CardContent>
-            </Card>
+          {/* 🔥 组合图表：订单量（条形图）+ 签收率（折线图） */}
+          <Card className="maersk-card">
+            <CardHeader>
+              <CardTitle className="text-maersk-black">订单量 & 签收率趋势（真实数据）</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="h-96">
+                <ResponsiveContainer width="100%" height="100%">
+                  <ComposedChart data={trendsData}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis {...monthAxisProps} />
+                    <YAxis yAxisId="left" label={{ value: '订单数', angle: -90, position: 'insideLeft' }} />
+                    <YAxis 
+                      yAxisId="right" 
+                      orientation="right" 
+                      label={{ value: '签收率 (%)', angle: 90, position: 'insideRight' }}
+                      domain={[0, 100]}
+                    />
+                    <Tooltip />
+                    <Legend />
+                    
+                    {/* 订单量 - 条形图 */}
+                    <Bar 
+                      yAxisId="left"
+                      dataKey="orders" 
+                      fill="var(--maersk-blue)" 
+                      radius={[4, 4, 0, 0]} 
+                      name="订单量"
+                      fillOpacity={0.8}
+                    />
+                    
+                    {/* 签收率 - 折线图 */}
+                    <Line 
+                      yAxisId="right"
+                      type="monotone" 
+                      dataKey="deliveryRate" 
+                      stroke="var(--accent-mid-green)" 
+                      strokeWidth={3}
+                      dot={{ fill: 'var(--accent-mid-green)', strokeWidth: 2, r: 6 }}
+                      name="签收率 (%)"
+                    />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              </div>
+            </CardContent>
+          </Card>
 
-            <Card className="maersk-card">
-              <CardHeader>
-                <CardTitle className="text-maersk-black">增长率趋势</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="h-80">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={brandTrendData}>
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="month" />
-                      <YAxis />
-                      <Tooltip formatter={(value) => [`${value}%`, '增长率']} />
-                      <Bar dataKey="growth" fill="var(--accent-mid-green)" radius={[4, 4, 0, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-
+          {/* 订单状态趋势 */}
           <Card className="maersk-card">
             <CardHeader>
               <CardTitle className="text-maersk-black">订单状态趋势</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="h-80">
+              <div className="h-96">
                 <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={monthlyTrendData}>
+                  <LineChart data={trendsData} margin={{ top: 8, right: 28, left: 8, bottom: 12 }}>
                     <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="month" />
-                    <YAxis />
+                    <XAxis {...monthAxisProps} />
+                    <YAxis label={{ value: '订单数', angle: -90, position: 'insideLeft' }} />
                     <Tooltip />
-                    <Area 
+                    <Legend />
+                    
+                    {/* 已签收 - 主要业务指标 */}
+                    <Line 
                       type="monotone" 
-                      dataKey="shipped" 
-                      stackId="1" 
-                      stroke="var(--maersk-blue)" 
-                      fill="var(--maersk-blue)" 
-                      fillOpacity={0.8}
+                      dataKey="delivered" 
+                      stroke="var(--accent-mid-green)" 
+                      strokeWidth={3}
+                      name="已签收"
+                      dot={{ fill: 'var(--accent-mid-green)', strokeWidth: 2, r: 5 }}
                     />
-                    <Area 
+                    
+                    {/* 运输中 */}
+                    <Line 
+                      type="monotone" 
+                      dataKey="inTransit" 
+                      stroke="var(--maersk-blue)" 
+                      strokeWidth={2.5}
+                      name="运输中"
+                      dot={{ fill: 'var(--maersk-blue)', strokeWidth: 2, r: 4 }}
+                    />
+                    
+                    {/* 待处理 */}
+                    <Line 
+                      type="monotone" 
+                      dataKey="pending" 
+                      stroke="var(--functional-mid-grey)" 
+                      strokeWidth={2}
+                      name="待处理"
+                      dot={{ fill: 'var(--functional-mid-grey)', strokeWidth: 2, r: 4 }}
+                    />
+                    
+                    {/* 退货 */}
+                    <Line 
                       type="monotone" 
                       dataKey="returned" 
-                      stackId="1" 
-                      stroke="var(--accent-mid-red)" 
-                      fill="var(--accent-mid-red)" 
-                      fillOpacity={0.8}
+                      stroke="var(--accent-mid-orange)" 
+                      strokeWidth={2}
+                      name="退货"
+                      dot={{ fill: 'var(--accent-mid-orange)', strokeWidth: 2, r: 4 }}
                     />
-                  </AreaChart>
+                    
+                    {/* 已取消 */}
+                    <Line 
+                      type="monotone" 
+                      dataKey="cancelled" 
+                      stroke="var(--accent-mid-red)" 
+                      strokeWidth={2}
+                      name="已取消"
+                      dot={{ fill: 'var(--accent-mid-red)', strokeWidth: 2, r: 4 }}
+                    />
+                  </LineChart>
                 </ResponsiveContainer>
               </div>
             </CardContent>
@@ -171,10 +392,25 @@ export function TrendsPage({ data, selectedBrand }: TrendsPageProps) {
                     <XAxis dataKey="name" />
                     <YAxis />
                     <Tooltip />
-                    <Bar dataKey="week1" fill="var(--maersk-blue)" name="第1周" />
-                    <Bar dataKey="week2" fill="var(--functional-mid-blue)" name="第2周" />
-                    <Bar dataKey="week3" fill="var(--accent-mid-teal)" name="第3周" />
-                    <Bar dataKey="week4" fill="var(--accent-mid-green)" name="第4周" />
+                    <Legend />
+                    {courierWeekSeries.map((series: { key: string; label: string }, index: number) => {
+                      const palette = [
+                        'var(--maersk-blue)',
+                        'var(--functional-mid-blue)',
+                        'var(--accent-mid-teal)',
+                        'var(--accent-mid-green)',
+                        'var(--accent-mid-orange)',
+                        'var(--accent-mid-red)'
+                      ];
+                      return (
+                        <Bar
+                          key={series.key}
+                          dataKey={series.key}
+                          fill={palette[index % palette.length]}
+                          name={series.label}
+                        />
+                      );
+                    })}
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -196,6 +432,7 @@ export function TrendsPage({ data, selectedBrand }: TrendsPageProps) {
                     <XAxis dataKey="date" />
                     <YAxis />
                     <Tooltip />
+                    <Legend />
                     <Line 
                       type="monotone" 
                       dataKey="pickupDelay" 
@@ -244,7 +481,7 @@ export function TrendsPage({ data, selectedBrand }: TrendsPageProps) {
                   </div>
                   <div>
                     <div className="text-xl font-semibold text-maersk-blue">
-                      {Math.round(exceptionTrendData.reduce((sum, item) => sum + item.pickupDelay, 0) / exceptionTrendData.length)}
+                      {getExceptionAvg('pickupDelay')}
                     </div>
                     <div className="text-sm text-foreground">揽收延迟</div>
                     <div className="text-xs text-muted-foreground">日均异常数</div>
@@ -261,7 +498,7 @@ export function TrendsPage({ data, selectedBrand }: TrendsPageProps) {
                   </div>
                   <div>
                     <div className="text-xl font-semibold text-maersk-blue">
-                      {Math.round(exceptionTrendData.reduce((sum, item) => sum + item.shipDelay, 0) / exceptionTrendData.length)}
+                      {getExceptionAvg('shipDelay')}
                     </div>
                     <div className="text-sm text-foreground">发运延迟</div>
                     <div className="text-xs text-muted-foreground">日均异常数</div>
@@ -278,7 +515,7 @@ export function TrendsPage({ data, selectedBrand }: TrendsPageProps) {
                   </div>
                   <div>
                     <div className="text-xl font-semibold text-maersk-blue">
-                      {Math.round(exceptionTrendData.reduce((sum, item) => sum + item.deliveryDelay, 0) / exceptionTrendData.length)}
+                      {getExceptionAvg('deliveryDelay')}
                     </div>
                     <div className="text-sm text-foreground">签收延迟</div>
                     <div className="text-xs text-muted-foreground">日均异常数</div>
@@ -295,7 +532,7 @@ export function TrendsPage({ data, selectedBrand }: TrendsPageProps) {
                   </div>
                   <div>
                     <div className="text-xl font-semibold text-maersk-blue">
-                      {Math.round(exceptionTrendData.reduce((sum, item) => sum + item.total, 0) / exceptionTrendData.length)}
+                      {getExceptionAvg('total')}
                     </div>
                     <div className="text-sm text-foreground">总异常数</div>
                     <div className="text-xs text-muted-foreground">日均总计</div>
@@ -311,23 +548,27 @@ export function TrendsPage({ data, selectedBrand }: TrendsPageProps) {
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <Card className="maersk-card">
               <CardHeader>
-                <CardTitle className="text-maersk-black">未来7天预测</CardTitle>
+                <CardTitle className="text-maersk-black">未来{forecastDays}天预测（基于真实数据）</CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="space-y-4">
-                  {[1, 2, 3, 4, 5, 6, 7].map(day => (
-                    <div key={day} className="flex justify-between items-center">
-                      <span className="text-foreground">第{day}天</span>
+                  {forecastData?.forecast?.map((item: any, index: number) => (
+                    <div key={index} className="flex justify-between items-center">
+                      <span className="text-foreground">{item.date}</span>
                       <div className="flex items-center space-x-2">
                         <span className="font-medium text-maersk-blue">
-                          {Math.round(48920 + (Math.random() - 0.5) * 5000).toLocaleString()}
+                          {item.predictedOrders?.toLocaleString() || 0}
                         </span>
                         <Badge variant="outline" className="border-maersk-blue text-maersk-blue">
-                          {(Math.random() * 40 - 20).toFixed(1)}%
+                          置信度 {item.confidence || 0}%
                         </Badge>
                       </div>
                     </div>
-                  ))}
+                  )) || (
+                    <div className="text-center text-muted-foreground py-4">
+                      暂无预测数据
+                    </div>
+                  )}
                 </div>
               </CardContent>
             </Card>
@@ -357,25 +598,19 @@ export function TrendsPage({ data, selectedBrand }: TrendsPageProps) {
                     <div className="p-3 bg-functional-bright-blue rounded-lg border border-functional-light-blue">
                       <strong className="text-maersk-blue">趋势预测:</strong>
                       <p className="text-foreground mt-1">
-                        基于历史数据分析，预计下个月订单量将增长15-20%
+                        基于历史数据分析，平均每日订单量约 {forecastData?.summary?.avgDailyOrders?.toLocaleString() || 0} 单
                       </p>
                     </div>
                     <div className="p-3 bg-accent-bright-green rounded-lg border border-accent-light-green">
-                      <strong className="text-maersk-blue">优化建议:</strong>
+                      <strong className="text-maersk-blue">性能指标:</strong>
                       <p className="text-foreground mt-1">
-                        建议提前调配快递资源，重点关注中通和顺丰的产能
+                        平均签收率 {forecastData?.summary?.avgDeliveryRate || 0}%
                       </p>
                     </div>
                     <div className="p-3 bg-accent-bright-orange rounded-lg border border-accent-light-orange">
-                      <strong className="text-maersk-blue">风险提醒:</strong>
+                      <strong className="text-maersk-blue">数据说明:</strong>
                       <p className="text-foreground mt-1">
-                        签收延迟异常呈上升趋势，建议重点关注末端配送环节和客户沟通机制
-                      </p>
-                    </div>
-                    <div className="p-3 bg-accent-bright-red rounded-lg border border-accent-light-red">
-                      <strong className="text-maersk-blue">签收延迟分析:</strong>
-                      <p className="text-foreground mt-1">
-                        签收延迟是当前最主要的异常类型，占总异常数约45%，建议优化末端配送策略
+                        预测基于当前筛选时间范围（{forecastSourceRange.from} 至 {forecastSourceRange.to}）的真实订单数据生成
                       </p>
                     </div>
                   </div>

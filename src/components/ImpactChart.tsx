@@ -1,12 +1,14 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef, type MouseEvent } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
+import { Alert, AlertDescription } from "./ui/alert";
 import { Package, TrendingUp, AlertTriangle, Activity, Info, ExternalLink, BarChart3 } from "lucide-react";
 import { brandPlatformCrossData, platformsData, getPlatformKPIData } from "../data/platformData";
 import { getAllCourierBaseExceptionRates, generateExceptionRateReport, getCourierBaseExceptionRate } from "../utils/baseExceptionRateCalculator";
 import { ExceptionsRealDataCard } from "./ExceptionsRealDataCard";
 import { useAuth } from "../contexts/AuthContext"; // 🔐 导入用户认证
+import { ApiService } from "../services/apiService";
 
 interface ImpactChartProps {
   selectedBrand?: string;
@@ -37,6 +39,8 @@ const EXCEPTION_TYPES = [
   { key: 'delivery_timeout', name: '超时未签收', icon: '📦', color: 'var(--accent-mid-teal)', description: '超过3天未完成签收', threshold: '3天' }
 ];
 
+const TOP_N_DEFAULT = 10;
+
 interface SankeyNode {
   id: string;
   name: string;
@@ -44,6 +48,7 @@ interface SankeyNode {
   value: number;
   x: number;
   y: number;
+  width: number;
   height: number;
   color: string;
   icon?: string;
@@ -78,6 +83,14 @@ export function ImpactChart({
   const [flowApiData, setFlowApiData] = useState(null);
   const [flowApiLoading, setFlowApiLoading] = useState(false);
   const [flowApiError, setFlowApiError] = useState(null);
+  const [showAllFlows, setShowAllFlows] = useState(false);
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [isPanning, setIsPanning] = useState(false);
+  const lastPointerRef = useRef<{ x: number; y: number } | null>(null);
+  const viewportRef = useRef<HTMLDivElement | null>(null);
+  const zoomRef = useRef(zoom);
+  const panRef = useRef(pan);
 
   // 🔐 计算有效品牌参数（考虑用户权限）
   const effectiveBrand = useMemo(() => {
@@ -119,135 +132,12 @@ export function ImpactChart({
       setFlowApiError(null);
 
       try {
-        const params = new URLSearchParams({
-          dateFrom: dateRange.from,
-          dateTo: dateRange.to
+        const data = await ApiService.getOverviewFlowAnalysis({
+          dateRange,
+          brand: effectiveBrand,
+          platform: selectedPlatform,
+          userBrands: user?.isAdmin ? undefined : user?.customerNos,
         });
-
-        // 🔐 使用 effectiveBrand（已考虑用户权限）
-        if (effectiveBrand !== null) {
-          if (Array.isArray(effectiveBrand)) {
-            // 多品牌数组：传递逗号分隔的字符串
-            params.append('brand', effectiveBrand.join(','));
-          } else {
-            // 单品牌字符串
-            params.append('brand', effectiveBrand);
-          }
-        }
-        // effectiveBrand === null 时不传brand参数，表示查询所有品牌（管理员）
-        
-        if (selectedPlatform && selectedPlatform !== 'all') {
-          params.append('platform', selectedPlatform);
-        }
-
-        const apiUrl = `/api/overview/flow-analysis?${params.toString()}`;
-        console.log('🌐 [ImpactChart] 发起流向分析API请求:', apiUrl);
-        console.log('🌐 [ImpactChart] 完整URL:', window.location.origin + apiUrl);
-
-        const response = await fetch(apiUrl, {
-          method: 'GET',
-          headers: {
-            'Accept': 'application/json',
-            'Content-Type': 'application/json'
-          }
-        });
-        
-        console.log('📊 [ImpactChart] API响应状态:', response.status, response.statusText);
-        console.log('📊 [ImpactChart] API响应头:', Object.fromEntries(response.headers.entries()));
-        
-        if (!response.ok) {
-          // 如果是404错误，尝试直接连接后端
-          if (response.status === 404) {
-            const errorText = await response.text();
-            console.error('📊 [ImpactChart] 404错误响应:', errorText);
-            
-            // 尝试直接连接后端服务器
-            try {
-              console.log('🔄 [ImpactChart] 尝试直接连接后端服务器...');
-              const directUrl = `http://localhost:3001/api/overview/flow-analysis?${params.toString()}`;
-              console.log('🔄 [ImpactChart] 直接连接URL:', directUrl);
-              
-              const directResponse = await fetch(directUrl, {
-                method: 'GET',
-                headers: {
-                  'Accept': 'application/json',
-                  'Content-Type': 'application/json'
-                }
-              });
-              
-              console.log('🔄 [ImpactChart] 直接连接响应状态:', directResponse.status);
-              
-              if (directResponse.ok) {
-                const contentType = directResponse.headers.get('content-type');
-                if (contentType && contentType.includes('application/json')) {
-                  const directData = await directResponse.json();
-                  console.log('✅ [ImpactChart] 直接连接成功，使用直接数据:', directData);
-                  
-                  if (directData.success) {
-                    setFlowApiData(directData);
-                    console.log('✅ [ImpactChart] 直接API数据获取成功:', {
-                      flowCombinations: directData.data?.flowAnalysisData?.length || 0,
-                      totalOrders: directData.data?.overallStats?.totalOrders || 0,
-                      activeBrands: directData.data?.overallStats?.activeBrands || 0,
-                      activeCouriers: directData.data?.overallStats?.activeCouriers || 0
-                    });
-                    return; // 成功获取数据，直接返���
-                  } else {
-                    throw new Error(directData.message || directData.error || '直接连接数据获取失败');
-                  }
-                } else {
-                  throw new Error('直接连接返回非JSON数据');
-                }
-              } else {
-                throw new Error(`直接连接失败: ${directResponse.status}`);
-              }
-            } catch (directError) {
-              console.warn('🔄 [ImpactChart] 直接连接也失败:', directError);
-              throw new Error(`Vite代理和直接连接都失败 - Vite代理: 404错误，直接连接: ${directError.message}`);
-            }
-          }
-          
-          // 尝试读取错误响应
-          let errorMessage = `API请求失败: ${response.status}`;
-          try {
-            const errorText = await response.text();
-            console.error('📊 [ImpactChart] 错误响应内容:', errorText);
-            if (errorText.startsWith('<!DOCTYPE')) {
-              errorMessage = '后端服务未启动或API路由配置错误 - 返回HTML页面';
-            } else {
-              try {
-                const errorData = JSON.parse(errorText);
-                errorMessage = errorData.message || errorData.error || errorMessage;
-              } catch {
-                errorMessage = `服务器返回非JSON错误: ${errorText.substring(0, 100)}...`;
-              }
-            }
-          } catch (parseError) {
-            console.warn('解析错误响应失败:', parseError);
-          }
-          
-          throw new Error(errorMessage);
-        }
-
-        const contentType = response.headers.get('content-type');
-        console.log('📊 [ImpactChart] Content-Type:', contentType);
-        
-        if (!contentType || !contentType.includes('application/json')) {
-          const responseText = await response.text();
-          console.error('📊 [ImpactChart] 非JSON响应内容:', responseText.substring(0, 300));
-          throw new Error(`API返回了非JSON数据 (Content-Type: ${contentType})，可能是HTML错误页面`);
-        }
-
-        const responseText = await response.text();
-        console.log('📊 [ImpactChart] 原始响应内容:', responseText.substring(0, 500));
-        
-        let data;
-        try {
-          data = JSON.parse(responseText);
-        } catch (parseError) {
-          console.error('📊 [ImpactChart] JSON解析失败:', parseError);
-          throw new Error(`JSON解析失败: ${parseError.message}`);
-        }
         
         console.log('📊 [ImpactChart] 解析后的数据结构:', {
           success: data.success,
@@ -449,10 +339,10 @@ export function ImpactChart({
         sampleData: data.slice(0, 2)
       });
 
-      // 修复：确保返回的数据不为空
+      // 真实数据模式下不再静默回退到模拟数据
       if (data.length === 0) {
-        console.warn('⚠️ [ImpactChart] API数据转换后为空，回退到模拟数据');
-        return generateMockSankeyData();
+        console.warn('⚠️ [ImpactChart] API数据转换后为空，返回空态');
+        return [];
       }
 
       return data;
@@ -517,6 +407,39 @@ export function ImpactChart({
   };
 
   const rawData = generateSankeyData();
+  const displayedRawData = useMemo(() => {
+    if (showAllFlows || rawData.length <= TOP_N_DEFAULT) {
+      return rawData;
+    }
+
+    return [...rawData]
+      .sort((a, b) => (b.totalOrders || 0) - (a.totalOrders || 0))
+      .slice(0, TOP_N_DEFAULT);
+  }, [rawData, showAllFlows]);
+
+  const densityConfig = {
+    chartWidth: 1120,
+    brandNodeWidth: 220,
+    courierNodeWidth: 220,
+    statusNodeWidth: 250,
+    layerGap: 12,
+    baseFlowHeight: 540,
+    minBrandHeight: 30,
+    minCourierHeight: 34,
+    minStatusHeight: 30,
+    chartMinBottom: 420,
+    chartPaddingBottom: 24,
+    containerMaxHClass: 'max-h-[700px]',
+    minSvgWidthClass: 'min-w-[1120px]',
+    clickableIconRadius: 7,
+    clickableIconFontSize: 8,
+    clickableIconYOffset: 15,
+    labelFontSize: 11,
+    valueFontSize: 9,
+    valueDy: 12,
+    strokeBase: 34,
+    strokeMin: 2.2
+  };
 
   // 🔥 新增：从流向分析数据中提取四种核心异常统计
   const extractExceptionsData = () => {
@@ -553,7 +476,7 @@ export function ImpactChart({
   const realExceptionsData = extractExceptionsData();
 
   // 构建Sankey节点和链接
-  const buildSankeyData = () => {
+  const buildSankeyData = (flowData: any[]) => {
     const nodes: SankeyNode[] = [];
     const links: SankeyLink[] = [];
 
@@ -563,7 +486,7 @@ export function ImpactChart({
     const exceptionTypeTotals = new Map();
     let normalTotal = 0;
 
-    rawData.forEach(item => {
+    flowData.forEach(item => {
       // 品牌总计
       brandTotals.set(item.brand, (brandTotals.get(item.brand) || 0) + item.totalOrders);
       // 快递商总计
@@ -580,9 +503,13 @@ export function ImpactChart({
     // Ensure totalOrders is never 0 or NaN to prevent division by zero
     const totalOrders = Math.max(1, normalTotal + Array.from(exceptionTypeTotals.values()).reduce((sum, val) => sum + (val || 0), 0));
     
-    // 使用更紧凑的画布比例 - 再次大幅缩小尺寸
-    const chartHeight = 200;
-    const chartWidth = 420;
+    // 节点与布局配置：数据量较大时通过增高画布 + 外层滚动保证可见性
+    const chartWidth = densityConfig.chartWidth;
+    const brandNodeWidth = densityConfig.brandNodeWidth;
+    const courierNodeWidth = densityConfig.courierNodeWidth;
+    const statusNodeWidth = densityConfig.statusNodeWidth;
+    const layerGap = densityConfig.layerGap;
+    const baseFlowHeight = densityConfig.baseFlowHeight;
 
     // 品牌图标
     const getBrandIcon = (brand: string) => {
@@ -604,95 +531,123 @@ export function ImpactChart({
       return 'var(--maersk-blue)';
     };
 
-    // 创建品牌节点 - 大幅缩小适配小的图表，移动到最顶部
-    let yOffset = 0;
+    // 创建品牌节点
+    let yOffset = 12;
     const brandNodes = Array.from(brandTotals.entries())
       .sort((a, b) => b[1] - a[1])
-      .map(([brand, total], index) => {
-        // 大幅减小最小高度，确保height永远不是NaN
-        const height = Math.max(30, isNaN(total) || isNaN(totalOrders) || totalOrders === 0 ? 30 : (total / totalOrders) * chartHeight * 0.35);
+      .map(([brand, total]) => {
+        const height = Math.max(
+          densityConfig.minBrandHeight,
+          isNaN(total) || isNaN(totalOrders) || totalOrders === 0
+            ? densityConfig.minBrandHeight
+            : (total / totalOrders) * baseFlowHeight * 0.52
+        );
         const node: SankeyNode = {
           id: `brand-${brand}`,
           name: brand,
           layer: 0,
           value: total,
-          x: 20, // 调整位置
+          x: 24,
           y: yOffset,
+          width: brandNodeWidth,
           height,
           color: getUnifiedNodeColor(),
           icon: getBrandIcon(brand)
         };
-        yOffset += height + 4; // 进一步减少间距
+        yOffset += height + layerGap;
         return node;
       });
 
-    // 创建快递商节点 - 大幅缩小适配更小的图表，向上移动
-    yOffset = 20;
+    // 创建快递商节点
+    yOffset = 12;
     const courierNodes = Array.from(courierTotals.entries())
       .sort((a, b) => b[1] - a[1])
       .map(([courier, total]) => {
-        // 大幅减小最小高度，确保height永远不是NaN
-        const height = Math.max(40, isNaN(total) || isNaN(totalOrders) || totalOrders === 0 ? 40 : (total / totalOrders) * chartHeight * 0.30);
+        const height = Math.max(
+          densityConfig.minCourierHeight,
+          isNaN(total) || isNaN(totalOrders) || totalOrders === 0
+            ? densityConfig.minCourierHeight
+            : (total / totalOrders) * baseFlowHeight * 0.45
+        );
         const node: SankeyNode = {
           id: `courier-${courier}`,
           name: courier,
           layer: 1,
           value: total,
-          x: 175, // 调整位置
+          x: 420,
           y: yOffset,
+          width: courierNodeWidth,
           height,
           color: getUnifiedNodeColor(),
           icon: getCourierIcon(courier)
         };
-        yOffset += height + 10;
+        yOffset += height + layerGap;
         return node;
       });
 
-    // 创建异常类型节点 - 大幅缩小适配更小的图表，向上移动
-    yOffset = 10;
+    // 创建异常类型节点
+    yOffset = 12;
     const exceptionNodes: SankeyNode[] = [];
     
     // 正常订单节点，确保height永远不是NaN
-    const normalHeight = Math.max(28, isNaN(normalTotal) || isNaN(totalOrders) || totalOrders === 0 ? 28 : (normalTotal / totalOrders) * chartHeight * 0.30);
+    const normalHeight = Math.max(
+      densityConfig.minStatusHeight,
+      isNaN(normalTotal) || isNaN(totalOrders) || totalOrders === 0
+        ? densityConfig.minStatusHeight
+        : (normalTotal / totalOrders) * baseFlowHeight * 0.45
+    );
     exceptionNodes.push({
       id: 'status-normal',
       name: '正常订单',
       layer: 2,
       value: normalTotal,
-      x: 320, // 调整位置
+      x: 820,
       y: yOffset,
+      width: statusNodeWidth,
       height: normalHeight,
       color: getUnifiedNodeColor(),
       icon: '✅'
     });
-    yOffset += normalHeight + 4;
+    yOffset += normalHeight + layerGap;
 
     // 异常类型节点
     EXCEPTION_TYPES.forEach(type => {
       const total = exceptionTypeTotals.get(type.key) || 0;
       if (total > 0) {
-        const height = Math.max(28, isNaN(total) || isNaN(totalOrders) || totalOrders === 0 ? 28 : (total / totalOrders) * chartHeight * 0.30);
+        const height = Math.max(
+          densityConfig.minStatusHeight,
+          isNaN(total) || isNaN(totalOrders) || totalOrders === 0
+            ? densityConfig.minStatusHeight
+            : (total / totalOrders) * baseFlowHeight * 0.45
+        );
         exceptionNodes.push({
           id: `exception-${type.key}`,
           name: type.name,
           layer: 2,
           value: total,
-          x: 320,
+          x: 820,
           y: yOffset,
+          width: statusNodeWidth,
           height,
           color: getUnifiedNodeColor(),
           icon: type.icon,
           clickable: true,
           exceptionType: type.key
         });
-        yOffset += height + 4;
+        yOffset += height + layerGap;
       }
     });
 
     nodes.push(...brandNodes, ...courierNodes, ...exceptionNodes);
 
+    const maxBottom = Math.max(
+      ...nodes.map(node => node.y + node.height),
+      densityConfig.chartMinBottom
+    );
+    const chartHeight = maxBottom + densityConfig.chartPaddingBottom;
+
     // 创建链接
-    rawData.forEach(item => {
+    flowData.forEach(item => {
       const brandNode = brandNodes.find(n => n.name === item.brand);
       const courierNode = courierNodes.find(n => n.name === item.courier);
       
@@ -749,12 +704,61 @@ export function ImpactChart({
     return { nodes, links, chartWidth, chartHeight };
   };
 
-  const { nodes, links, chartWidth, chartHeight } = buildSankeyData();
+  const { nodes, links, chartWidth, chartHeight } = buildSankeyData(displayedRawData);
 
   // 统计数据
   const totalOrders = rawData.reduce((sum, item) => sum + item.totalOrders, 0);
   const totalExceptions = rawData.reduce((sum, item) => sum + item.totalExceptionOrders, 0);
   const overallExceptionRate = ((totalExceptions / totalOrders) * 100).toFixed(1);
+  const chartTotalOrders = Math.max(1, displayedRawData.reduce((sum, item) => sum + item.totalOrders, 0));
+
+  useEffect(() => {
+    zoomRef.current = zoom;
+  }, [zoom]);
+
+  useEffect(() => {
+    panRef.current = pan;
+  }, [pan]);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+
+    const nativeWheelHandler = (event: globalThis.WheelEvent) => {
+      if (!event.ctrlKey) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      const rect = viewport.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
+
+      const cursorX = ((event.clientX - rect.left) / rect.width) * chartWidth;
+      const cursorY = ((event.clientY - rect.top) / rect.height) * chartHeight;
+
+      const currentZoom = zoomRef.current;
+      const nextZoom = Math.min(2.8, Math.max(0.6, currentZoom * (event.deltaY > 0 ? 0.92 : 1.08)));
+      const ratio = nextZoom / currentZoom;
+      const currentPan = panRef.current;
+
+      const nextPan = {
+        x: cursorX - (cursorX - currentPan.x) * ratio,
+        y: cursorY - (cursorY - currentPan.y) * ratio
+      };
+
+      panRef.current = nextPan;
+      zoomRef.current = nextZoom;
+      setPan(nextPan);
+      setZoom(nextZoom);
+    };
+
+    viewport.addEventListener('wheel', nativeWheelHandler, { passive: false });
+    return () => {
+      viewport.removeEventListener('wheel', nativeWheelHandler);
+    };
+  }, [chartWidth, chartHeight]);
   
   // 🔥 修改：统计活跃快递商数量（而非品牌数量）
   const activeCouriers = [...new Set(rawData.map(item => item.courier))].length;
@@ -770,17 +774,14 @@ export function ImpactChart({
     
     if (!sourceNode || !targetNode) return '';
 
-    // 调整节点宽度适配更小的图表
-    const sourceNodeWidth = sourceNode.layer === 2 ? 90 : 85;
-    const sourceX = sourceNode.x + sourceNodeWidth;
+    const sourceX = sourceNode.x + sourceNode.width;
     const sourceY = sourceNode.y + sourceNode.height / 2;
     const targetX = targetNode.x;
     const targetY = targetNode.y + targetNode.height / 2;
     
     const midX = (sourceX + targetX) / 2;
     
-    // 线条粗细适配更小的图表
-    const strokeWidth = Math.max(1, (link.value / totalOrders) * 25);
+    const strokeWidth = Math.max(densityConfig.strokeMin, (link.value / chartTotalOrders) * densityConfig.strokeBase);
     
     return {
       path: `M ${sourceX} ${sourceY} C ${midX} ${sourceY} ${midX} ${targetY} ${targetX} ${targetY}`,
@@ -803,8 +804,33 @@ export function ImpactChart({
     }
   };
 
-  // 🔥 API数据加载状态处理 - 优化回退逻辑
-  if (useRealData && flowApiLoading) {
+  const handlePointerDown = (event: MouseEvent<SVGSVGElement>) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    setIsPanning(true);
+    lastPointerRef.current = { x: event.clientX, y: event.clientY };
+  };
+
+  const handlePointerMove = (event: MouseEvent<SVGSVGElement>) => {
+    if (!isPanning || !lastPointerRef.current) return;
+    const dx = event.clientX - lastPointerRef.current.x;
+    const dy = event.clientY - lastPointerRef.current.y;
+    lastPointerRef.current = { x: event.clientX, y: event.clientY };
+    setPan(prev => ({ x: prev.x + dx, y: prev.y + dy }));
+  };
+
+  const stopPanning = () => {
+    setIsPanning(false);
+    lastPointerRef.current = null;
+  };
+
+  const resetView = () => {
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
+  };
+
+  // 真实模式：在拿到首个响应前显示加载态，避免先渲染模拟数据
+  if (useRealData && !flowApiError && !flowApiData) {
     return (
       <Card className="maersk-card">
         <CardContent className="p-6">
@@ -819,126 +845,30 @@ export function ImpactChart({
     );
   }
 
-  // 🔥 修改：API失败时不显示错误，而是静默回退到虚拟数据
-  // 这样用户在没有API连接时仍能看到完整的演示界面
-  const shouldShowMockData = !useRealData || (useRealData && flowApiError);
-  
-  if (useRealData && flowApiError && process.env.NODE_ENV === 'development') {
-    // 仅在开发环境显示调试按钮
+  if (useRealData && flowApiError) {
+    return (
+      <Card className="maersk-card">
+        <CardContent className="p-6">
+          <div className="flex items-center justify-center h-64">
+            <Alert variant="destructive" className="max-w-xl">
+              <AlertDescription>
+                流向分析数据加载失败：{flowApiError}
+              </AlertDescription>
+            </Alert>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (useRealData && !flowApiLoading && !flowApiError && rawData.length === 0) {
     return (
       <Card className="maersk-card">
         <CardContent className="p-6">
           <div className="flex items-center justify-center h-64">
             <div className="text-center">
-              <div className="text-lg font-medium text-muted-foreground mb-2">🔄 已回退到演示模式</div>
-              <div className="text-sm text-muted-foreground mb-4">API连接失败，使用虚拟数据进行演示</div>
-              <div className="space-x-2">
-                <Button 
-                  variant="outline"
-                  size="sm"
-                  onClick={async () => {
-                    try {
-                      console.log('🧪 [简单测试] 测试基础API连接...');
-                      const testResponse = await fetch('/api/overview/test');
-                      console.log('🧪 [简单测试] 响应状态:', testResponse.status);
-                      
-                      if (testResponse.ok) {
-                        const testData = await testResponse.json();
-                        console.log('🧪 [简单测试] 响应数据:', testData);
-                        alert(`✅ 基础API连接正常: ${testData.message}`);
-                      } else {
-                        alert(`❌ 基础API连接失败: ${testResponse.status}`);
-                      }
-                    } catch (error) {
-                      console.error('🧪 [简单测试] 测试失败:', error);
-                      alert(`❌ 基础API测试失败: ${error.message}`);
-                    }
-                  }}
-                  className="text-accent-mid-teal hover:bg-accent-bright-teal"
-                >
-                  🧪 基础测试
-                </Button>
-                
-                <Button 
-                  variant="outline"
-                  size="sm"
-                  onClick={async () => {
-                  try {
-                    console.log('🔍 [API调试] 开始全面API连接测试...');
-                    
-                    // 测试1: Vite代理连接
-                    console.log('🔍 [API调试] 测试1: Vite代理连接');
-                    const proxyUrl = '/api/overview/flow-analysis?dateFrom=2025-08-19&dateTo=2025-08-27';
-                    console.log('🔍 [API调试] 代理URL:', window.location.origin + proxyUrl);
-                    
-                    const proxyResponse = await fetch(proxyUrl, {
-                      method: 'GET',
-                      headers: {
-                        'Accept': 'application/json',
-                        'Content-Type': 'application/json'
-                      }
-                    });
-                    
-                    console.log('🔍 [API调试] 代理响应状态:', proxyResponse.status);
-                    const proxyContentType = proxyResponse.headers.get('content-type');
-                    
-                    let proxyResult = '❌ 代理失败';
-                    if (proxyResponse.ok && proxyContentType && proxyContentType.includes('application/json')) {
-                      const proxyData = await proxyResponse.json();
-                      console.log('🔍 [API调试] 代理JSON响应:', proxyData);
-                      proxyResult = `✅ 代理成功: ${proxyData.data?.flowAnalysisData?.length || 0}条数据`;
-                    } else {
-                      const proxyText = await proxyResponse.text();
-                      console.log('🔍 [API调试] 代理文本响应:', proxyText.substring(0, 300));
-                      proxyResult = `❌ 代理失败: ${proxyResponse.status}`;
-                    }
-                    
-                    // 测试2: 直接后端连接
-                    console.log('🔍 [API调试] 测试2: 直接后端连接');
-                    const directUrl = 'http://localhost:3001/api/overview/flow-analysis?dateFrom=2025-08-19&dateTo=2025-08-27';
-                    console.log('🔍 [API调试] 直接URL:', directUrl);
-                    
-                    let directResult = '❌ 直接连接失败';
-                    try {
-                      const directResponse = await fetch(directUrl, {
-                        method: 'GET',
-                        headers: {
-                          'Accept': 'application/json',
-                          'Content-Type': 'application/json'
-                        }
-                      });
-                      
-                      console.log('🔍 [API调试] 直接响应状态:', directResponse.status);
-                      const directContentType = directResponse.headers.get('content-type');
-                      
-                      if (directResponse.ok && directContentType && directContentType.includes('application/json')) {
-                        const directData = await directResponse.json();
-                        console.log('🔍 [API调试] 直接JSON响应:', directData);
-                        directResult = `✅ 直接连接成功: ${directData.data?.flowAnalysisData?.length || 0}条数据`;
-                      } else {
-                        const directText = await directResponse.text();
-                        console.log('🔍 [API调试] 直接文本响应:', directText.substring(0, 300));
-                        directResult = `❌ 直接连接失败: ${directResponse.status}`;
-                      }
-                    } catch (directError) {
-                      console.error('🔍 [API调试] 直接连接错误:', directError);
-                      directResult = `❌ 直接连接异常: ${directError.message}`;
-                    }
-                    
-                    // 显示测试结果
-                    const message = `API连接测试结果:\n\n${proxyResult}\n${directResult}\n\n建议: ${proxyResult.includes('✅') ? '使用Vite代理' : directResult.includes('✅') ? '后端正常，检查Vite配置' : '检查后端服务状态'}`;
-                    alert(message);
-                    
-                  } catch (error) {
-                    console.error('🔍 [API调试] 测试失败:', error);
-                    alert(`❌ API调试失败: ${error.message}`);
-                  }
-                }}
-                className="text-accent-mid-orange hover:bg-accent-bright-orange"
-              >
-                🔍 API调试
-              </Button>
-              </div>
+              <div className="text-lg font-medium text-muted-foreground mb-2">暂无流向分析数据</div>
+              <div className="text-sm text-muted-foreground">当前筛选条件下没有可展示的订单流向记录</div>
             </div>
           </div>
         </CardContent>
@@ -946,29 +876,30 @@ export function ImpactChart({
     );
   }
 
-  // 如果在生产环境或者用户不关心调试，直接继续渲染虚拟数据
-  // 不再阻断用户体验
-
   return (
     <Card className="maersk-card">
-      <CardHeader>
-        <CardTitle className="flex items-center space-x-2">
-          <Package className="h-5 w-5 text-maersk-blue" />
-          <span>品牌×快递承运商×异常分类流向分析</span>
-          {selectedBrand && VF_SUB_BRANDS.includes(selectedBrand) && (
-            <Badge variant="outline" className="bg-functional-bright-blue text-functional-dark-blue border-functional-light-blue ml-4">
-              {selectedBrand}
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between gap-3">
+          <CardTitle className="flex items-center flex-wrap gap-2">
+            <Package className="h-5 w-5 text-maersk-blue" />
+            <span>品牌×快递承运商×异常分类流向分析</span>
+            {selectedBrand && VF_SUB_BRANDS.includes(selectedBrand) && (
+              <Badge variant="outline" className="bg-functional-bright-blue text-functional-dark-blue border-functional-light-blue ml-2">
+                {selectedBrand}
+              </Badge>
+            )}
+            <Badge variant="outline" className={`ml-1 text-xs ${
+              useRealData
+                ? (flowApiData ? 'bg-accent-bright-green text-accent-dark-green border-accent-light-green' : 'bg-accent-bright-orange text-accent-dark-orange border-accent-light-orange')
+                : 'bg-functional-bright-blue text-functional-dark-blue border-functional-light-blue'
+            }`}>
+              {useRealData ? (flowApiData ? '真实数据' : '连接中...') : '模拟数据'}
             </Badge>
-          )}
-          {/* 🔥 数据源指示 */}
-          <Badge variant="outline" className={`ml-2 text-xs ${
-            useRealData 
-              ? (flowApiData ? 'bg-accent-bright-green text-accent-dark-green border-accent-light-green' : 'bg-accent-bright-orange text-accent-dark-orange border-accent-light-orange')
-              : 'bg-functional-bright-blue text-functional-dark-blue border-functional-light-blue'
-          }`}>
-            {useRealData ? (flowApiData ? '真实数据' : '连接中...') : '模拟数据'}
-          </Badge>
-        </CardTitle>
+          </CardTitle>
+          <Button variant="outline" size="sm" className="h-8" onClick={resetView}>
+            重置视图
+          </Button>
+        </div>
       </CardHeader>
       
       <CardContent>
@@ -1006,18 +937,45 @@ export function ImpactChart({
                 容器适配·简化风险分级
               </Badge>*/}
             </h4>
-            <p className="text-sm text-functional-mid-grey mb-6">流向线条颜色表示风险状态，线条粗细表示订单量。<strong className="text-maersk-blue ml-2">点击异常节点可查看物流监控详情</strong></p>
+            <p className="text-sm text-functional-mid-grey mb-4">流向线条颜色表示风险状态，线条粗细表示订单量。<strong className="text-maersk-blue ml-2">Ctrl + 滚轮缩放，按住拖拽平移，双击重置视图。</strong></p>
+            <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3 mb-4">
+              <div className="flex flex-wrap items-center gap-3">
+                <Badge variant="outline" className="bg-functional-bright-blue text-functional-dark-blue border-functional-light-blue">
+                  当前展示 {displayedRawData.length} / {rawData.length} 条流向组合
+                </Badge>
+                {rawData.length > TOP_N_DEFAULT && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setShowAllFlows(prev => !prev)}
+                    className="h-8"
+                  >
+                    {showAllFlows ? `仅显示 Top ${TOP_N_DEFAULT}` : `展开全部（+${rawData.length - displayedRawData.length}）`}
+                  </Button>
+                )}
+              </div>
+            </div>
           </div>
 
-          {/* SVG Sankey图 - 极紧凑的响应式布局 */}
-          <div className="relative w-full">
+          {/* SVG Sankey图：节点过多时支持横向/纵向滚动，避免内容裁切 */}
+          <div
+            ref={viewportRef}
+            className={`relative w-full overflow-auto ${densityConfig.containerMaxHClass} border border-functional-light-grey rounded-md`}
+          >
             <svg 
-              width="100%" 
-              height="160" 
+              width={chartWidth}
+              height={chartHeight}
               viewBox={`0 0 ${chartWidth} ${chartHeight}`}
-              className="w-full h-auto"
-              preserveAspectRatio="xMidYMid meet"
+              className={`block ${densityConfig.minSvgWidthClass}`}
+              preserveAspectRatio="xMinYMin meet"
+              onMouseDown={handlePointerDown}
+              onMouseMove={handlePointerMove}
+              onMouseUp={stopPanning}
+              onMouseLeave={stopPanning}
+              onDoubleClick={resetView}
+              style={{ cursor: isPanning ? 'grabbing' : 'grab' }}
             >
+              <g transform={`translate(${pan.x} ${pan.y}) scale(${zoom})`}>
               {/* 绘制链接 */}
               {links.map((link, index) => {
                 const pathData = generatePath(link);
@@ -1045,7 +1003,7 @@ export function ImpactChart({
                   <rect
                     x={node.x}
                     y={node.y}
-                    width={node.layer === 2 ? 90 : 85} 
+                    width={node.width} 
                     height={node.height}
                     fill={node.color}
                     rx={3}
@@ -1058,18 +1016,18 @@ export function ImpactChart({
                   {node.clickable && (
                     <>
                       <circle
-                        cx={node.x + (node.layer === 2 ? 90 : 85) - 10}
+                        cx={node.x + node.width - 12}
                         cy={node.y + 10}
-                        r={5}
+                        r={densityConfig.clickableIconRadius}
                         fill="var(--maersk-white)"
                         opacity={0.95}
                       />
                       <text
-                        x={node.x + (node.layer === 2 ? 90 : 85) - 10}
-                        y={node.y + 14}
+                        x={node.x + node.width - 12}
+                        y={node.y + densityConfig.clickableIconYOffset}
                         textAnchor="middle"
                         fill="var(--functional-dark-blue)"
-                        fontSize="6"
+                        fontSize={densityConfig.clickableIconFontSize}
                         fontWeight="bold"
                       >
                         ↗
@@ -1079,24 +1037,26 @@ export function ImpactChart({
                   
                   {/* 节点标签 - 进一步缩小字体 */}
                   <text
-                    x={node.x + (node.layer === 2 ? 45 : 42.5)}
+                    x={node.x + node.width / 2}
                     y={node.y + node.height / 2 - 3}
                     textAnchor="middle"
                     fill="white"
-                    fontSize="8"
+                    fontSize={densityConfig.labelFontSize}
                     fontWeight="700"
                   >
                     {/* 品牌图标和名称在一行 */}
-                    <tspan x={node.x + (node.layer === 2 ? 45 : 42.5)} dy="0">
+                    <tspan x={node.x + node.width / 2} dy="0">
                       {node.icon} {node.layer === 1 ? (COURIER_DISPLAY_NAMES[node.name] || node.name) : node.name}
                     </tspan>
                     {/* 数据在下一行，使用更小字体 */}
-                    <tspan x={node.x + (node.layer === 2 ? 45 : 42.5)} dy="10" fontSize="6" fontWeight="600">
+                    <tspan x={node.x + node.width / 2} dy={densityConfig.valueDy} fontSize={densityConfig.valueFontSize} fontWeight="600">
                       {node.value.toLocaleString()}单
                     </tspan>
                   </text>
                 </g>
               ))}
+
+              </g>
 
 
             </svg>

@@ -5,16 +5,25 @@
 
 const oracledb = require('oracledb');
 const { getConnection, releaseConnection } = require('./src/config/database-api');
+const { verifyAndUpgradePassword } = require('./src/utils/passwordUtils');
 
-// 测试账号列表
-const TEST_ACCOUNTS = [
-  { userId: 'admin', password: 'admin123', desc: '系统管理员' },
-  { userId: 'dickies', password: '123456', desc: 'DICKIES品牌经理' },
-  { userId: 'tnf', password: '123456', desc: 'TNF品牌经理' },
-  { userId: 'vans', password: '123456', desc: 'VANS品牌经理' },
-  { userId: 'demo', password: 'demo', desc: '演示账号' },
-  { userId: 'testuser', password: 'testpass', desc: '测试账号' }
-];
+// 测试账号列表示例
+// 使用 AUTH_TEST_ACCOUNTS 环境变量传入 JSON 数组，避免在仓库中硬编码账号口令。
+const TEST_ACCOUNTS = (() => {
+  const rawValue = process.env.AUTH_TEST_ACCOUNTS;
+
+  if (!rawValue) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(rawValue);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (error) {
+    console.error('❌ AUTH_TEST_ACCOUNTS 解析失败，请提供合法的JSON数组');
+    return [];
+  }
+})();
 
 async function testDatabaseConnection() {
   console.log('\n' + '='.repeat(60));
@@ -135,7 +144,9 @@ async function testLoginLogic(userId, password) {
       return { success: false, error: '账号已停用' };
     }
     
-    if (user.PASSWORD !== password) {
+    const passwordCheck = await verifyAndUpgradePassword(password, user.PASSWORD);
+
+    if (!passwordCheck.isValid) {
       return { success: false, error: '密码错误' };
     }
     
@@ -160,6 +171,11 @@ async function testAllAccounts() {
   console.log('\n' + '='.repeat(60));
   console.log('🔐 步骤3: 测试所有测试账号');
   console.log('='.repeat(60));
+
+  if (TEST_ACCOUNTS.length === 0) {
+    console.log('⚠️ 未配置 AUTH_TEST_ACCOUNTS，跳过账号登录测试');
+    return;
+  }
   
   for (const account of TEST_ACCOUNTS) {
     const result = await testLoginLogic(account.userId, account.password);

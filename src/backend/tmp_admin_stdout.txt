@@ -1,0 +1,4 @@
+﻿{
+  "errorType": "AbortError",
+  "error": "This operation was aborted"
+}

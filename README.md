@@ -87,8 +87,9 @@ plaintext
 🌐 访问地址
 前端应用：http://localhost:5173
 后端 API：http://localhost:3001
-健康检查：http://localhost:3001/health
-API 文档：http://localhost:3001/api-docs
+健康检查：http://localhost:3001/api/health
+API 信息接口：http://localhost:3001/api/info
+接口说明：src/backend/API_GUIDE.md
 📈 连接状态监控
 🟢 API 服务已连接：使用 Oracle 真实数据
 🟡 模拟数据模式：后端未连接，使用演示数据

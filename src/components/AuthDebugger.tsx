@@ -217,8 +217,8 @@ export const AuthDebugger: React.FC = () => {
       <Card className="p-6 bg-blue-50">
         <h3 className="text-lg font-bold mb-3">💡 使用说明</h3>
         <ul className="space-y-2 text-sm">
-          <li>• <strong>admin/admin123</strong>: 前端Mock账号，不会调用后端</li>
-          <li>• <strong>其他账号</strong>: 会调用后端 /api/auth/login 接口</li>
+          <li>• 所有账号都会调用后端 /api/auth/login 接口</li>
+          <li>• 请使用测试库或受控环境中的真实测试账号</li>
           <li>• <strong>默认已启用绝对URL</strong>：更容易定位反代/路由问题</li>
           <li>• 后端必须可通过当前站点的 <strong>/api</strong> 访问到</li>
           <li>• 如需测试相对路径请求，取消勾选“使用绝对URL（当前站点）”</li>

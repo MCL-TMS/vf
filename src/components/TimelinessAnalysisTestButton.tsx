@@ -3,6 +3,7 @@ import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { Calculator, CheckCircle } from "lucide-react";
 import { toast } from "sonner@2.0.3";
+import { analyzeTimeliness } from "../services/apiService";
 
 interface TimelinessAnalysisTestButtonProps {
   selectedBrand?: string;
@@ -38,20 +39,7 @@ export function TimelinessAnalysisTestButton({
         analysisType: 'both'
       };
 
-      const response = await fetch('/api/upload/analyze-timeliness', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(testRequest)
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || '分析计算失败');
-      }
-
-      const result = await response.json();
+      const result = await analyzeTimeliness(testRequest);
       console.log('✅ 测试分析完成:', result);
 
       if (onAnalysisComplete) {

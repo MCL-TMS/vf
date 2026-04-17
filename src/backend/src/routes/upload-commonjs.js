@@ -12,6 +12,7 @@ const path = require('path');
 const fs = require('fs');
 const XLSX = require('xlsx');
 const timelinessFileStore = require('../utils/timelinessFileStore');
+const { ERROR_CODES, sendError, sendRouteError } = require('../utils/apiError');
 
 // 统一的上传文件根目录，应与 multer 的存储目录保持一致
 const UPLOAD_ROOT = path.resolve(__dirname, '../../uploads');
@@ -377,9 +378,11 @@ const upload = multer({
 router.post('/timeliness-excel', upload.single('file'), async (req, res) => {
   try {
     if (!req.file) {
-      return res.status(400).json({
+      return sendError(res, req, {
+        status: 400,
+        code: ERROR_CODES.VALIDATION_ERROR,
         error: '未接收到文件',
-        message: '请选择要上传的Excel或CSV文件'
+        details: { requiredFields: ['file'] }
       });
     }
 
@@ -481,10 +484,14 @@ router.post('/timeliness-excel', upload.single('file'), async (req, res) => {
 
     } catch (parseError) {
       console.error('文件解析失败:', parseError);
-      return res.status(400).json({
+      return sendError(res, req, {
+        status: 400,
+        code: ERROR_CODES.VALIDATION_ERROR,
         error: '文件解析失败',
-        message: parseError.message,
-        details: parseError.stack
+        details: {
+          reason: parseError.message,
+          stack: process.env.NODE_ENV === 'development' ? parseError.stack : undefined
+        }
       });
     } finally {
       // 清理临时文件
@@ -512,18 +519,16 @@ router.post('/timeliness-excel', upload.single('file'), async (req, res) => {
     // 如果是multer错误
     if (error instanceof multer.MulterError) {
       if (error.code === 'LIMIT_FILE_SIZE') {
-        return res.status(400).json({
+        return sendError(res, req, {
+          status: 400,
+          code: ERROR_CODES.VALIDATION_ERROR,
           error: '文件大小超限',
-          message: '文件大小不能超过10MB'
+          details: { maxSizeMb: 10 }
         });
       }
     }
 
-    res.status(500).json({
-      error: '服务器内部错误',
-      message: '文件上传处理失败，请稍后重试',
-      details: error.message
-    });
+    return sendRouteError(res, req, error, { fallbackError: '文件上传处理失败，请稍后重试' });
   }
 });
 
@@ -603,10 +608,7 @@ router.get('/history', async (req, res) => {
     
   } catch (error) {
     console.error('获取上传历史失败:', error);
-    res.status(500).json({
-      error: '服务器内部错误',
-      message: '获取上传历史失败'
-    });
+    return sendRouteError(res, req, error, { fallbackError: '获取上传历史失败' });
   }
 });
 
@@ -646,10 +648,7 @@ router.get('/city-mapping', async (req, res) => {
     
   } catch (error) {
     console.error('获取城市映射失败:', error);
-    res.status(500).json({
-      error: '服务器内部错误',
-      message: '获取城市映射失败'
-    });
+    return sendRouteError(res, req, error, { fallbackError: '获取城市映射失败' });
   }
 });
 
@@ -662,18 +661,22 @@ router.get('/dest-city-lookup', async (req, res) => {
     const { destCities } = req.query;
     
     if (!destCities) {
-      return res.status(400).json({
+      return sendError(res, req, {
+        status: 400,
+        code: ERROR_CODES.VALIDATION_ERROR,
         error: '参数错误',
-        message: '请提供destCities参数'
+        details: { requiredFields: ['destCities'] }
       });
     }
     
     const destCityList = destCities.toString().split(',').map(id => id.trim()).filter(id => id);
     
     if (destCityList.length === 0) {
-      return res.status(400).json({
-        error: '参数错误', 
-        message: 'destCities参数不能为空'
+      return sendError(res, req, {
+        status: 400,
+        code: ERROR_CODES.VALIDATION_ERROR,
+        error: '参数错误',
+        details: { requiredFields: ['destCities'] }
       });
     }
     
@@ -681,9 +684,12 @@ router.get('/dest-city-lookup', async (req, res) => {
     
     try {
       const { executeQuery } = require('../config/database-api');
-      
-      // 构建IN查询（使用简单的字符串拼接，避免复杂的参数绑定）
-      const destCityPlaceholders = destCityList.map(id => `'${id.replace(/'/g, "''")}'`).join(',');
+      const bindParams = {};
+      const destCityPlaceholders = destCityList.map((id, index) => {
+        const key = `city${index}`;
+        bindParams[key] = id;
+        return `:${key}`;
+      }).join(',');
       
       const query = `
         SELECT 
@@ -694,9 +700,9 @@ router.get('/dest-city-lookup', async (req, res) => {
         ORDER BY AREA_ID
       `;
       
-      console.log('🔍 执行查询:', query);
+      console.log('🔍 执行DEST_CITY查询，参数数量:', destCityList.length);
       
-      const result = await executeQuery(query);
+      const result = await executeQuery(query, bindParams);
       
       const lookupResults = {};
       
@@ -735,20 +741,13 @@ router.get('/dest-city-lookup', async (req, res) => {
       
     } catch (dbError) {
       console.error('💾 DEST_CITY数据库查询失败:', dbError);
-      
-      res.status(500).json({
-        error: '数据库连接失败',
-        message: `无法查询DEST_CITY映射: ${dbError.message}`,
-        timestamp: new Date().toISOString()
-      });
+
+      return sendRouteError(res, req, dbError, { fallbackError: '无法查询DEST_CITY映射' });
     }
     
   } catch (error) {
     console.error('❌ DEST_CITY查询失败:', error);
-    res.status(500).json({
-      error: '服务器内部错误',
-      message: 'DEST_CITY查询失败'
-    });
+    return sendRouteError(res, req, error, { fallbackError: 'DEST_CITY查询失败' });
   }
 });
 
@@ -759,9 +758,11 @@ router.get('/dest-city-lookup', async (req, res) => {
 router.post('/validate-format', upload.single('file'), async (req, res) => {
   try {
     if (!req.file) {
-      return res.status(400).json({
+      return sendError(res, req, {
+        status: 400,
+        code: ERROR_CODES.VALIDATION_ERROR,
         error: '未接收到文件',
-        message: '请选择要验证的Excel文件'
+        details: { requiredFields: ['file'] }
       });
     }
 
@@ -795,11 +796,11 @@ router.post('/validate-format', upload.single('file'), async (req, res) => {
       });
       
     } catch (parseError) {
-      res.status(400).json({
-        success: false,
+      return sendError(res, req, {
+        status: 400,
+        code: ERROR_CODES.VALIDATION_ERROR,
         error: '文件格式验证失败',
-        message: parseError.message,
-        timestamp: new Date().toISOString()
+        details: { reason: parseError.message }
       });
     } finally {
       // 清理临时文件
@@ -814,10 +815,7 @@ router.post('/validate-format', upload.single('file'), async (req, res) => {
 
   } catch (error) {
     console.error('文件格式验证失败:', error);
-    res.status(500).json({
-      error: '服务器内部错误',
-      message: '文件格式验证失败'
-    });
+    return sendRouteError(res, req, error, { fallbackError: '文件格式验证失败' });
   }
 });
 
@@ -845,9 +843,11 @@ router.post('/analyze-timeliness', async (req, res) => {
     } = req.body;
     
     if (!dateRange || !dateRange.from || !dateRange.to) {
-      return res.status(400).json({
+      return sendError(res, req, {
+        status: 400,
+        code: ERROR_CODES.VALIDATION_ERROR,
         error: '参数错误',
-        message: '请提供有效的时间范围'
+        details: { requiredFields: ['dateRange.from', 'dateRange.to'] }
       });
     }
     
@@ -989,21 +989,13 @@ router.post('/analyze-timeliness', async (req, res) => {
       
     } catch (dbError) {
       console.error('💾 时效分析数据库查询失败:', dbError);
-      
-      res.status(500).json({
-        error: '数据库查询失败',
-        message: `时效分析计算失败: ${dbError.message}`,
-        timestamp: new Date().toISOString()
-      });
+
+      return sendRouteError(res, req, dbError, { fallbackError: '时效分析计算失败' });
     }
     
   } catch (error) {
     console.error('❌ 时效分析失败:', error);
-    res.status(500).json({
-      error: '服务器内部错误',
-      message: '时效分析计算失败',
-      details: error.message
-    });
+    return sendRouteError(res, req, error, { fallbackError: '时效分析计算失败' });
   }
 });
 
@@ -1136,10 +1128,7 @@ router.get('/sla-matching-status', async (req, res) => {
     
   } catch (error) {
     console.error('获取SLA状态失败:', error);
-    res.status(500).json({
-      error: '服务器内部错误',
-      message: '获取SLA匹配状态失败'
-    });
+    return sendRouteError(res, req, error, { fallbackError: '获取SLA匹配状态失败' });
   }
 });
 
@@ -1160,9 +1149,11 @@ router.post('/save-to-file', async (req, res) => {
     const { parsedData, metadata } = req.body;
     
     if (!parsedData || !Array.isArray(parsedData)) {
-      return res.status(400).json({
+      return sendError(res, req, {
+        status: 400,
+        code: ERROR_CODES.VALIDATION_ERROR,
         error: '参数错误',
-        message: 'parsedData必须是数组'
+        details: { requiredFields: ['parsedData'] }
       });
     }
     
@@ -1193,10 +1184,7 @@ router.post('/save-to-file', async (req, res) => {
     
   } catch (error) {
     console.error('❌ 保存时效数据到文件失败:', error);
-    res.status(500).json({
-      error: '保存失败',
-      message: error.message
-    });
+    return sendRouteError(res, req, error, { fallbackError: '保存失败' });
   }
 });
 
@@ -1217,10 +1205,7 @@ router.get('/file-history', async (req, res) => {
     
   } catch (error) {
     console.error('❌ 获取上传历史失败:', error);
-    res.status(500).json({
-      error: '获取失败',
-      message: error.message
-    });
+    return sendRouteError(res, req, error, { fallbackError: '获取失败' });
   }
 });
 
@@ -1233,9 +1218,11 @@ router.post('/set-active-version', async (req, res) => {
     const { fileId } = req.body;
     
     if (!fileId) {
-      return res.status(400).json({
+      return sendError(res, req, {
+        status: 400,
+        code: ERROR_CODES.VALIDATION_ERROR,
         error: '参数错误',
-        message: '请提供fileId'
+        details: { requiredFields: ['fileId'] }
       });
     }
     
@@ -1249,10 +1236,7 @@ router.post('/set-active-version', async (req, res) => {
     
   } catch (error) {
     console.error('❌ 设置活跃版本失败:', error);
-    res.status(500).json({
-      error: '设置失败',
-      message: error.message
-    });
+    return sendRouteError(res, req, error, { fallbackError: '设置失败' });
   }
 });
 
@@ -1265,9 +1249,11 @@ router.delete('/file/:fileId', async (req, res) => {
     const { fileId } = req.params;
     
     if (!fileId) {
-      return res.status(400).json({
+      return sendError(res, req, {
+        status: 400,
+        code: ERROR_CODES.VALIDATION_ERROR,
         error: '参数错误',
-        message: '请提供fileId'
+        details: { requiredFields: ['fileId'] }
       });
     }
     
@@ -1281,10 +1267,7 @@ router.delete('/file/:fileId', async (req, res) => {
     
   } catch (error) {
     console.error('❌ 删除文件失败:', error);
-    res.status(500).json({
-      error: '删除失败',
-      message: error.message
-    });
+    return sendRouteError(res, req, error, { fallbackError: '删除失败' });
   }
 });
 
@@ -1305,10 +1288,7 @@ router.get('/file-statistics', async (req, res) => {
     
   } catch (error) {
     console.error('❌ 获取统计信息失败:', error);
-    res.status(500).json({
-      error: '获取失败',
-      message: error.message
-    });
+    return sendRouteError(res, req, error, { fallbackError: '获取失败' });
   }
 });
 
@@ -1327,9 +1307,11 @@ router.post('/load-default-timeliness', async (req, res) => {
     
     // 确保目录存在
     if (!fs.existsSync(uploadsDir)) {
-      return res.status(404).json({
+      return sendError(res, req, {
+        status: 404,
+        code: ERROR_CODES.RESOURCE_NOT_FOUND,
         error: '目录不存在',
-        message: '未找到预置时效表目录，请先创建 backend/uploads/timeliness 目录并放置Excel文件'
+        details: { path: 'backend/uploads/timeliness' }
       });
     }
     
@@ -1341,9 +1323,11 @@ router.post('/load-default-timeliness', async (req, res) => {
     });
     
     if (excelFiles.length === 0) {
-      return res.status(404).json({
+      return sendError(res, req, {
+        status: 404,
+        code: ERROR_CODES.RESOURCE_NOT_FOUND,
         error: '未找到预置文件',
-        message: '在 backend/uploads/timeliness 目录下未找到Excel文件，请放置时效表Excel文件（.xlsx或.xls）'
+        details: { path: 'backend/uploads/timeliness' }
       });
     }
     
@@ -1379,9 +1363,10 @@ router.post('/load-default-timeliness', async (req, res) => {
     
     // 检查是否有解析后的数据
     if (!parseResult.parsedData || parseResult.parsedData.length === 0) {
-      return res.status(400).json({
+      return sendError(res, req, {
+        status: 400,
+        code: ERROR_CODES.VALIDATION_ERROR,
         error: '解析失败',
-        message: '⚠️ 没有找到可保存的parsedData，请检查Excel文件格式是否正确',
         details: {
           totalRows: parseResult.totalRows,
           brandColumns: parseResult.brandColumns,
@@ -1429,11 +1414,7 @@ router.post('/load-default-timeliness', async (req, res) => {
     
   } catch (error) {
     console.error('❌ 加载预置时效表失败:', error);
-    res.status(500).json({
-      error: '加载失败',
-      message: error.message,
-      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
-    });
+    return sendRouteError(res, req, error, { fallbackError: '加载失败' });
   }
 });
 
@@ -1473,8 +1454,9 @@ router.post('/export-timeliness-rawdata', async (req, res) => {
     // 获取时效数据用于匹配Plan时效
     const timelinessResult = getLatestTimelinessData();
     if (!timelinessResult || !timelinessResult.data || timelinessResult.data.length === 0) {
-      return res.status(400).json({
-        success: false,
+      return sendError(res, req, {
+        status: 400,
+        code: ERROR_CODES.VALIDATION_ERROR,
         error: '未找到时效数据文件，请先上传时效Excel表'
       });
     }
@@ -1781,12 +1763,7 @@ router.post('/export-timeliness-rawdata', async (req, res) => {
     
   } catch (error) {
     console.error('❌ 导出RawData失败:', error);
-    res.status(500).json({
-      success: false,
-      error: '导出失败',
-      message: error.message,
-      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
-    });
+    return sendRouteError(res, req, error, { fallbackError: '导出失败' });
   }
 });
 

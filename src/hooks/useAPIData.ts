@@ -34,6 +34,7 @@ export function useAPIData(options: UseAPIDataOptions = {}) {
   // 🔥 新增：获取用户认证信息和品牌权限
   const { user, isLoading: authLoading } = useAuth(); // ✅ 获取isLoading状态
   const userBrands = user?.customerNos || []; // ✅ 修复：使用customerNos（复数），如果是管理员则为空数组
+  const userBrandsKey = userBrands.join(',');
   
   console.log('🔐 [useAPIData] 用户品牌权限:', { 
     userId: user?.userId,
@@ -121,8 +122,12 @@ export function useAPIData(options: UseAPIDataOptions = {}) {
       });
     }
     
+    const hasRequiredData = (activeMenu === 'overview-logistics')
+      ? !!(state.logisticsData || state.brandLogisticsData || state.data)
+      : !!state.data;
+
     // 🔥 修复：如果activeMenu改变了，必须重新加载（即使其他参数相同）
-    if (!force && !menuChanged && currentParams === lastFetchParamsRef.current && state.data && !state.error) {
+    if (!force && !menuChanged && currentParams === lastFetchParamsRef.current && hasRequiredData && !state.error) {
       console.log('⏭️ [useAPIData] Skipping request - params unchanged and has data');
       return;
     }
@@ -154,20 +159,11 @@ export function useAPIData(options: UseAPIDataOptions = {}) {
     }
     
     try {
-      // 先检查API连接状态
+      // 健康检查仅作参考，不再阻断真实数据请求。
       const isHealthy = await ApiService.quickHealthCheck();
       
       if (!isHealthy) {
-        setState({
-          data: null,
-          loading: false,
-          error: null, // 不设置为错误，因为这是预期的情况
-          logisticsData: null,
-          brandLogisticsData: null
-        });
-        lastFetchParamsRef.current = currentParams;
-        isInitializedRef.current = true;
-        return;
+        console.warn('⚠️ [useAPIData] 健康检查未通过，但继续尝试真实数据请求');
       }
 
       // 根据页面类型获取不同的API数据
@@ -312,7 +308,23 @@ export function useAPIData(options: UseAPIDataOptions = {}) {
       
       isInitializedRef.current = true;
     }
-  }, [enabled, dateRange?.from, dateRange?.to, selectedBrand, selectedPlatform, selectedSelfFlag, activeMenu]); // 稳定的依赖项，包含activeMenu
+  }, [
+    enabled,
+    dateRange?.from,
+    dateRange?.to,
+    selectedBrand,
+    selectedPlatform,
+    selectedSelfFlag,
+    activeMenu,
+    authLoading,
+    user?.userId,
+    userBrandsKey,
+    state.loading,
+    state.error,
+    state.data,
+    state.logisticsData,
+    state.brandLogisticsData
+  ]); // 依赖认证与当前数据状态，避免拿到过期闭包导致请求不再触发
 
   // 强制重新获取数据
   const refetch = useCallback(() => {

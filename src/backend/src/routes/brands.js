@@ -5,7 +5,19 @@
 
 const express = require('express');
 const router = express.Router();
-const pool = require('../config/database');
+const { executeQuery } = require('../config/database-api');
+const { ERROR_CODES, sendError } = require('../utils/apiError');
+const { getAuthorizedCustomerNos, normalizeBrandValues } = require('../utils/brandScope');
+
+function toBrandItem(row) {
+  const brandCode = row.BRANDCODE || row.brandCode || row.COMPANY_SYSID || row.company_sysid || row[0];
+  const brandName = row.BRANDNAME || row.brandName || row.COMPANY_ABNAME || row.company_abname || row[1] || brandCode;
+  return {
+    brandCode,
+    brandName,
+    fullName: brandName
+  };
+}
 
 /**
  * GET /api/brands/mapping
@@ -17,11 +29,27 @@ router.get('/mapping', async (req, res) => {
   console.log('📋 品牌映射查询请求');
   console.log('========================================');
   
-  let connection;
-  
   try {
-    connection = await pool.getConnection();
-    console.log('✅ 数据库连接成功');
+    const authorizedCustomerNos = getAuthorizedCustomerNos(req.user);
+
+    if (Array.isArray(authorizedCustomerNos) && authorizedCustomerNos.length === 0) {
+      return sendError(res, req, {
+        status: 403,
+        code: ERROR_CODES.EMPTY_BRAND_SCOPE,
+        error: '当前账号未配置可访问品牌'
+      });
+    }
+
+    let whereClause = '';
+    const params = {};
+
+    if (Array.isArray(authorizedCustomerNos)) {
+      authorizedCustomerNos.forEach((customerNo, index) => {
+        params[`brand${index}`] = customerNo;
+      });
+      const placeholders = authorizedCustomerNos.map((_, index) => `:brand${index}`).join(', ');
+      whereClause = `WHERE COMPANY_SYSID IN (${placeholders})`;
+    }
 
     // 查询品牌映射关系
     // company_sysid = CUSTOMERNO (如 '18405', '18405-1', '18405-2')
@@ -29,25 +57,20 @@ router.get('/mapping', async (req, res) => {
     const query = `
       SELECT 
         COMPANY_SYSID as brandCode,
-        COMPANY_ABNAME as brandName,
-        COMPANY_FNAME as fullName
+        COMPANY_ABNAME as brandName
       FROM APP_CMS.BAS_COMPANY
-      WHERE COMPANY_SYSID IN ('18405', '18405-1', '18405-2', '18405-3', '18405-4', '18405-5')
+      ${whereClause}
       ORDER BY COMPANY_SYSID
     `;
 
     console.log('📊 执行SQL查询...');
     console.log('查询语句:', query);
 
-    const result = await connection.execute(query);
+    const result = await executeQuery(query, params);
     console.log(`✅ 查询成功，返回 ${result.rows.length} 条品牌记录`);
 
     // 转换为前端友好的格式
-    const brandMapping = result.rows.map(row => ({
-      brandCode: row[0],      // COMPANY_SYSID
-      brandName: row[1],      // COMPANY_ABNAME
-      fullName: row[2] || ''  // COMPANY_FNAME
-    }));
+    const brandMapping = (result.rows || []).map(toBrandItem);
 
     console.log('🏷️  品牌映射列表:');
     brandMapping.forEach(brand => {
@@ -68,14 +91,6 @@ router.get('/mapping', async (req, res) => {
       message: error.message
     });
   } finally {
-    if (connection) {
-      try {
-        await connection.close();
-        console.log('✅ 数据库连接已关闭');
-      } catch (err) {
-        console.error('⚠️  关闭数据库连接时出错:', err);
-      }
-    }
     console.log('========================================\n');
   }
 });
@@ -88,58 +103,60 @@ router.get('/mapping', async (req, res) => {
 router.get('/list', async (req, res) => {
   console.log('\n📋 品牌列表查询请求');
   
-  const { userBrands } = req.query; // 用户权限品牌代码，逗号分隔
-  
-  let connection;
+  const { userBrands } = req.query;
   
   try {
-    connection = await pool.getConnection();
-    
-    let query;
-    let params = [];
-    
-    if (userBrands && userBrands !== 'all') {
-      // 用户有特定品牌权限
-      const brandArray = userBrands.split(',').map(b => b.trim());
-      const placeholders = brandArray.map((_, i) => `:brand${i}`).join(', ');
-      
-      query = `
-        SELECT 
-          COMPANY_SYSID as brandCode,
-          COMPANY_ABNAME as brandName,
-          COMPANY_FNAME as fullName
-        FROM APP_CMS.BAS_COMPANY
-        WHERE COMPANY_SYSID IN (${placeholders})
-        ORDER BY COMPANY_SYSID
-      `;
-      
-      params = brandArray.reduce((acc, brand, i) => {
-        acc[`brand${i}`] = brand;
-        return acc;
-      }, {});
-      
-    } else {
-      // 用户是管理员或查看所有品牌
-      query = `
-        SELECT 
-          COMPANY_SYSID as brandCode,
-          COMPANY_ABNAME as brandName,
-          COMPANY_FNAME as fullName
-        FROM APP_CMS.BAS_COMPANY
-        WHERE COMPANY_SYSID IN ('18405', '18405-1', '18405-2', '18405-3', '18405-4', '18405-5')
-        ORDER BY COMPANY_SYSID
-      `;
+    const authorizedCustomerNos = getAuthorizedCustomerNos(req.user);
+    const requestedBrands = normalizeBrandValues(userBrands);
+
+    if (Array.isArray(authorizedCustomerNos) && authorizedCustomerNos.length === 0) {
+      return sendError(res, req, {
+        status: 403,
+        code: ERROR_CODES.EMPTY_BRAND_SCOPE,
+        error: '当前账号未配置可访问品牌'
+      });
     }
 
-    console.log('📊 执行SQL查询:', { userBrands, params });
+    let effectiveBrands = requestedBrands;
+    if (Array.isArray(authorizedCustomerNos)) {
+      if (requestedBrands) {
+        const unauthorizedBrands = requestedBrands.filter((brandCode) => !authorizedCustomerNos.includes(brandCode));
+        if (unauthorizedBrands.length > 0) {
+          return sendError(res, req, {
+            status: 403,
+            code: ERROR_CODES.BRAND_SCOPE_FORBIDDEN,
+            error: '请求的品牌超出当前账号权限范围',
+            details: { unauthorizedBrands }
+          });
+        }
+      }
 
-    const result = await connection.execute(query, params);
+      effectiveBrands = requestedBrands || authorizedCustomerNos;
+    }
+
+    let query = `
+      SELECT 
+        COMPANY_SYSID as brandCode,
+        COMPANY_ABNAME as brandName
+      FROM APP_CMS.BAS_COMPANY
+    `;
+    const params = {};
+
+    if (effectiveBrands && effectiveBrands.length > 0) {
+      const placeholders = effectiveBrands.map((_, i) => `:brand${i}`).join(', ');
+      query += ` WHERE COMPANY_SYSID IN (${placeholders})`;
+      effectiveBrands.forEach((brandCode, i) => {
+        params[`brand${i}`] = brandCode;
+      });
+    }
+
+    query += ' ORDER BY COMPANY_SYSID';
+
+    console.log('📊 执行SQL查询:', { userBrands, authorizedCustomerNos, effectiveBrands, params });
+
+    const result = await executeQuery(query, params);
     
-    const brandList = result.rows.map(row => ({
-      brandCode: row[0],
-      brandName: row[1],
-      fullName: row[2] || ''
-    }));
+    const brandList = (result.rows || []).map(toBrandItem);
 
     console.log(`✅ 返回 ${brandList.length} 个品牌`);
 
@@ -157,9 +174,7 @@ router.get('/list', async (req, res) => {
       message: error.message
     });
   } finally {
-    if (connection) {
-      await connection.close();
-    }
+    // executeQuery 内部已自动管理连接释放
   }
 });
 
