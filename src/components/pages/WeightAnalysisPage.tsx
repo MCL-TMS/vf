@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState, type ChangeEvent } from "react";
+import { useBrand } from '../../contexts/BrandContext';
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Button } from "../ui/button";
 import { Badge } from "../ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { Label } from "../ui/label";
 import { WeightDistributionChart } from "../WeightDistributionChart";
-import { WEIGHT_RANGE_LABELS } from "../../constants/weightRanges";
+import { WEIGHT_RANGE_LABELS } from "../../constants/weightRanges.ts";
 import { useAuth } from "../../contexts/AuthContext";
 import { getWeightAnalysis, getWeightAnalysisPermissions } from "../../services/apiService";
 import { ApiClientError } from "../../services/apiError";
@@ -107,8 +108,14 @@ function toNumber(value: any): number {
 }
 
 export function WeightAnalysisPage({ selectedBrand: globalSelectedBrand, dateRange, onBack }: WeightAnalysisPageProps) {
+    // Tab切换：brand/region
+    const [viewMode, setViewMode] = useState<'brand' | 'region'>('brand');
+
+  // 获取品牌映射表
+  const { codeToNameMap } = useBrand();
   const { user } = useAuth();
 
+  // 支持多选：viewSelectedBrand 只用于详情页，默认 all
   const [viewSelectedBrand, setViewSelectedBrand] = useState(
     globalSelectedBrand && globalSelectedBrand !== "all" ? globalSelectedBrand : "all"
   );
@@ -121,6 +128,10 @@ export function WeightAnalysisPage({ selectedBrand: globalSelectedBrand, dateRan
   const [analysisData, setAnalysisData] = useState<any>(null);
   const [isLoadingAnalysis, setIsLoadingAnalysis] = useState(false);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
+  // 地区分析相关
+  const [regionData, setRegionData] = useState<any>(null);
+  const [isLoadingRegion, setIsLoadingRegion] = useState(false);
+  const [regionError, setRegionError] = useState<string | null>(null);
   const [brandSearchKeyword, setBrandSearchKeyword] = useState("");
   const [showAllBrandCards, setShowAllBrandCards] = useState(false);
 
@@ -132,11 +143,22 @@ export function WeightAnalysisPage({ selectedBrand: globalSelectedBrand, dateRan
     return getDefaultDateRange();
   }, [dateRange]);
 
+
   useEffect(() => {
-    if (globalSelectedBrand && globalSelectedBrand !== "all") {
+    // 多选时，viewSelectedBrand 只在点击卡片时进入详情，否则始终为 all
+    if (Array.isArray(globalSelectedBrand)) {
+      setViewSelectedBrand("all");
+    } else if (globalSelectedBrand && globalSelectedBrand !== "all") {
       setViewSelectedBrand(globalSelectedBrand);
+    } else {
+      setViewSelectedBrand("all");
     }
   }, [globalSelectedBrand]);
+
+
+
+  // 🔥 移除了这里的调试日志，因为brandAnalysisData还未定义
+  // 调试日志已移到brandAnalysisData定义之后
 
   useEffect(() => {
     const fetchPermissions = async () => {
@@ -197,6 +219,58 @@ export function WeightAnalysisPage({ selectedBrand: globalSelectedBrand, dateRan
     fetchPermissions();
   }, [user?.userId, user?.roleId, user?.userName]);
 
+  // 地区分析数据请求函数，提升到组件作用域
+  const fetchRegionData = async () => {
+    if (!user?.userId) return;
+    setIsLoadingRegion(true);
+    setRegionError(null);
+    try {
+      let brandParam = "all";
+      if (Array.isArray(globalSelectedBrand)) {
+        brandParam = globalSelectedBrand.length === 0 ? "all" : globalSelectedBrand.join(",");
+      } else if (globalSelectedBrand && globalSelectedBrand !== "all") {
+        brandParam = globalSelectedBrand;
+      }
+            const response = await getWeightAnalysis({
+        dateRange: effectiveDateRange,
+        brand: brandParam,
+        selfFlag: "Y",
+        weightType,
+        userId: user.userId,
+      });
+      console.log('📥 [fetchRegionData] API响应:', response);
+      if (!response?.success) {
+        throw new Error("API调用失败");
+      }
+      // 尝试从响应中获取地区分析数据（支持多种字段名）
+      const regionAnalysis = response.data?.regionAnalysis || response.data?.regionData || response.data?.regions;
+      if (regionAnalysis) {
+        setRegionData({ regionAnalysis });
+      } else {
+        console.warn('⚠️ [fetchRegionData] 未找到regionAnalysis字段，响应keys:', Object.keys(response.data || {}));
+        setRegionData(response.data || {});
+      }
+      /*
+      const response = await getWeightAnalysis({
+        dateRange: effectiveDateRange,
+        brand: brandParam,
+        selfFlag: "Y",
+        weightType,
+        userId: user.userId,
+      });
+      if (!response?.success || !response?.data?.regionAnalysis) {
+        throw new Error("未获取到地区分析数据");
+      }
+      setRegionData({ regionAnalysis: response.data.regionAnalysis });
+      */
+    } catch (error: any) {
+      setRegionError(error?.message || "地区分析数据加载失败");
+      setRegionData(null);
+    } finally {
+      setIsLoadingRegion(false);
+    }
+  };
+
   const fetchAnalysisData = async () => {
     if (!user?.userId) {
       return;
@@ -206,21 +280,52 @@ export function WeightAnalysisPage({ selectedBrand: globalSelectedBrand, dateRan
     setAnalysisError(null);
 
     try {
+      // 多选支持：brand 参数为逗号分隔字符串
+      let brandParam = "all";
+      if (Array.isArray(globalSelectedBrand)) {
+        brandParam = globalSelectedBrand.length === 0 ? "all" : globalSelectedBrand.join(",");
+      } else if (globalSelectedBrand && globalSelectedBrand !== "all") {
+        brandParam = globalSelectedBrand;
+      }
+
+      console.log("🔍 [WeightAnalysisPage.fetchAnalysisData] 开始请求:", {
+        dateRange: effectiveDateRange,
+        globalSelectedBrand,
+        brandParam,
+        brandType: Array.isArray(globalSelectedBrand) ? 'array' : typeof globalSelectedBrand,
+        weightType,
+        userId: user.userId
+      });
+
       const response = await getWeightAnalysis({
         dateRange: effectiveDateRange,
-        brand: globalSelectedBrand && globalSelectedBrand !== "all" ? globalSelectedBrand : "all",
+        brand: brandParam,
         selfFlag: "Y",
         weightType,
         userId: user.userId,
+      });
+
+      console.log("📥 [WeightAnalysisPage.fetchAnalysisData] API响应:", {
+        success: response?.success,
+        hasData: !!response?.data,
+        dataKeys: response?.data ? Object.keys(response.data) : [],
+        brandWeightDistribution: response?.data?.brandWeightDistribution,
+        overallStats: response?.data?.overallStats,
+        rawResponse: response
       });
 
       if (!response?.success || !response?.data) {
         throw new Error("重量分析接口返回空数据");
       }
 
-      setAnalysisData(response.data);
+      // 移除regionAnalysis，单独管理
+      const { regionAnalysis, ...rest } = response.data || {};
+      setAnalysisData(rest);
+      // 不自动设置regionData，等点击Tab时再查
+      console.log("✅ [WeightAnalysisPage.fetchAnalysisData] analysisData已设置");
     } catch (error: any) {
       const message = error?.message || "重量分析数据加载失败";
+      console.error("❌ [WeightAnalysisPage.fetchAnalysisData] 错误:", error);
       setAnalysisError(message);
       toast.error(message);
       setAnalysisData(null);
@@ -231,6 +336,7 @@ export function WeightAnalysisPage({ selectedBrand: globalSelectedBrand, dateRan
 
   useEffect(() => {
     fetchAnalysisData();
+    setRegionData(null); // 切换筛选条件时清空地区分析缓存
   }, [user?.userId, effectiveDateRange.from, effectiveDateRange.to, weightType, globalSelectedBrand]);
 
   const handleWeightTypeChange = (newType: "payable" | "receivable") => {
@@ -247,11 +353,19 @@ export function WeightAnalysisPage({ selectedBrand: globalSelectedBrand, dateRan
 
   const brandAnalysisData: BrandAnalysisItem[] = useMemo(() => {
     if (!analysisData?.brandWeightDistribution) {
+      console.log("⚠️ [WeightAnalysisPage] brandAnalysisData: analysisData.brandWeightDistribution 为空", analysisData);
       return [];
     }
 
     const overallTotalOrders = toNumber(analysisData?.overallStats?.totalOrders);
     const brandEntries = Object.entries(analysisData.brandWeightDistribution) as [string, any[]][];
+
+    console.log("🔍 [WeightAnalysisPage] brandAnalysisData生成中:", {
+      brandEntriesCount: brandEntries.length,
+      brands: brandEntries.map(([name]) => name),
+      overallTotalOrders,
+      rawData: analysisData.brandWeightDistribution
+    });
 
     return brandEntries.map(([brandName, rangeRows]) => {
       const rows = Array.isArray(rangeRows) ? rangeRows : [];
@@ -287,6 +401,13 @@ export function WeightAnalysisPage({ selectedBrand: globalSelectedBrand, dateRan
       const avgWeight = totalOrders > 0 ? weightedSum / totalOrders : 0;
 
       const brandShareRatio = overallTotalOrders > 0 ? (totalOrders / overallTotalOrders) * 100 : 0;
+
+      console.log(`📊 [WeightAnalysisPage] 品牌 ${brandName}:`, {
+        totalOrders,
+        lightWeightOrders,
+        lightWeightRatio: lightWeightRatio.toFixed(1) + '%',
+        avgWeight: avgWeight.toFixed(2) + 'kg'
+      });
 
       const opportunities: OpportunityItem[] = [];
 
@@ -329,7 +450,7 @@ export function WeightAnalysisPage({ selectedBrand: globalSelectedBrand, dateRan
             ? courierRows.reduce((sum: number, row: any) => sum + toNumber(row.orders), 0)
             : 0;
           return { courierName, total };
-        }).sort((a, b) => b.total - a.total);
+        }).sort((a, b) => b.total - a.total); // 🔥 修复typo：a.top → a.total
 
         if (courierTotals.length >= 2) {
           const top = courierTotals[0];
@@ -372,6 +493,16 @@ export function WeightAnalysisPage({ selectedBrand: globalSelectedBrand, dateRan
     });
   }, [analysisData]);
 
+
+  // 品牌名显示函数，保证和品牌筛选器一致
+  const getBrandDisplayName = (brandCode: string) => codeToNameMap[brandCode] || brandCode;
+
+  // 🔥 调试日志：brandAnalysisData定义后打印
+  console.log("✅ [WeightAnalysisPage] brandAnalysisData生成完成:", {
+    count: brandAnalysisData.length,
+    brands: brandAnalysisData.map(b => ({ name: getBrandDisplayName(b.brandName), orders: b.totalOrders }))
+  });
+
   const pageStats = useMemo(() => {
     const overall = analysisData?.overallStats || {};
     return {
@@ -389,16 +520,22 @@ export function WeightAnalysisPage({ selectedBrand: globalSelectedBrand, dateRan
     return [...brandAnalysisData].sort((a, b) => b.totalOrders - a.totalOrders);
   }, [brandAnalysisData]);
 
+  // 多选支持：只展示被选品牌
   const filteredBrandAnalysisData = useMemo(() => {
     const keyword = brandSearchKeyword.trim().toLowerCase();
-    if (!keyword) {
-      return sortedBrandAnalysisData;
+    let baseList = sortedBrandAnalysisData;
+    if (Array.isArray(globalSelectedBrand) && globalSelectedBrand.length > 0) {
+      baseList = baseList.filter((brand) => globalSelectedBrand.includes(brand.brandName));
     }
-
-    return sortedBrandAnalysisData.filter((brand: BrandAnalysisItem) =>
-      String(brand.brandName || "").toLowerCase().includes(keyword)
-    );
-  }, [sortedBrandAnalysisData, brandSearchKeyword]);
+    if (!keyword) {
+      return baseList;
+    }
+    // 支持用品牌名（如 DICKIES、TNF）模糊搜索
+    return baseList.filter((brand: BrandAnalysisItem) => {
+      const displayName = codeToNameMap[brand.brandName] || brand.brandName;
+      return displayName.toLowerCase().includes(keyword);
+    });
+  }, [sortedBrandAnalysisData, brandSearchKeyword, globalSelectedBrand, codeToNameMap]);
 
   const BRAND_CARD_DEFAULT_COUNT = 9;
   const visibleBrandCards = showAllBrandCards
@@ -508,7 +645,7 @@ export function WeightAnalysisPage({ selectedBrand: globalSelectedBrand, dateRan
         icon: heavyRatio >= 20 ? <AlertTriangle className="h-4 w-4" /> : <TrendingDown className="h-4 w-4" />,
         confidence: 84,
         prediction: heavyRatio >= 20
-          ? `${brandData.brandName} 的 >3kg 占比为 ${heavyRatio.toFixed(1)}%，重货结构会持续影响承运商成本与妥投稳定性`
+          ? `${brandData.brandName} 的 >1kg 占比为 ${heavyRatio.toFixed(1)}%，重货结构会持续影响承运商成本与妥投稳定性`
           : `${brandData.brandName} 的重货占比仅 ${heavyRatio.toFixed(1)}%，整体重量结构相对稳定，适合做轻量策略深化`,
         impact: `${heavyOrders.toLocaleString()}单`,
         recommendation: heavyRatio >= 20
@@ -517,70 +654,75 @@ export function WeightAnalysisPage({ selectedBrand: globalSelectedBrand, dateRan
       },
     ];
   };
-
   const renderBrandOverview = () => (
     <div className="space-y-6">
       <Card className="maersk-card shadow-sm">
         <CardContent className="pt-6">
+          {/* 🔥 关键：改成 4 格网格，把搜索+品牌总数直接塞进去，填满空白 */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            
+            {/* 1. 总订单量 */}
             <div className="text-center p-4 bg-functional-bright-grey rounded-lg border border-functional-light-grey">
               <div className="text-2xl font-semibold text-maersk-black">{pageStats.totalOrders.toLocaleString()}</div>
               <div className="text-sm text-functional-mid-grey">总订单量</div>
             </div>
-            <div className="text-center p-4 bg-functional-bright-grey rounded-lg border border-functional-light-grey">
-              <div className="text-2xl font-semibold text-maersk-black">{pageStats.lightWeightRatio.toFixed(2)}%</div>
-              <div className="text-sm text-functional-mid-grey">轻重量占比(1kg内)</div>
-            </div>
+
+            {/* 2. 平均计费重 */}
             <div className="text-center p-4 bg-functional-bright-grey rounded-lg border border-functional-light-grey">
               <div className="text-2xl font-semibold text-maersk-black">{pageStats.avgWeight.toFixed(3)}kg</div>
               <div className="text-sm text-functional-mid-grey">平均计费重</div>
             </div>
+
+            {/* 3. 计费重区间 */}
             <div className="text-center p-4 bg-functional-bright-grey rounded-lg border border-functional-light-grey">
               <div className="text-2xl font-semibold text-maersk-black">{pageStats.minWeight.toFixed(2)} ~ {pageStats.maxWeight.toFixed(2)}</div>
               <div className="text-sm text-functional-mid-grey">计费重区间(kg)</div>
             </div>
+
+            {/* 4. 品牌总数 + 搜索框（填满右侧空白！） */}
+            <div className="p-4 bg-functional-bright-grey rounded-lg border border-functional-light-grey flex flex-col justify-center gap-3">
+              <div className="text-sm text-functional-mid-grey whitespace-nowrap">
+                品牌总数 {filteredBrandAnalysisData.length} / {brandAnalysisData.length}
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  value={brandSearchKeyword}
+                  onChange={(e: ChangeEvent<HTMLInputElement>) => {
+                    setBrandSearchKeyword(e.target.value);
+                    setShowAllBrandCards(false);
+                  }}
+                  placeholder="搜索品牌名"
+                  className="h-9 flex-1 rounded-md border border-functional-light-grey px-3 text-sm bg-maersk-white text-maersk-black outline-none focus:ring-2 focus:ring-functional-light-blue"
+                />
+                {hasMoreBrandCards && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="maersk-button-secondary whitespace-nowrap"
+                    onClick={() => setShowAllBrandCards((prev: boolean) => !prev)}
+                  >
+                    {showAllBrandCards ? "收起" : "查看全部"}
+                  </Button>
+                )}
+              </div>
+            </div>
+
           </div>
         </CardContent>
       </Card>
 
-      <Card className="maersk-card shadow-sm">
-        <CardContent className="pt-6">
-          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-            <div className="text-sm text-functional-mid-grey">
-              品牌总数 {filteredBrandAnalysisData.length} / {brandAnalysisData.length}
-              {!showAllBrandCards && hasMoreBrandCards ? `，当前展示前 ${BRAND_CARD_DEFAULT_COUNT} 个` : ""}
-            </div>
-            <div className="flex items-center gap-2">
-              <input
-                value={brandSearchKeyword}
-                onChange={(e: ChangeEvent<HTMLInputElement>) => {
-                  setBrandSearchKeyword(e.target.value);
-                  setShowAllBrandCards(false);
-                }}
-                placeholder="搜索品牌名"
-                className="h-9 w-44 md:w-56 rounded-md border border-functional-light-grey px-3 text-sm bg-maersk-white text-maersk-black outline-none focus:ring-2 focus:ring-functional-light-blue"
-              />
-              {hasMoreBrandCards && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="maersk-button-secondary"
-                  onClick={() => setShowAllBrandCards((prev: boolean) => !prev)}
-                >
-                  {showAllBrandCards ? "收起" : "查看全部"}
-                </Button>
-              )}
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+
+
 
       <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
         {visibleBrandCards.map((brandData: BrandAnalysisItem) => (
           <Card
             key={brandData.brandName}
             className="maersk-card shadow-sm hover:shadow-md transition-shadow cursor-pointer"
-            onClick={() => setViewSelectedBrand(brandData.brandName)}
+            onClick={() => {
+              // 多选时也允许点击进入详情
+              setViewSelectedBrand(brandData.brandName);
+            }}
           >
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between">
@@ -589,7 +731,7 @@ export function WeightAnalysisPage({ selectedBrand: globalSelectedBrand, dateRan
                     <span className="text-lg">{getBrandIcon(brandData.brandName)}</span>
                   </div>
                   <div>
-                    <h3 className="text-lg font-semibold text-maersk-black">{brandData.brandName}</h3>
+                    <h3 className="text-lg font-semibold text-maersk-black">{getBrandDisplayName(brandData.brandName)}</h3>
                     <p className="text-sm text-functional-mid-grey">{brandData.totalOrders.toLocaleString()} 个包裹</p>
                   </div>
                 </div>
@@ -658,7 +800,7 @@ export function WeightAnalysisPage({ selectedBrand: globalSelectedBrand, dateRan
                         {index + 1}
                       </div>
                       <span className="text-lg">{getBrandIcon(brand.brandName)}</span>
-                      <span className="font-medium text-maersk-black">{brand.brandName}</span>
+                      <span className="font-medium text-maersk-black">{getBrandDisplayName(brand.brandName)}</span>
                     </div>
                     <div className="text-right">
                       <div className="font-semibold text-maersk-black">{brand.lightWeightRatio.toFixed(1)}%</div>
@@ -708,7 +850,7 @@ export function WeightAnalysisPage({ selectedBrand: globalSelectedBrand, dateRan
                     <div className="flex items-center justify-between mb-2">
                       <div className="flex items-center gap-2">
                         <span className="text-lg">{getBrandIcon(brand.brandName)}</span>
-                        <span className="font-medium text-maersk-black">{brand.brandName}</span>
+                        <span className="font-medium text-maersk-black">{getBrandDisplayName(brand.brandName)}</span>
                       </div>
                       <Badge variant="outline" className="bg-accent-bright-orange text-accent-dark-orange border-accent-mid-orange">
                         {brand.optimizationOpportunities.length} 项机会
@@ -819,7 +961,7 @@ export function WeightAnalysisPage({ selectedBrand: globalSelectedBrand, dateRan
                   <span className="text-xl">{getBrandIcon(brandData.brandName)}</span>
                 </div>
                 <div>
-                  <h2 className="text-2xl font-semibold text-maersk-black">{brandData.brandName}</h2>
+                  <h2 className="text-2xl font-semibold text-maersk-black">{getBrandDisplayName(brandData.brandName)}</h2>
                   <p className="text-sm text-functional-mid-grey">{brandData.totalOrders.toLocaleString()} 个包裹的重量分析详情</p>
                 </div>
               </div>
@@ -1032,7 +1174,12 @@ export function WeightAnalysisPage({ selectedBrand: globalSelectedBrand, dateRan
             <div>
               <h1 className="text-2xl font-semibold text-maersk-black">重量分析</h1>
               <p className="text-muted-foreground mt-1">
-                {viewSelectedBrand === "all" ? "品牌总览和对比分析" : `${viewSelectedBrand} 品牌详细分析`}
+                {(() => {
+                  if (Array.isArray(globalSelectedBrand) && globalSelectedBrand.length > 0) {
+                    return `已选品牌：${globalSelectedBrand.map(code => codeToNameMap[code] || code).join('、')}`;
+                  }
+                  return viewSelectedBrand === "all" ? "品牌总览和对比分析" : `${codeToNameMap[viewSelectedBrand] || viewSelectedBrand} 品牌详细分析`;
+                })()}
               </p>
             </div>
           </div>
@@ -1088,14 +1235,51 @@ export function WeightAnalysisPage({ selectedBrand: globalSelectedBrand, dateRan
         </Card>
       ) : (
         <>
+          {/* 🔥 调试日志：打印传递给WeightDistributionChart的props */}
+          {(() => {
+            let chartBrand = undefined;
+            if (Array.isArray(globalSelectedBrand) && globalSelectedBrand.length > 0) {
+              chartBrand = globalSelectedBrand;
+            } else if (viewSelectedBrand !== "all") {
+              chartBrand = viewSelectedBrand;
+            }
+            console.log("📊 [WeightAnalysisPage] 传递给WeightDistributionChart的props:", {
+              viewSelectedBrand,
+              chartBrand,
+              chartBrandType: Array.isArray(chartBrand) ? 'array' : typeof chartBrand,
+              chartBrandLength: Array.isArray(chartBrand) ? chartBrand.length : 'N/A',
+              hasPrefetchedData: !!analysisData
+            });
+            return null;
+          })()}
+
+
+
+
           <WeightDistributionChart
-            selectedBrand={viewSelectedBrand === "all" ? undefined : viewSelectedBrand}
+            selectedBrand={
+              Array.isArray(globalSelectedBrand) && globalSelectedBrand.length > 0
+                ? globalSelectedBrand
+                : viewSelectedBrand === "all"
+                ? undefined
+                : viewSelectedBrand
+            }
             dateRange={effectiveDateRange}
             weightType={weightType}
-            prefetchedData={analysisData}
+            prefetchedData={viewMode === 'region' ? regionData : analysisData}
+            regionData={regionData}
+            analysisData={analysisData}
+            compact={viewMode === 'region'}
+            viewMode={viewMode}
+            isLoadingRegion={isLoadingRegion}
+            regionError={regionError}
+            onRegionTabClick={fetchRegionData}
           />
 
-          {viewSelectedBrand === "all" ? renderBrandOverview() : renderBrandDetail()}
+          {/* 多选或全选时显示品牌卡片和排行榜，单品牌时显示详情 */}
+          {(viewSelectedBrand === "all")
+            ? renderBrandOverview()
+            : renderBrandDetail()}
         </>
       )}
     </div>

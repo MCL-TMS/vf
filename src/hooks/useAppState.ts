@@ -38,7 +38,7 @@ export function useAppState() {
   const [regionalDateRange, setRegionalDateRange] = useState<DateRange>(getTodayDateRange());
   
   // Filter states
-  const [selectedBrand, setSelectedBrand] = useState<string | null>(null);
+  const [selectedBrand, setSelectedBrand] = useState<string | string[] | null>(null); // 🔥 修复：支持数组
   const [selectedPlatform, setSelectedPlatform] = useState<string | null>(null);
   const [selectedSelfFlag, setSelectedSelfFlag] = useState<string | null>('Y'); // 🔧 默认为"自管"，筛选SELF_FLAG='Y'的订单
   const [filters, setFilters] = useState<FilterState>({
@@ -101,7 +101,7 @@ export function useAppState() {
   
   // 判断是否应该使用真实API数据 - 扩展到支持物流页面
   const shouldUseRealData = useMemo(() => {
-    return activeMenu === 'overview-dashboard' || activeMenu === 'overview-logistics' || activeMenu === 'overview-exceptions';
+    return activeMenu === 'overview-dashboard' || activeMenu === 'overview-logistics';
   }, [activeMenu]);
   
   // API data hook - 支持总览和物流页面，使用稳定的参数
@@ -195,16 +195,17 @@ export function useAppState() {
 
   // Data processing - 使用 useMemo 缓存计算结果
   const filteredData = useMemo(() => {
-    // 真实数据模式下不再回退mock：无数据或异常时返回空态结构
-    if (shouldUseRealData) {
-      if (apiData && validateAPIData(apiData)) {
+    // 如果使用真实数据且有API数据
+    if (shouldUseRealData && apiData) {
+      // 验证API数据
+      if (validateAPIData(apiData)) {
         // 将API数据转换为前端格式，使用统一的快递商数据
         const baseData = transformAPIDataToFilteredData(
-          apiData,
-          selectedBrand,
+          apiData, 
+          selectedBrand, 
           selectedPlatform
         );
-
+        
         // 🔥 替换courier数据为统一处理的数据
         if (unifiedCourierData) {
           baseData.courierData = unifiedCourierData.monitoringFormat.map(courier => ({
@@ -217,16 +218,17 @@ export function useAppState() {
             exceptions: courier.exceptions
           }));
         }
-
+        
         return baseData;
+      } else {
+        // API数据验证失败，返回null结构以显示数据缺失
+        console.warn('[useAppState] API数据验证失败，显示null数据结构');
+        return transformAPIDataToFilteredData(
+          { success: false, data: null } as any, 
+          selectedBrand, 
+          selectedPlatform
+        );
       }
-
-      console.warn('[useAppState] 真实数据模式下无有效API数据，返回空态结构');
-      return transformAPIDataToFilteredData(
-        { success: false, data: null } as any,
-        selectedBrand,
-        selectedPlatform
-      );
     }
     
     // 使用模拟数据（非总览页面或未连接API时）
@@ -325,11 +327,6 @@ export function useAppState() {
         };
       });
     }
-
-    // 真实模式下无有效API数据时，返回空数组避免回退到模拟数据
-    if (shouldUseRealData) {
-      return [];
-    }
     
     // 使用模拟数据 - 返回正确的平台KPI数据
     return getPlatformKPIData(null);
@@ -392,11 +389,6 @@ export function useAppState() {
         };
       });
     }
-
-    // 真实模式下无有效API数据时，返回空数组避免回退到模拟数据
-    if (shouldUseRealData) {
-      return [];
-    }
     
     // 使用模拟数据
     return brandData.map(brand => ({
@@ -418,7 +410,7 @@ export function useAppState() {
   const stableSetActiveMenu = useCallback((menu: string) => setActiveMenu(menu), []);
   const stableSetDateRange = useCallback((range: DateRange) => setDateRange(range), []);
   const stableSetRegionalDateRange = useCallback((range: DateRange) => setRegionalDateRange(range), []);
-  const stableSetSelectedBrand = useCallback((brand: string | null) => {
+  const stableSetSelectedBrand = useCallback((brand: string | string[] | null) => {
     console.log('🏷️ [useAppState] stableSetSelectedBrand called with:', brand);
     setSelectedBrand(brand);
   }, []);

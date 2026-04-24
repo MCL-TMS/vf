@@ -1,0 +1,1 @@
+const { executeQuery } = require('./src/backend/src/config/database-api'); executeQuery('SELECT PLATFORM_CLASS FROM APP_CMS.VIEW_TSK_LIST_TASK WHERE ROWNUM <= 5').then(r => console.log(r)).catch(console.error).finally(()=>process.exit());

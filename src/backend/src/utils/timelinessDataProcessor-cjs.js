@@ -174,24 +174,29 @@ async function analyzeS2DPerformance(options = {}) {
       params.endDate = endDate;
     }
     
-    // 🔥 修复：品牌筛选逻辑（支持userBrands）
-    // ✅ userBrands 已经在函数开头从 options 解构，这里不需要重新声明
-    const brandCode = selectedBrand ? (BRAND_MAPPING[selectedBrand] || selectedBrand) : null;  // 🔥 品牌代码转换
-    
-    if (brandCode && selectedBrand !== 'all') {
-      // 🔥 单个品牌筛选（selectedBrand不是'all'）
+    // 🔥 修复：品牌筛选逻辑（支持多选、单选、userBrands）
+    const brandCode = selectedBrand && !Array.isArray(selectedBrand) ? (BRAND_MAPPING[selectedBrand] || selectedBrand) : null;  // 🔥 品牌代码转换
+
+    if (Array.isArray(selectedBrand) && selectedBrand.length > 0) {
+      // 多品牌筛选
+      const placeholders = selectedBrand.map((_, index) => `:selectedBrand${index}`).join(', ');
+      whereClauses.push(`t.CUSTOMERNO IN (${placeholders})`);
+      selectedBrand.forEach((code, index) => {
+        params[`selectedBrand${index}`] = code;
+      });
+      console.log(`[Brand Filter] 多品牌筛选:`, selectedBrand);
+    } else if (brandCode && selectedBrand !== 'all') {
+      // 单品牌筛选
       whereClauses.push(`t.CUSTOMERNO = :brandCode`);
       params.brandCode = brandCode;
-      console.log(`🏷️ [Brand Filter] 单品牌筛选: ${brandCode}`);
+      console.log(`[Brand Filter] 单品牌筛选: ${brandCode}`);
     } else if (selectedBrand === 'all' && userBrands && Array.isArray(userBrands) && userBrands.length > 0) {
       // 🔥 新增：当选择"全部品牌"时，使用用户权限范围
       const placeholders = userBrands.map((_, index) => `:userBrand${index}`).join(', ');
       whereClauses.push(`t.CUSTOMERNO IN (${placeholders})`);
-      
       userBrands.forEach((code, index) => {
         params[`userBrand${index}`] = code;
       });
-      
       console.log(`🔐 [Brand Filter] 全部品牌 - 基于用户权限 (${userBrands.length}个):`, userBrands);
     } else if (!selectedBrand || selectedBrand === 'all') {
       // 🔥 回退：VF品牌范围（当没有userBrands时）
@@ -845,29 +850,34 @@ async function analyzeC2DPerformance(options = {}) {
       params.endDate = endDate;
     }
     
-    // 🔥 修复：品牌筛选逻辑（支持userBrands）- C2D版本
-    // ✅ userBrands 已经在函数开头从 options 解构，这里不需要重新声明
-    const brandCode = selectedBrand ? (BRAND_MAPPING[selectedBrand] || selectedBrand) : null;  // 🔥 品牌代码转换
-    
-    if (brandCode && selectedBrand !== 'all') {
-      // 🔥 单个品牌筛选（selectedBrand不是'all'）
+    // 🔥 修复：品牌筛选逻辑（支持多选、单选、userBrands）- C2D版本
+    const brandCode = selectedBrand && !Array.isArray(selectedBrand) ? (BRAND_MAPPING[selectedBrand] || selectedBrand) : null;  // 🔥 品牌代码转换
+
+    if (Array.isArray(selectedBrand) && selectedBrand.length > 0) {
+      // 多品牌筛选
+      const placeholders = selectedBrand.map((_, index) => `:selectedBrand${index}`).join(', ');
+      whereClauses.push(`t.CUSTOMERNO IN (${placeholders})`);
+      selectedBrand.forEach((code, index) => {
+        params[`selectedBrand${index}`] = code;
+      });
+      console.log(`[C2D Brand Filter] 多品牌筛选:`, selectedBrand);
+    } else if (brandCode && selectedBrand !== 'all') {
+      // 单品牌筛选
       whereClauses.push(`t.CUSTOMERNO = :brandCode`);
       params.brandCode = brandCode;
-      console.log(`🏷️ [C2D Brand Filter] 单品牌筛选: ${brandCode}`);
+      console.log(`[C2D Brand Filter] 单品牌筛选: ${brandCode}`);
     } else if (selectedBrand === 'all' && userBrands && Array.isArray(userBrands) && userBrands.length > 0) {
       // 🔥 新增：当选择"全部品牌"时，使用用户权限范围
       const placeholders = userBrands.map((_, index) => `:userBrand${index}`).join(', ');
       whereClauses.push(`t.CUSTOMERNO IN (${placeholders})`);
-      
       userBrands.forEach((code, index) => {
         params[`userBrand${index}`] = code;
       });
-      
       console.log(`🔐 [C2D Brand Filter] 全部品牌 - 基于用户权限 (${userBrands.length}个):`, userBrands);
     } else if (!selectedBrand || selectedBrand === 'all') {
       // 🔥 回退：VF品牌范围（当没有userBrands时）
       whereClauses.push(`t.CUSTOMERNO IN ('18405', '18405-1', '18405-2', '18405-3', '18405-4')`);
-      console.log(`🏷️ [C2D Brand Filter] 全部品牌 - 回退到VF品牌范围（未提供userBrands）`);
+      console.log(`[C2D Brand Filter] 全部品牌 - 回退到VF品牌范围（未提供userBrands）`);
     }
     
     if (selectedCarrier) {

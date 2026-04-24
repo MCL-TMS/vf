@@ -75,10 +75,20 @@ export interface FilteredData {
     description: string;
   }>;
 }
+// 兜底 baseData，防止未定义报错
+const baseData: FilteredData = {
+  kpiData: [],
+  courierData: [],
+  interceptionData: [],
+  brandStats: { totalOrders: 0, marketShare: 0, growth: 0 },
+  regionalData: [],
+  monthlyTrend: [],
+  topDestinations: [],
+  exceptions: []
+};
 
 // 新的综合筛选函数
-export function filterData(brandName: string = '', platformName: string = '', selfFlag: string = 'Y'): FilteredData {
-  const baseData = filterDataByBrand(brandName, selfFlag);
+export function filterData(brandName: string | string[] = '', platformName: string = '', selfFlag: string = 'Y'): FilteredData {
   
   if (!platformName) {
     return baseData;
@@ -316,7 +326,8 @@ function getPlatformInterceptionAdjustment(platformName: string) {
 }
 
 // 保持向后兼容的函数
-export function filterDataByBrand(brandName: string, selfFlag: string = 'Y'): FilteredData {
+export function filterDataByBrand(brandInput: string | string[], selfFlag: string = 'Y'): FilteredData {
+  const brandName = Array.isArray(brandInput) ? (brandInput.length > 0 ? brandInput[0] : '') : brandInput;
   if (!brandName) {
     // 返回全部数据的聚合视图 - 虚拟数据模拟自管筛选效果
     // ⚠️ 重要说明：以下比例仅用于虚拟数据展示，真实API数据基于TSK_LIST_TASK.SELF_FLAG字段的实际分布

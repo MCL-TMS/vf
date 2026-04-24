@@ -311,7 +311,7 @@ router.get('/brands', async (req, res) => {
   let connection;
   
   try {
-    const { dateFrom, dateTo, brand, platform, userBrands } = req.query;  // 🔥 新增 userBrands
+    const { dateFrom, dateTo, brand, platform, userBrands, selfFlag } = req.query;  // 🔥 新增 userBrands
     
     console.log('🔄 [Logistics-Brands查询] 收到请求参数:', { dateFrom, dateTo, brand, platform, userBrands });
     
@@ -339,18 +339,20 @@ router.get('/brands', async (req, res) => {
     // 🔥 新增：构建用户品牌权限过滤
     const userBrandsFilter = QueryUtils.buildUserBrandsFilter(userBrands, params);
 
+    let selfFlagFilter = '';
+    if (selfFlag && selfFlag !== 'all') {
+      selfFlagFilter = ' AND t.SELF_FLAG = :selfFlag';
+      params.selfFlag = selfFlag;
+    } else if (!selfFlag) {
+      selfFlagFilter = ' AND t.SELF_FLAG = :selfFlag';
+      params.selfFlag = 'Y';
+    }
+
     // 品牌维度物流统计查询
     const brandsQuery = `
       SELECT 
-        CASE t.CUSTOMERNO
-          WHEN '18405' THEN 'DICKIES'
-          WHEN '18405-1' THEN 'TNF'
-          WHEN '18405-2' THEN 'ICEBREAKER'
-          WHEN '18405-3' THEN 'VANS'
-          WHEN '18405-4' THEN 'TIMBERLAND'
-          WHEN '18405-5' THEN 'SMARTWOOL'
-          ELSE t.CUSTOMERNO
-        END as brand_name,
+        t.CUSTOMERNO as brand_code,
+        COALESCE(v.COMPANY_NAME, t.CUSTOMERNO) as brand_name,
         COUNT(DISTINCT t.TSK_MERGE_NO) as order_count,
         COUNT(DISTINCT CASE WHEN t.DIS_STATUS = '55' THEN t.TSK_MERGE_NO END) as picked_count,
         COUNT(DISTINCT CASE WHEN t.DIS_STATUS = '70' THEN t.TSK_MERGE_NO END) as shipped_count,
@@ -366,11 +368,15 @@ router.get('/brands', async (req, res) => {
         ROUND(COUNT(DISTINCT CASE WHEN t.DIS_STATUS IN ('93', '95') THEN t.TSK_MERGE_NO END) * 100.0 / NULLIF(COUNT(DISTINCT t.TSK_MERGE_NO), 0), 2) as delivery_rate,
         ROUND(AVG(CASE WHEN t.SUM_SEND_TIME2 IS NOT NULL AND t.SUM_SEND_TIME2 > 0 THEN t.SUM_SEND_TIME2 END), 2) as avg_delivery_time
       FROM APP_CMS.TSK_LIST_TASK t
-      ${QueryUtils.BASE_WHERE_CONDITIONS}
+      LEFT JOIN APP_CMS.VIEW_TSK_LIST_TASK v ON t.TSK_MERGE_NO = v.TSK_MERGE_NO
+      WHERE t.WMS_OUTBOUND_TIME IS NOT NULL
+        AND to_char(t.WMS_OUTBOUND_TIME,'yyyy-mm-dd') >= :dateFrom
+        AND to_char(t.WMS_OUTBOUND_TIME,'yyyy-mm-dd') <= :dateTo
         ${userBrandsFilter}
         ${brandFilter}
         ${platformFilter}
-      GROUP BY t.CUSTOMERNO
+        ${selfFlagFilter}
+      GROUP BY t.CUSTOMERNO, v.COMPANY_NAME
       HAVING COUNT(DISTINCT t.TSK_MERGE_NO) > 0
       ORDER BY order_count DESC
     `;
@@ -378,24 +384,25 @@ router.get('/brands', async (req, res) => {
     const result = await connection.execute(brandsQuery, params);
     
     const brandExceptions = result.rows.map(row => ({
-      brandName: row[0],
-      orderCount: row[1] || 0,
-      pickedCount: row[2] || 0,
-      shippedCount: row[3] || 0,
-      deliveredCount: row[4] || 0,
-      pickupTimeout: row[5] || 0,
-      shippingTimeout: row[6] || 0,
-      deliveryTimeout: row[7] || 0,
-      noUpdate48h: row[8] || 0,
-      pickupRate: row[9] || 0,
-      shippingRate: row[10] || 0,
-      deliveryRate: row[11] || 0,
-      avgDeliveryTime: row[12] || 0,
+      brandCode: row[0] || 'UNKNOWN',
+      brandName: row[1] || row[0] || 'UNKNOWN',
+      orderCount: row[2] || 0,
+      pickedCount: row[3] || 0,
+      shippedCount: row[4] || 0,
+      deliveredCount: row[5] || 0,
+      pickupTimeout: row[6] || 0,
+      shippingTimeout: row[7] || 0,
+      deliveryTimeout: row[8] || 0,
+      noUpdate48h: row[9] || 0,
+      pickupRate: row[10] || 0,
+      shippingRate: row[11] || 0,
+      deliveryRate: row[12] || 0,
+      avgDeliveryTime: row[13] || 0,
       // 兼容字段名
-      pickup_timeout: row[5] || 0,
-      shipping_timeout: row[6] || 0,
-      delivery_timeout: row[7] || 0,
-      no_update_48h: row[8] || 0
+      pickup_timeout: row[6] || 0,
+      shipping_timeout: row[7] || 0,
+      delivery_timeout: row[8] || 0,
+      no_update_48h: row[9] || 0
     }));
 
     console.log(`✅ [Logistics-Brands] 查询成功，返回${brandExceptions.length}个品牌数据`);

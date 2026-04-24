@@ -72,7 +72,7 @@ export const filterLogisticsOrders = (
 // useAppState 需要的主要筛选函数
 export const filterLogisticsData = (
   orders: LogisticsOrder[],
-  selectedBrand: string | null,
+  selectedBrand: string | string[] | null,
   logisticsExceptionFilter: LogisticsExceptionFilter
 ): LogisticsOrder[] => {
   let filteredOrders = orders;

@@ -157,22 +157,7 @@ export function BrandCourierExceptionFlowAnalysis({
     // 🔧 自适应尺寸计算
     const calculateAdaptiveDimensions = () => {
       // 🔥 修复：品牌筛选 - 处理'all'、数组和单个品牌
-      let filteredBrands;
-      if (!selectedBrand || selectedBrand === 'all') {
-        // 全部品牌
-        filteredBrands = data.brandDistribution;
-      } else if (Array.isArray(selectedBrand)) {
-        // 多个品牌（数组）
-        filteredBrands = {};
-        selectedBrand.forEach(brand => {
-          if (data.brandDistribution[brand]) {
-            filteredBrands[brand] = data.brandDistribution[brand];
-          }
-        });
-      } else {
-        // 单个品牌
-        filteredBrands = { [selectedBrand]: data.brandDistribution[selectedBrand] || 0 };
-      }
+      let filteredBrands = data.brandDistribution; // 多选品牌时直接用API返回的合计数据，不再循环selectedBrand单独处理
 
       const brandCount = Object.keys(filteredBrands).length;
       
@@ -239,13 +224,8 @@ export function BrandCourierExceptionFlowAnalysis({
       // 全部品牌
       filteredBrands = data.brandDistribution;
     } else if (Array.isArray(selectedBrand)) {
-      // 多个品牌（数组）
-      filteredBrands = {};
-      selectedBrand.forEach(brand => {
-        if (data.brandDistribution[brand]) {
-          filteredBrands[brand] = data.brandDistribution[brand];
-        }
-      });
+      // 多选品牌时直接用API返回的合计数据，不再循环selectedBrand单独处理
+      filteredBrands = data.brandDistribution;
     } else {
       // 单个品牌
       filteredBrands = { [selectedBrand]: data.brandDistribution[selectedBrand] || 0 };

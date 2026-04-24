@@ -104,48 +104,16 @@ export function OverviewDashboard({
   
   // 🔥 修复：计算筛选后的异常数据，支持多品牌（数组）
   const filterRatio = (() => {
-    console.log('🔍 [OverviewDashboard] 开始计算 filterRatio...');
-    
-    // 🔥 新增：如果是"全部品牌"，直接返回1（显示全部数据）
-    if (!selectedBrand || selectedBrand === 'all') {
-      console.log('🔍 [OverviewDashboard] 选择了全部品牌，filterRatio = 1');
+    // 多选品牌或全部品牌时直接用API合计数据，不再用比例缩放
+    if (!selectedBrand || selectedBrand === 'all' || Array.isArray(selectedBrand)) {
       return 1;
     }
-    
+    // 单品牌时才缩放
     if (!apiExceptionData.brandDistribution || apiExceptionData.totalOrders === 0) {
-      console.log('🔍 [OverviewDashboard] 使用默认 filterRatio = 1，原因:', {
-        hasSelectedBrand: !!selectedBrand,
-        hasBrandDistribution: !!apiExceptionData.brandDistribution,
-        totalOrders: apiExceptionData.totalOrders
-      });
-      return 1; // 没有品牌筛选或没有品牌分布数据，返回完整数据
+      return 1;
     }
-    
-    // 🔥 新增：如果selectedBrand是数组，计算多个品牌的总订单数
-    if (Array.isArray(selectedBrand)) {
-      const totalBrandOrders = selectedBrand.reduce((sum, brand) => {
-        const brandOrders = apiExceptionData.brandDistribution[brand] || 0;
-        console.log(`🔍 [OverviewDashboard] 品牌 ${brand} 订单数:`, brandOrders);
-        return sum + brandOrders;
-      }, 0);
-      
-      const ratio = totalBrandOrders / apiExceptionData.totalOrders;
-      
-      console.log('🔍 [OverviewDashboard] 多品牌过滤比例计算:', {
-        selectedBrands: selectedBrand,
-        totalBrandOrders,
-        totalOrders: apiExceptionData.totalOrders,
-        filterRatio: ratio
-      });
-      
-      return ratio;
-    }
-    
-    // 单个品牌
     const brandOrders = apiExceptionData.brandDistribution[selectedBrand] || 0;
-    const ratio = brandOrders / apiExceptionData.totalOrders;
-    console.log('🔍 [OverviewDashboard] 单品牌过滤比例:', { selectedBrand, brandOrders, totalOrders: apiExceptionData.totalOrders, filterRatio: ratio });
-    return ratio;
+    return brandOrders / apiExceptionData.totalOrders;
   })();
   
   const totalPickupExceptions = Math.round(apiExceptionData.exceptions.pickupTimeout * filterRatio);
