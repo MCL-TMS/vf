@@ -3,8 +3,8 @@ import { OrderKPIData } from "../data/orderData";
 export const createEventHandlers = (
   setDateRange: (range: { from: string; to: string }) => void,
   setRegionalDateRange: (range: { from: string; to: string }) => void,
-  setSelectedBrand: (brand: string | null) => void, // 修复类型定义
-  setSelectedPlatform: (platform: string | null) => void, // 修复类型定义
+  setSelectedBrand: (brand: string | string[] | null) => void, // 🔥 修复：支持数组
+  setSelectedPlatform: (platform: string | null) => void,
   setSelectedSelfFlag: (selfFlag: string | null) => void,
   setFilters: (filters: any) => void,
   setActiveMenu: (menu: string) => void,
@@ -23,11 +23,15 @@ export const createEventHandlers = (
     console.log("Regional date range changed:", { from, to });
   };
 
-  const handleBrandChange = (brand: string) => {
+  const handleBrandChange = (brand: string | string[]) => { // 🔥 修复：支持数组
     // 修复品牌筛选逻辑：如果选择"all"，则传递null给状态
     const brandValue = brand === 'all' ? null : brand;
     setSelectedBrand(brandValue);
-    console.log("🏷️ [EventHandlers] Brand filter changed:", { original: brand, resolved: brandValue });
+    console.log("🏷️ [EventHandlers] Brand filter changed:", { 
+      original: brand, 
+      resolved: brandValue,
+      isArray: Array.isArray(brand)
+    });
   };
 
   const handlePlatformChange = (platform: string) => {

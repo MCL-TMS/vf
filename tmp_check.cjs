@@ -1,0 +1,1 @@
+const { executeQuery } = require('./src/backend/src/config/database-api'); executeQuery('SELECT DISTINCT PLATFORM_CLASS FROM APP_CMS.VIEW_TSK_LIST_TASK WHERE PLATFORM_CLASS IS NOT NULL AND ROWNUM <= 500').then(r => console.log(r)).catch(console.error).finally(()=>process.exit());

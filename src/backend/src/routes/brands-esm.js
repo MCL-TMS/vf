@@ -173,4 +173,90 @@ router.get('/list', async (req, res) => {
   }
 });
 
+/**
+ * GET /api/brands/available
+ * 根据订单数据动态获取管理员可用的品牌列表
+ * 支持按时间范围和自管标识筛选，返回实际有订单的品牌
+ */
+router.get('/available', async (req, res) => {
+  console.log('\n📋 动态可用品牌查询请求');
+  
+  const { startDate, endDate, selfFlag = 'Y' } = req.query;
+  console.log('📊 筛选条件:', { startDate, endDate, selfFlag });
+  
+  let connection;
+  try {
+    connection = await getConnection();
+    
+    let whereConditions = [];
+    let bindParams = {};
+
+    // 日期范围处理（只看发货时间）
+    if (startDate) {
+      whereConditions.push("t.WMS_OUTBOUND_TIME >= TO_DATE(:startDate, 'YYYY-MM-DD HH24:MI:SS')");
+      bindParams.startDate = `${startDate} 00:00:00`;
+    }
+    if (endDate) {
+      whereConditions.push("t.WMS_OUTBOUND_TIME <= TO_DATE(:endDate, 'YYYY-MM-DD HH24:MI:SS')");
+      bindParams.endDate = `${endDate} 23:59:59`;
+    }
+
+    // 自管筛选处理
+    if (selfFlag && selfFlag !== 'all') {
+      whereConditions.push("t.SELF_FLAG = :selfFlag");
+      bindParams.selfFlag = selfFlag;
+    }
+
+    // 组合 WHERE 子句
+    const subqueryWhere = whereConditions.length > 0
+      ? ' AND ' + whereConditions.join(' AND ')
+      : '';
+
+    // 使用 EXISTS 替代 GROUP BY + COUNT 极大提升查询性能
+    const query = `
+      SELECT 
+        b.COMPANY_SYSID as brandCode,
+        b.COMPANY_ABNAME as brandName,
+        0 as orderCount
+      FROM APP_CMS.BAS_COMPANY b
+      WHERE EXISTS (
+        SELECT 1 
+        FROM APP_CMS.VIEW_TSK_LIST_TASK t 
+        WHERE t.COMPANY_NAME = b.COMPANY_ABNAME
+        ${subqueryWhere}
+      )
+
+    console.log('📊 执行SQL查询:', { query: query.replace(/\n\s+/g, ' ').substring(0, 200) + '...', bindParams });
+
+    const result = await connection.execute(query, bindParams);
+    
+    const brandList = result.rows.map(row => ({
+      brandCode: row[0],
+      brandName: row[1],
+      orderCount: row[2] || 0
+    }));
+
+    console.log(`✅ 返回 ${brandList.length} 个有订单的品牌 (最多显示5个日志):`, 
+      brandList.slice(0, 5).map(b => `${b.brandName}(${b.orderCount}单)`).join(', '));
+
+    res.json({
+      success: true,
+      data: brandList,
+      count: brandList.length
+    });
+
+  } catch (error) {
+    console.error('❌ 可用品牌查询失败:', error);
+    res.status(500).json({
+      success: false,
+      error: '查询可用品牌失败',
+      message: error.message
+    });
+  } finally {
+    if (connection) {
+      await connection.close();
+    }
+  }
+});
+
 export default router;

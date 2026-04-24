@@ -44,6 +44,52 @@ function createForbiddenBrandError(unauthorizedBrands) {
   return error;
 }
 
+function mapToCustomerNo(value, brandMapping = {}, reverseBrandMapping = {}) {
+  const raw = String(value || '').trim();
+  if (!raw) {
+    return '';
+  }
+
+  // 1) 直接命中（品牌名 -> 品牌编码）
+  if (brandMapping[raw]) {
+    return brandMapping[raw];
+  }
+
+  // 2) 大小写不敏感命中（品牌名 -> 品牌编码）
+  const upperRaw = raw.toUpperCase();
+  if (brandMapping[upperRaw]) {
+    return brandMapping[upperRaw];
+  }
+
+  // 3) 已经是编码，保持原样
+  if (reverseBrandMapping[raw]) {
+    return raw;
+  }
+
+  return raw;
+}
+
+function normalizeCustomerNos(value, brandMapping = {}) {
+  const normalizedValues = normalizeBrandValues(value);
+  if (!normalizedValues) {
+    return null;
+  }
+
+  const reverseBrandMapping = Object.values(brandMapping).reduce((acc, customerNo) => {
+    const key = String(customerNo || '').trim();
+    if (key) {
+      acc[key] = true;
+    }
+    return acc;
+  }, {});
+
+  const mappedValues = normalizedValues
+    .map((item) => mapToCustomerNo(item, brandMapping, reverseBrandMapping))
+    .filter(Boolean);
+
+  return mappedValues.length > 0 ? [...new Set(mappedValues)] : null;
+}
+
 function buildScopedBrandFilter({
   queryParams,
   requestedBrands,
@@ -51,17 +97,15 @@ function buildScopedBrandFilter({
   brandMapping = {},
   fieldName = 't.CUSTOMERNO',
   paramPrefix = 'brand',
-  fallbackCustomerNos = VF_BRAND_CODES
+  fallbackCustomerNos = null
 }) {
-  const normalizedRequestedBrands = normalizeBrandValues(requestedBrands);
-  const requestedCustomerNos = normalizedRequestedBrands
-    ? normalizedRequestedBrands.map((brand) => brandMapping[brand] || brand)
-    : null;
+  const requestedCustomerNos = normalizeCustomerNos(requestedBrands, brandMapping);
+  const authorizedCustomerNosNormalized = normalizeCustomerNos(authorizedCustomerNos, brandMapping);
 
   let effectiveCustomerNos;
 
-  if (Array.isArray(authorizedCustomerNos)) {
-    if (authorizedCustomerNos.length === 0) {
+  if (Array.isArray(authorizedCustomerNosNormalized)) {
+    if (authorizedCustomerNosNormalized.length === 0) {
       const error = new Error('Current user has no authorized brands');
       error.statusCode = 403;
       error.code = ERROR_CODES.EMPTY_BRAND_SCOPE;
@@ -71,7 +115,7 @@ function buildScopedBrandFilter({
 
     if (requestedCustomerNos) {
       const unauthorizedBrands = requestedCustomerNos.filter(
-        (customerNo) => !authorizedCustomerNos.includes(customerNo)
+        (customerNo) => !authorizedCustomerNosNormalized.includes(customerNo)
       );
 
       if (unauthorizedBrands.length > 0) {
@@ -80,7 +124,7 @@ function buildScopedBrandFilter({
 
       effectiveCustomerNos = requestedCustomerNos;
     } else {
-      effectiveCustomerNos = authorizedCustomerNos;
+      effectiveCustomerNos = authorizedCustomerNosNormalized;
     }
   } else if (requestedCustomerNos) {
     effectiveCustomerNos = requestedCustomerNos;
@@ -88,6 +132,9 @@ function buildScopedBrandFilter({
     // 管理员或未提供登录态范围时，默认不限制 CUSTOMERNO，允许查看全部数据。
     effectiveCustomerNos = null;
   }
+
+  // 🔥 关键日志：打印最终生效的客户编号
+  console.log("🔥 最终生效的客户编号:", effectiveCustomerNos);
 
   if (!effectiveCustomerNos || effectiveCustomerNos.length === 0) {
     return '';

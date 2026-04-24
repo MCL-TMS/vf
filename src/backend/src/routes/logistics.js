@@ -215,7 +215,8 @@ router.get('/brands', async (req, res) => {
     // 🔥 品牌物流异常数据详细统计查询（✅ 从数据库查询品牌名称）
     const brandsQuery = `
       SELECT 
-        COALESCE(bc.COMPANY_ABNAME, t.CUSTOMERNO) as brand_name,
+        t.CUSTOMERNO as brand_code,
+        COALESCE(v.COMPANY_NAME, t.CUSTOMERNO) as brand_name,
         -- 基础统计
         COUNT(DISTINCT t.TSK_MERGE_NO) as order_count,
         COUNT(DISTINCT CASE WHEN t.DIS_STATUS = '55' THEN t.TSK_MERGE_NO END) as picked_count,
@@ -248,12 +249,11 @@ router.get('/brands', async (req, res) => {
         ROUND(AVG(CASE WHEN t.SUM_SEND_TIME2 IS NOT NULL AND t.SUM_SEND_TIME2 > 0 THEN t.SUM_SEND_TIME2 END), 2) as avg_delivery_time
       FROM APP_CMS.TSK_LIST_TASK t
       LEFT JOIN APP_CMS.VIEW_TSK_LIST_TASK v ON t.TSK_MERGE_NO = v.TSK_MERGE_NO
-      LEFT JOIN APP_CMS.BAS_COMPANY bc ON t.CUSTOMERNO = bc.COMPANY_SYSID
       ${QueryUtils.BASE_WHERE_CONDITIONS}
         ${brandFilter}
         ${platformFilter}
         ${selfFlagFilter}
-      GROUP BY t.CUSTOMERNO, bc.COMPANY_ABNAME
+      GROUP BY t.CUSTOMERNO, v.COMPANY_NAME
       ORDER BY order_count DESC
     `;
     
@@ -266,28 +266,29 @@ router.get('/brands', async (req, res) => {
     
     // 🔧 映射品牌异常数据结构
     const brandExceptions = result.rows.map(row => ({
-      brandName: row[0] || 'UNKNOWN',
-      orderCount: row[1] || 0,
-      pickedCount: row[2] || 0,
-      shippedCount: row[3] || 0,
-      deliveredCount: row[4] || 0,
+      brandCode: row[0] || 'UNKNOWN',
+      brandName: row[1] || row[0] || 'UNKNOWN',
+      orderCount: row[2] || 0,
+      pickedCount: row[3] || 0,
+      shippedCount: row[4] || 0,
+      deliveredCount: row[5] || 0,
       // 四种核心异常类型
-      pickupTimeout: row[5] || 0,
-      shippingTimeout: row[6] || 0,
-      deliveryTimeout: row[7] || 0,
-      noUpdate48h: row[8] || 0,
-      totalExceptions: row[9] || 0,
+      pickupTimeout: row[6] || 0,
+      shippingTimeout: row[7] || 0,
+      deliveryTimeout: row[8] || 0,
+      noUpdate48h: row[9] || 0,
+      totalExceptions: row[10] || 0,
       // 各阶段成功率
-      pickupRate: row[10] || 0,
-      shippingRate: row[11] || 0,
-      deliveryRate: row[12] || 0,
-      exceptionRate: row[13] || 0,
-      avgDeliveryTime: row[14] || 0,
+      pickupRate: row[11] || 0,
+      shippingRate: row[12] || 0,
+      deliveryRate: row[13] || 0,
+      exceptionRate: row[14] || 0,
+      avgDeliveryTime: row[15] || 0,
       // 兼容字段名
-      pickup_timeout: row[5] || 0,
-      shipping_timeout: row[6] || 0,
-      delivery_timeout: row[7] || 0,
-      no_update_48h: row[8] || 0
+      pickup_timeout: row[6] || 0,
+      shipping_timeout: row[7] || 0,
+      delivery_timeout: row[8] || 0,
+      no_update_48h: row[9] || 0
     }));
 
     console.log('✅ [Logistics-Brands] 品牌物流异常数据查询成功:', {

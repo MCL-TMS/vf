@@ -1,0 +1,2 @@
+const { executeQuery } = require('./src/backend/src/config/database-api.js');
+executeQuery(`SELECT PLATFORM_CLASS as platformName, COUNT(TSK_MERGE_NO) as orderCount FROM APP_CMS.VIEW_TSK_LIST_TASK WHERE WMS_OUTBOUND_TIME >= TO_DATE('2024-03-01 00:00:00', 'YYYY-MM-DD HH24:MI:SS') AND WMS_OUTBOUND_TIME <= TO_DATE('2024-03-31 23:59:59', 'YYYY-MM-DD HH24:MI:SS') GROUP BY PLATFORM_CLASS ORDER BY orderCount DESC`).then(res => console.log(res.rows)).catch(console.error);

@@ -8,6 +8,7 @@ import { ExceptionFilterAlert } from "./components/ExceptionFilterAlert";
 import { LoginPage } from "./components/LoginPage";
 import { Badge } from "./components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./components/ui/select";
+import { MultiSelect } from "./components/ui/multi-select";
 import { Label } from "./components/ui/label";
 import { Button } from "./components/ui/button";
 import { Info, AlertTriangle, Clock, Package, Truck, Activity, X, LogOut } from "lucide-react";
@@ -253,19 +254,16 @@ function AppContent() {
             <div className="flex items-center space-x-4">
               <div className="flex items-center space-x-2">
                 <Label className="text-sm text-functional-mid-grey whitespace-nowrap">品牌筛选:</Label>
-                <Select value={selectedBrand || "all"} onValueChange={eventHandlers.handleBrandChange}>
-                  <SelectTrigger className="w-32 h-8 text-sm border-functional-light-grey">
-                    <SelectValue placeholder="选择品牌" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">全部品牌</SelectItem>
-                    {['TNF', 'DICKIES', 'VANS', 'TIMBERLAND', 'ICEBREAKER', 'SMARTWOOL'].map((brand) => (
-                      <SelectItem key={brand} value={brand}>
-                        {brand}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                  <MultiSelect
+                    options={['TNF', 'DICKIES', 'VANS', 'TIMBERLAND', 'ICEBREAKER', 'SMARTWOOL'].map(b => ({ label: b, value: b }))}
+                    selected={Array.isArray(selectedBrand) ? selectedBrand : selectedBrand && selectedBrand !== 'all' ? [selectedBrand] : []}
+                    onChange={(vals) => {
+                      if (vals.length === 0) eventHandlers.handleBrandChange('all');
+                      else eventHandlers.handleBrandChange(vals);
+                    }}
+                    placeholder="选择品牌"
+                    className="w-40"
+                  />
               </div>
             </div>
           </div>
@@ -290,7 +288,7 @@ function AppContent() {
                   <div className="flex-1">
                     <div className="text-sm text-functional-dark-blue">
                       当前筛选条件: 
-                      {selectedBrand && <Badge variant="outline" className="ml-1 mr-1 maersk-badge-secondary">品牌: {selectedBrand}</Badge>}
+                        {selectedBrand && <Badge variant="outline" className="ml-1 mr-1 maersk-badge-secondary truncate max-w-[200px]">品牌: {Array.isArray(selectedBrand) ? selectedBrand.join(', ') : selectedBrand}</Badge>}
                       {selectedPlatform && <Badge variant="outline" className="ml-1 mr-1 maersk-badge-secondary">平台: {selectedPlatform === 'tmall' ? '天猫' : selectedPlatform === 'douyin' ? '抖音' : selectedPlatform === 'jd' ? '京东' : selectedPlatform === 'pdd' ? '拼多多' : selectedPlatform === 'official' ? '官网/小程序' : selectedPlatform === 'o2o' ? 'O2O' : selectedPlatform === 'xiaohongshu' ? '小红书' : selectedPlatform === 'wechat' ? '微信小程序' : selectedPlatform}</Badge>}
                       {selectedSelfFlag && selectedSelfFlag !== 'Y' && <Badge variant="outline" className="ml-1 mr-1 maersk-badge-secondary">自管: {selectedSelfFlag === 'N' ? '非自管' : selectedSelfFlag === 'all' ? '全部' : selectedSelfFlag}</Badge>}
                       {" "}所有图表和统计都已根据筛选条件进行过滤。
@@ -337,7 +335,7 @@ function AppContent() {
                 <div className="flex items-center space-x-4">
                   <span>当前页面: {getPageTitle(activeMenu)}</span>
                   <span>时间范围: {currentDateRange.from} 至 {currentDateRange.to}</span>
-                  {selectedBrand && <span>品牌筛选: {selectedBrand}</span>}
+                    {selectedBrand && <span>品牌筛选: {Array.isArray(selectedBrand) ? selectedBrand.join(', ') : selectedBrand}</span>}
                   {selectedPlatform && <span>平台筛选: {selectedPlatform === 'tmall' ? '天猫' : selectedPlatform === 'douyin' ? '抖音' : selectedPlatform === 'jd' ? '京东' : selectedPlatform === 'pdd' ? '拼多多' : selectedPlatform === 'official' ? '官网/小程序' : selectedPlatform === 'o2o' ? 'O2O' : selectedPlatform === 'xiaohongshu' ? '小红书' : selectedPlatform === 'wechat' ? '微信小程序' : selectedPlatform}</span>}
                   {selectedSelfFlag && selectedSelfFlag !== 'Y' && <span>自管筛选: {selectedSelfFlag === 'N' ? '非自管' : selectedSelfFlag === 'all' ? '全部' : selectedSelfFlag}</span>}
                   {activeMenu === "overview-regional" && <span>🗺️ 地图交互已启用</span>}

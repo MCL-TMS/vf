@@ -244,9 +244,9 @@ class ApiServiceClass {
   async exportOrderDetails(filters: {
     startDate: string;
     endDate: string;
-    brand?: string;
-    platform?: string;
-    selfFlag?: string;
+    brand?: string | string[] | null;
+    platform?: string | null;
+    selfFlag?: string | null;
     batchSize?: number;  // 每批次数量（默认5000）
   }): Promise<any[]> {
     try {
@@ -321,9 +321,9 @@ class ApiServiceClass {
     filters: {
       startDate: string;
       endDate: string;
-      brand?: string;
-      platform?: string;
-      selfFlag?: string;
+      brand?: string | string[] | null;
+      platform?: string | null;
+      selfFlag?: string | null;
       offset?: number;
     },
     limit: number
@@ -333,7 +333,11 @@ class ApiServiceClass {
     params.append('endDate', filters.endDate);
     
     if (filters.brand && filters.brand !== 'all') {
-      params.append('brand', filters.brand);
+        if (Array.isArray(filters.brand)) {
+          params.append('brand', filters.brand.join(',')); // 统一用逗号分隔
+        } else {
+          params.append('brand', filters.brand);
+        }
     }
     
     if (filters.platform && filters.platform !== 'all') {
@@ -787,12 +791,8 @@ class ApiServiceClass {
         // 类型：string | string[]
         
         if (Array.isArray(brand)) {
-          // ✅ 方案A：直接是数组 ['18405-1', '18405-2']
-          // 使用HTTP标准的多参数方式：?brand=18405-1&brand=18405-2
-          brand.forEach(brandCode => {
-            params.append('brand', brandCode);
-          });
-          console.log('🏷️ [ApiService] 多品牌查询（数组）:', brand);
+          params.append('brand', brand.join(',')); // 统一用逗号分隔
+          console.log('🏷️ [ApiService] 多品牌查询:', brand);
         } else {
           // 单个品牌（字符串）
           const mappedBrand = this.BRAND_MAPPING[brand as keyof typeof this.BRAND_MAPPING] || brand;
@@ -1479,10 +1479,19 @@ class ApiServiceClass {
 
     if (brand && brand !== 'all') {
       if (Array.isArray(brand)) {
-        brand.forEach((brandCode) => params.append('brand', brandCode));
+        console.log('🔍 [ApiService.getWeightAnalysis] 处理品牌数组:', brand);
+        brand.forEach((brandName) => {
+          // 🔥 修复：直接使用品牌名（COMPANY_ABNAME），不做映射
+          console.log('  - 品牌项:', brandName, '→ 直接使用（后端用COMPANY_ABNAME筛选）');
+          params.append('brand', brandName);
+        });
       } else {
-        const mappedBrand = this.BRAND_MAPPING[brand as keyof typeof this.BRAND_MAPPING] || brand;
-        params.append('brand', mappedBrand);
+        // 🔥 修复：单个品牌也直接使用品牌名
+        console.log('🔍 [ApiService.getWeightAnalysis] 处理单个品牌:', {
+          brand,
+          note: '直接使用品牌名，后端用COMPANY_ABNAME筛选'
+        });
+        params.append('brand', brand);
       }
     }
 
@@ -1507,6 +1516,8 @@ class ApiServiceClass {
     const timeoutMs = 120000;
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
     const url = `${this.baseURL}/logistics/weight-analysis${params.toString() ? `?${params.toString()}` : ''}`;
+    
+    console.log('📤 [ApiService.getWeightAnalysis] 最终URL:', url);
 
     try {
       const response = await this.performanceFetch(url, {
@@ -1776,6 +1787,97 @@ class ApiServiceClass {
     
     console.log('✅ [ApiService.getPlatformList] 返回平台列表:', platformList);
     return platformList;
+  }
+
+  // 🔥 新增：获取管理员可用的品牌列表（基于订单数据）
+  async getAvailableBrands(options: { startDate?: string; endDate?: string; selfFlag?: string } = {}): Promise<any> {
+    const { startDate, endDate, selfFlag } = options;
+    
+    try {
+      const params = new URLSearchParams();
+      
+      if (startDate) params.append('startDate', startDate);
+      if (endDate) params.append('endDate', endDate);
+      if (selfFlag && selfFlag !== 'all') params.append('selfFlag', selfFlag);
+
+      const url = `${this.baseURL}/brands/available${params.toString() ? `?${params.toString()}` : ''}`;
+      console.log('🏷️ [ApiService.getAvailableBrands] 请求URL:', url);
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
+      
+      const response = await this.performanceFetch(url, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        signal: controller.signal
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        throw new Error(`获取可用品牌数据失败: ${response.status} ${response.statusText}`);
+      }
+
+      const data = await this.safeJsonParse(response, '获取可用品牌');
+      return data;
+    } catch (error: any) {
+      console.error('❌ [ApiService.getAvailableBrands] 失败:', error);
+      if (error.name === 'AbortError') {
+        throw new Error('请求超时，请检查网络连接');
+      }
+      throw error;
+    }
+  }
+
+  // 🔥 新增：获取管理员可用的平台列表（基于订单数据）
+  async getAvailablePlatforms(options: { startDate?: string; endDate?: string; selfFlag?: string; brand?: string | string[] } = {}): Promise<any> {
+    const { startDate, endDate, selfFlag, brand } = options;
+    
+    try {
+      const params = new URLSearchParams();
+      
+      if (startDate) params.append('startDate', startDate);
+      if (endDate) params.append('endDate', endDate);
+      if (selfFlag && selfFlag !== 'all') params.append('selfFlag', selfFlag);
+      if (brand && brand !== 'all') {
+        if (Array.isArray(brand)) {
+          params.append('brand', brand.join(','));
+        } else {
+          params.append('brand', brand);
+        }
+      }
+
+      const url = `${this.baseURL}/platform/available${params.toString() ? `?${params.toString()}` : ''}`;
+      console.log('🏷️ [ApiService.getAvailablePlatforms] 请求URL:', url);
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30000); // 放宽超时到30秒
+
+      const response = await this.performanceFetch(url, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        signal: controller.signal
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        throw new Error(`获取可用平台数据失败: ${response.status} ${response.statusText}`);
+      }
+
+      const data = await this.safeJsonParse(response, '获取可用平台');
+      return data;
+    } catch (error: any) {
+      console.error('❌ [ApiService.getAvailablePlatforms] 失败:', error);
+      if (error.name === 'AbortError') {
+        throw new Error('请求超时，请检查网络连接');
+      }
+      throw error;
+    }
   }
 
   // 🔥 新增：获取异常监控分析数据
@@ -2215,6 +2317,8 @@ export const getForwardingData = (options?: APIRequestOptions) => ApiService.get
 export const getInterceptionData = (options?: any) => ApiService.getInterceptionData(options);
 export const getPlatformList = () => ApiService.getPlatformList(); // 🔥 导出平台列表方法
 export const exportOrderDetails = (options: APIRequestOptions) => ApiService.exportOrderDetails(options); // 🔥 导出订单明细
+export const getAvailableBrands = (options?: { startDate?: string; endDate?: string; selfFlag?: string }) => ApiService.getAvailableBrands(options); // 🔥 导出可用品牌方法
+export const getAvailablePlatforms = (options?: { startDate?: string; endDate?: string; selfFlag?: string; brand?: string | string[] }) => ApiService.getAvailablePlatforms(options); // 🔥 导出可用平台方法
 export const exportTimelinessRawData = (options: any) => ApiService.exportTimelinessRawData(options); // 🔥 导出时效分析RawData
 export const analyzeTimeliness = (options: any) => ApiService.analyzeTimeliness(options); // 🔥 执行时效分析
 export const getExceptionAnalysisData = (options?: any) => ApiService.getExceptionAnalysisData(options); // 🔥 异常监控分析数据

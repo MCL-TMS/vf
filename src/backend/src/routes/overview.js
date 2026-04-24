@@ -284,11 +284,11 @@ router.get('/kpi', async (req, res) => {
         LEFT JOIN APP_CMS.BAS_CODES bs ON t.DIS_STATUS = bs.CODE AND bs.CODEID = 'BL_STATUS'
         WHERE t.WMS_OUTBOUND_TIME IS NOT NULL
           AND (
-            (to_char(t.WMS_OUTBOUND_TIME,'yyyy-mm-dd') >= :dateFrom AND to_char(t.WMS_OUTBOUND_TIME,'yyyy-mm-dd') <= :dateTo)
+            (t.WMS_OUTBOUND_TIME >= TO_DATE(:dateFrom, 'YYYY-MM-DD') AND t.WMS_OUTBOUND_TIME < TO_DATE(:dateTo, 'YYYY-MM-DD') + 1)
             OR
-            (to_char(t.WMS_OUTBOUND_TIME,'yyyy-mm-dd') >= :lastMonthFrom AND to_char(t.WMS_OUTBOUND_TIME,'yyyy-mm-dd') <= :lastMonthTo)
+            (t.WMS_OUTBOUND_TIME >= TO_DATE(:lastMonthFrom, 'YYYY-MM-DD') AND t.WMS_OUTBOUND_TIME < TO_DATE(:lastMonthTo, 'YYYY-MM-DD') + 1)
             OR
-            (to_char(t.WMS_OUTBOUND_TIME,'yyyy-mm-dd') >= :lastYearFrom AND to_char(t.WMS_OUTBOUND_TIME,'yyyy-mm-dd') <= :lastYearTo)
+            (t.WMS_OUTBOUND_TIME >= TO_DATE(:lastYearFrom, 'YYYY-MM-DD') AND t.WMS_OUTBOUND_TIME < TO_DATE(:lastYearTo, 'YYYY-MM-DD') + 1)
           )
           AND t.TSK_MERGE_NO IS NOT NULL
           AND t.CARRIERID IS NOT NULL
@@ -1399,6 +1399,7 @@ router.get('/status-flow-analysis', async (req, res) => {
       LEFT JOIN APP_CMS.VIEW_TSK_LIST_TASK v ON t.TSK_MERGE_NO = v.TSK_MERGE_NO
       LEFT JOIN APP_CMS.BAS_CODES bs ON t.DIS_STATUS = bs.CODE AND bs.CODEID = 'BL_STATUS'
       ${QueryUtils.BASE_WHERE_CONDITIONS}
+       AND t.CARRIERID IS NOT NULL 
         ${brandFilter}
         ${platformFilter}
         ${selfFlagFilter}

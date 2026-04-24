@@ -20,34 +20,35 @@ async function loadBrandMapping() {
   try {
     const connection = await getConnection();
     
-    // 查询所有VF品牌（COMPANY_SYSID以'18405'开头）
+    // 查询全部有效品牌映射（品牌简称 -> 品牌编码）
+    // 不能只限制 VF 品牌，否则外部用户品牌（如 APEDEMOD/BALMAIN）无法映射为 CUSTOMERNO。
     const query = `
       SELECT 
         COMPANY_ABNAME,
         COMPANY_SYSID
       FROM APP_CMS.BAS_COMPANY
-      WHERE COMPANY_SYSID LIKE '18405%'
-        OR COMPANY_SYSID = '18405'
+      WHERE COMPANY_ABNAME IS NOT NULL
+        AND COMPANY_SYSID IS NOT NULL
       ORDER BY COMPANY_SYSID
     `;
     
     const result = await connection.execute(query);
     
-    // 构建映射对象
+    // 构建映射对象（同时保留原始键和大写键，提升匹配鲁棒性）
     const mapping = {};
     result.rows.forEach(row => {
-      const brandName = row[0];  // COMPANY_ABNAME (如 'DICKIES')
-      const brandCode = row[1];  // COMPANY_SYSID (如 '18405')
+      const brandName = String(row[0] || '').trim();  // COMPANY_ABNAME (如 'DICKIES')
+      const brandCode = String(row[1] || '').trim();  // COMPANY_SYSID (如 '18405')
       if (brandName && brandCode) {
         mapping[brandName] = brandCode;
+        mapping[brandName.toUpperCase()] = brandCode;
       }
     });
     
     brandMappingCache = mapping;
     lastLoadTime = Date.now();
     
-    console.log('✅ [品牌映射] 成功加载品牌映射:', mapping);
-    console.log(`📊 [品牌映射] 共加载 ${Object.keys(mapping).length} 个品牌`);
+    console.log(`📊 [品牌映射] 共加载 ${Object.keys(mapping).length} 条映射（含大小写冗余键）`);
     
     return mapping;
   } catch (error) {

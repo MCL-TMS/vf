@@ -89,7 +89,8 @@ async function resolveUserRole(connection, req, queryUserId) {
  */
 router.get('/weight-analysis', async (req, res) => {
   let connection;
-  
+  // 全局日志，确认请求已进入主逻辑
+  console.log('[重量分析] 收到请求:', req.originalUrl, req.query);
   try {
     const {
       dateFrom,
@@ -153,18 +154,32 @@ router.get('/weight-analysis', async (req, res) => {
     const brandMapping = await getBrandMapping();
     const weightColumn = weightType === 'payable' ? 'v.CAL_TON_AP' : 'v.CAL_TON_AR';
     const weightCaseSql = toWeightCaseSql(weightColumn);
-    const brandNameSql = 'NVL(v.COMPANY_NAME, t.CUSTOMERNO)';
+    // 保证品牌分析接口与品牌筛选器编码一致，brandNameSql直接用t.CUSTOMERNO
+    const brandNameSql = 't.CUSTOMERNO';
 
     const params = { dateFrom, dateTo };
+    // 日志：打印用户权限品牌
+    console.log('[重量分析] authorizedCustomerNos:', authorizedCustomerNos);
+    // 日志：打印品牌映射表
+    console.log('[重量分析] brandMapping:', brandMapping);
+    // 日志：打印请求参数 brand
+    console.log('[重量分析] 请求参数 brand:', brand);
+    // 日志：打印初始 params
+    console.log('[重量分析] 初始 params:', params);
+    // 🔥 修复：buildScopedBrandFilter使用CUSTOMERNO进行权限筛选
     const brandFilter = buildScopedBrandFilter({
       queryParams: params,
       requestedBrands: brand,
       authorizedCustomerNos,
       brandMapping,
-      fieldName: 't.CUSTOMERNO',
+      fieldName: 't.CUSTOMERNO',  // 🔥 使用CUSTOMERNO筛选
       paramPrefix: 'brand'
     });
+    // 日志：打印brandFilter和最终params
+    console.log('[重量分析] brandFilter:', brandFilter);
+    console.log('[重量分析] 最终 params:', params);
 
+    // 先处理 platformFilter 和 selfFlagFilter
     let platformFilter = '';
     if (platform && platform !== 'all') {
       platformFilter = `
@@ -188,6 +203,7 @@ router.get('/weight-analysis', async (req, res) => {
       params.selfFlag = 'Y';
     }
 
+    // 先定义 baseWhere
     const baseWhere = `
       WHERE t.WMS_OUTBOUND_TIME IS NOT NULL
         AND t.WMS_OUTBOUND_TIME >= TO_DATE(:dateFrom, 'YYYY-MM-DD')
@@ -199,7 +215,10 @@ router.get('/weight-analysis', async (req, res) => {
         ${platformFilter}
         ${selfFlagFilter}
     `;
+    // 日志：打印最终SQL片段
+    console.log('[重量分析] baseWhere:', `\n${baseWhere}`);
 
+    // 再定义所有SQL
     const rangeQuery = `
       SELECT
         ${weightCaseSql} AS weight_range,
@@ -263,13 +282,90 @@ router.get('/weight-analysis', async (req, res) => {
       ${baseWhere}
     `;
 
-    const [rangeResult, brandResult, courierResult, brandCourierResult, overallResult] = await Promise.all([
+    // 地区分析SQL：按省份统计订单数、平均重量、快递公司，区分轻量包裹
+    const regionQuery = `
+      SELECT
+        v.DEST_PROVINCE_NAME AS province,
+        NVL(bc.COMPANY_ABNAME, t.CARRIERID) AS carrier_name,
+        COUNT(DISTINCT t.TSK_MERGE_NO) AS order_count,
+        ROUND(AVG(${weightColumn}), 3) AS avg_weight,
+        SUM(CASE WHEN ${weightColumn} <= 1 THEN 1 ELSE 0 END) AS light_order_count,
+        ROUND(AVG(CASE WHEN ${weightColumn} <= 1 THEN ${weightColumn} END), 3) AS light_avg_weight
+      FROM APP_CMS.TSK_LIST_TASK t
+      JOIN APP_CMS.VIEW_TSK_LIST_TASK v ON t.TSK_MERGE_NO = v.TSK_MERGE_NO
+      LEFT JOIN APP_CMS.BAS_COMPANY bc ON t.CARRIERID = bc.COMPANY_SYSID
+      ${baseWhere}
+        AND v.DEST_PROVINCE_NAME IS NOT NULL
+      GROUP BY v.DEST_PROVINCE_NAME, NVL(bc.COMPANY_ABNAME, t.CARRIERID)
+    `;
+
+    // 日志：打印 regionQuery 及参数
+    console.log('[地区分析] regionQuery SQL:', regionQuery);
+    console.log('[地区分析] regionQuery params:', params);
+    const [rangeResult, brandResult, courierResult, brandCourierResult, overallResult, regionResult] = await Promise.all([
       connection.execute(rangeQuery, params),
       connection.execute(brandQuery, params),
       connection.execute(courierQuery, params),
       connection.execute(brandCourierQuery, params),
-      connection.execute(overallQuery, params)
+      connection.execute(overallQuery, params),
+      connection.execute(regionQuery, params)
     ]);
+    // 地区分析数据处理
+    const regionRows = regionResult.rows || [];
+    // 结构：{ province: string, order_count: number, avg_weight: number, carriers: { [carrier]: { order_count, avg_weight, avg_fee } } }
+    const regionMap = new Map();
+    console.log('[地区分析] regionRows:', JSON.stringify(regionRows, null, 2));
+
+    regionRows.forEach(row => {
+      const province = row[0] || '未知';
+      const carrier = row[1] || '未知';
+      const orderCount = Number(row[2] || 0);
+      const avgWeight = Number(row[3] || 0);
+      const lightOrderCount = Number(row[4] || 0);  // 轻量包裹订单数
+      const lightAvgWeight = Number(row[5] || 0);   // 轻量包裹平均重量
+      
+      // 运费规则
+      let avgFee = 0;
+      if (carrier.includes('顺丰')) {
+        avgFee = 15;
+      } else if (carrier.includes('中通')) {
+        avgFee = 10;
+      } else {
+        avgFee = 8;
+      }
+      if (!regionMap.has(province)) {
+        regionMap.set(province, { 
+          province, 
+          totalOrders: 0, 
+          lightOrders: 0,  // 新增：轻量包裹总数
+          carriers: {}, 
+          avgWeightSum: 0, 
+          carrierCount: 0 
+        });
+      }
+      const provObj = regionMap.get(province);
+      provObj.totalOrders += orderCount;
+      provObj.lightOrders += lightOrderCount;  // 累加轻量包裹数
+      provObj.avgWeightSum += avgWeight * orderCount;
+      provObj.carrierCount += orderCount;
+      provObj.carriers[carrier] = {
+        orderCount,
+        lightOrderCount,  // 新增
+        avgWeight,
+        lightAvgWeight,   // 新增
+        avgFee
+      };
+    });
+    // 生成最终地区分析数组
+    const regionAnalysis = Array.from(regionMap.values()).map(item => ({
+      province: item.province,
+      totalOrders: item.totalOrders,
+      lightOrders: item.lightOrders,  // 新增：轻量包裹数
+      lightRatio: item.totalOrders > 0 ? Number(((item.lightOrders / item.totalOrders) * 100).toFixed(1)) : 0,  // 新增：轻量包裹占比
+      avgWeight: item.carrierCount > 0 ? Number((item.avgWeightSum / item.carrierCount).toFixed(3)) : 0,
+      carriers: item.carriers
+    }));
+    console.log('[地区分析] regionAnalysis:', JSON.stringify(regionAnalysis, null, 2));
 
     const rangeRows = rangeResult.rows || [];
     const brandRows = brandResult.rows || [];
@@ -383,7 +479,8 @@ router.get('/weight-analysis', async (req, res) => {
         weightRangeDistribution,
         brandWeightDistribution,
         courierWeightDistribution,
-        brandCourierWeightDistribution
+        brandCourierWeightDistribution,
+        regionAnalysis // 新增：地区分析
       },
       timestamp: new Date().toISOString()
     });
