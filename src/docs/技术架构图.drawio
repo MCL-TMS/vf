@@ -25,7 +25,7 @@
         </mxCell>
         
         <!-- 后端/API -->
-        <mxCell id="7" value="后端服务层（Node.js + Express）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;" vertex="1" parent="1">
+        <mxCell id="7" value="前置应用服务器 (In-front Application Server)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;" vertex="1" parent="1">
           <mxGeometry x="800" y="30" width="460" height="320" as="geometry"/>
         </mxCell>
         <mxCell id="8" value="通用中间件：helmet / cors / compression / morgan&#xa;限流：express-rate-limit" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ead1dc;strokeColor=#b85475;fontSize=12;" vertex="1" parent="1">
@@ -50,7 +50,7 @@
         <mxCell id="13" value="数据访问层：Oracle（oracledb）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b45f06;fontSize=12;" vertex="1" parent="1">
           <mxGeometry x="1260" y="120" width="300" height="210" as="geometry"/>
         </mxCell>
-        <mxCell id="14" value="连接池：initializeDatabase + executeQuery/Transaction&#xa;Schema：APP_CMS&#xa;核心对象：TSK_LIST_TASK / VIEW_TSK_LIST_TASK / BAS_CODES / BAS_COMPANY / BAS_AREA / UPLOAD_HISTORY（可选）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce5cd;strokeColor=#d58512;fontSize=12;" vertex="1" parent="1">
+        <mxCell id="14" value="连接池：initializeDatabase + executeQuery/Transaction&#xa;Schema：APP_CMS&#xa;核心对象：TSK_LIST_TASK / VIEW_TSK_LIST_TASK / BAS_CODES / BAS_COMPANY / BAS_AREA" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce5cd;strokeColor=#d58512;fontSize=12;" vertex="1" parent="1">
           <mxGeometry x="1275" y="145" width="270" height="170" as="geometry"/>
         </mxCell>
         <mxCell id="15" value="文件存储层：上传目录/模板/时效文件" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b45f06;fontSize=12;" vertex="1" parent="1">
@@ -68,7 +68,7 @@
           <mxGeometry relative="1" as="geometry"/>
         </mxCell>
         
-        <mxCell id="22" value="SQL 查询/聚合/导出" style="endArrow=block;strokeWidth=1.5;html=1;dashed=1;" edge="1" parent="1" source="7" target="13">
+        <mxCell id="22" value="SQL 查询/数据操作" style="endArrow=block;strokeWidth=1.5;html=1;dashed=1;" edge="1" parent="1" source="7" target="13">
           <mxGeometry relative="1" as="geometry"/>
         </mxCell>
         <mxCell id="23" value="上传文件/解析源数据" style="endArrow=block;strokeWidth=1.5;html=1;dashed=1;" edge="1" parent="1" source="7" target="15">

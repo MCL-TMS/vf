@@ -73,11 +73,14 @@
     "@tailwindcss/vite": "4.1.12",
     "@types/node": "^20.10.0",
     "@vitejs/plugin-react": "^4.7.0",
+    "playwright": "^1.46.0",
     "tailwindcss": "4.1.12",
     "vite": "6.3.5"
   },
   "scripts": {
     "dev": "vite",
-    "build": "vite build"
+    "build": "vite build",
+    "screenshot:overview": "node scripts/capture-overview.cjs",
+    "screenshot:overview:once": "node scripts/capture-overview.cjs"
   }
 }

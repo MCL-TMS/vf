@@ -212,8 +212,10 @@ async function analyzeS2DPerformance(options = {}) {
     // ✅ 排除EMS承运订单
     whereClauses.push(`t.CARRIERID != 'EMS'`);
     
-    // ✅ 只分析DIS_TYPE=01的订单（正常订单）
-    whereClauses.push(`t.DIS_TYPE = '01'`);
+    // ✅ 只分析正常订单（使用VIEW中的DIS_TYPE_NAME）
+    whereClauses.push(`v.DIS_TYPE_NAME = '正常'`);
+    // ✅ 只统计指定签收状态
+    whereClauses.push(`v.DIS_STATUS IN ('93', '95', '100')`);
     
     // ✅ 自管筛选逻辑（修正版）
     if (selectedSelfFlag === 'Y') {
@@ -246,37 +248,30 @@ async function analyzeS2DPerformance(options = {}) {
         -- ✅ Plan统计：所有订单（不限制状态，用于Plan时效统计）
         COUNT(*) as PLAN_TOTAL_ORDERS,
         
-        -- ✅ Actual统计：只统计已签收订单（DIS_STATUS='93'或'95'）
-        COUNT(CASE WHEN t.DIS_STATUS IN ('93', '95') 
-                   AND v.DELIVERY_TIMES IS NOT NULL 
-                   AND v.DELIVERY_TIMES >= 0 THEN 1 END) as TOTAL_S2D_ORDERS,
+        -- ✅ Actual统计：总数不做限制（与Plan一致）
+        COUNT(*) as TOTAL_S2D_ORDERS,
         
-        COUNT(CASE WHEN t.DIS_STATUS IN ('93', '95') 
-                   AND v.DELIVERY_TIMES IS NOT NULL 
-                   AND v.DELIVERY_TIMES >= 0
-                   AND v.DELIVERY_TIMES <= 24 THEN 1 END) as ACTUAL_24H_COUNT,
+           COUNT(CASE WHEN v.DELIVERY_TIMES IS NOT NULL 
+             AND v.DELIVERY_TIMES >= 0
+             AND v.DELIVERY_TIMES <= 24 THEN 1 END) as ACTUAL_24H_COUNT,
         
-        COUNT(CASE WHEN t.DIS_STATUS IN ('93', '95') 
-                   AND v.DELIVERY_TIMES IS NOT NULL 
-                   AND v.DELIVERY_TIMES >= 0
-                   AND v.DELIVERY_TIMES > 24 
-                   AND v.DELIVERY_TIMES <= 48 THEN 1 END) as ACTUAL_48H_COUNT,
+        COUNT(CASE WHEN v.DELIVERY_TIMES IS NOT NULL 
+             AND v.DELIVERY_TIMES >= 0
+             AND v.DELIVERY_TIMES > 24 
+             AND v.DELIVERY_TIMES <= 48 THEN 1 END) as ACTUAL_48H_COUNT,
         
-        COUNT(CASE WHEN t.DIS_STATUS IN ('93', '95') 
-                   AND v.DELIVERY_TIMES IS NOT NULL 
-                   AND v.DELIVERY_TIMES >= 0
-                   AND v.DELIVERY_TIMES > 48 
-                   AND v.DELIVERY_TIMES <= 72 THEN 1 END) as ACTUAL_72H_COUNT,
+        COUNT(CASE WHEN v.DELIVERY_TIMES IS NOT NULL 
+             AND v.DELIVERY_TIMES >= 0
+             AND v.DELIVERY_TIMES > 48 
+             AND v.DELIVERY_TIMES <= 72 THEN 1 END) as ACTUAL_72H_COUNT,
         
-        COUNT(CASE WHEN t.DIS_STATUS IN ('93', '95') 
-                   AND v.DELIVERY_TIMES IS NOT NULL 
-                   AND v.DELIVERY_TIMES >= 0
-                   AND v.DELIVERY_TIMES > 72 THEN 1 END) as ACTUAL_OVER72H_COUNT,
+        COUNT(CASE WHEN v.DELIVERY_TIMES IS NOT NULL 
+             AND v.DELIVERY_TIMES >= 0
+             AND v.DELIVERY_TIMES > 72 THEN 1 END) as ACTUAL_OVER72H_COUNT,
         
-        AVG(CASE WHEN t.DIS_STATUS IN ('93', '95') 
-                 AND v.DELIVERY_TIMES IS NOT NULL 
-                 AND v.DELIVERY_TIMES >= 0 
-                 AND v.DELIVERY_TIMES <= 1000 THEN v.DELIVERY_TIMES END) as AVG_S2D_TIME
+        AVG(CASE WHEN v.DELIVERY_TIMES IS NOT NULL 
+           AND v.DELIVERY_TIMES >= 0 
+           AND v.DELIVERY_TIMES <= 1000 THEN v.DELIVERY_TIMES END) as AVG_S2D_TIME
         
       FROM APP_CMS.TSK_LIST_TASK t
       LEFT JOIN APP_CMS.VIEW_TSK_LIST_TASK v ON t.TSK_MERGE_NO = v.TSK_MERGE_NO
@@ -346,7 +341,7 @@ async function analyzeS2DPerformance(options = {}) {
       const areaId = row.AREA_ID;
       
       const planTotalOrders = parseInt(row.PLAN_TOTAL_ORDERS) || 0;  // ✅ 新增：所有订单数（用于Plan统计）
-      const totalOrders = parseInt(row.TOTAL_S2D_ORDERS) || 0;        // Actual已签收订单数
+      const totalOrders = parseInt(row.TOTAL_S2D_ORDERS) || 0;        // Actual订单数（不做限制）
       const actual24h = parseInt(row.ACTUAL_24H_COUNT) || 0;
       const actual48h = parseInt(row.ACTUAL_48H_COUNT) || 0;
       const actual72h = parseInt(row.ACTUAL_72H_COUNT) || 0;
@@ -358,7 +353,7 @@ async function analyzeS2DPerformance(options = {}) {
         console.log('📋 第一条数据解析结果:');
         console.log('   🎯 Plan相关（所有订单）:');
         console.log(`      - planTotalOrders: ${planTotalOrders}`);
-        console.log('   📦 Actual相关（已签收订单 DIS_STATUS=93或95）:');
+        console.log('   📦 Actual相关（基于DELIVERY_TIMES，不限制订单状态）:');
         console.log(`      - totalOrders: ${totalOrders}`);
         console.log(`      - actual24h: ${actual24h}`);
         console.log(`      - actual48h: ${actual48h}`);
@@ -372,7 +367,7 @@ async function analyzeS2DPerformance(options = {}) {
         console.log(`      - areaId: ${areaId}`);
       }
 
-      // Actual统计（已签收订单的实际表现）
+      // Actual统计（基于DELIVERY_TIMES的实际表现）
       actualStats.total += totalOrders;
       actualStats.within24h += actual24h;
       actualStats.within48h += actual48h;
@@ -408,7 +403,7 @@ async function analyzeS2DPerformance(options = {}) {
         matchedCount++;
         
         // ✅ 根据Plan时效值分配到对应区间（使用所有订单数planTotalOrders）
-        // 注意：Plan统计使用所有订单，不限制DIS_STATUS（Actual统计限制为93或95）
+        // 注意：Plan统计使用所有订单，Actual统计基于DELIVERY_TIMES（不限制订单状态）
         if (matchedTimeValue <= 24) {
           planStats.within24h += planTotalOrders;
         } else if (matchedTimeValue <= 48) {
@@ -614,7 +609,7 @@ async function analyzeS2DPerformance(options = {}) {
       console.log(`  [${index + 1}] ${record.brandCode} × ${record.carrierId} × ${record.cityName}`);
       console.log(`      🎯 Plan时效: ${planTimeValue}h`);
       console.log(`      📦 Plan区间分配: ≤24h=${plan24h}, ≤48h=${plan48h}, ≤72h=${plan72h}, >72h=${planOver72h}`);
-      console.log(`      ✅ Actual已签收订单: ${record.actualTotalOrders}`);
+      console.log(`      ✅ Actual订单: ${record.actualTotalOrders}`);
       console.log('');
     });
 
@@ -888,8 +883,10 @@ async function analyzeC2DPerformance(options = {}) {
     // ✅ 排除EMS承运订单
     whereClauses.push(`t.CARRIERID != 'EMS'`);
     
-    // ✅ 只分析DIS_TYPE=01的订单（正常订单）
-    whereClauses.push(`t.DIS_TYPE = '01'`);
+    // ✅ 只分析正常订单（使用VIEW中的DIS_TYPE_NAME）
+    whereClauses.push(`v.DIS_TYPE_NAME = '正常'`);
+    // ✅ 只统计指定签收状态
+    whereClauses.push(`v.DIS_STATUS IN ('93', '95', '100')`);
     
     // ✅ 自管筛选逻辑（修正版）
     if (selectedSelfFlag === 'Y') {
@@ -915,47 +912,40 @@ async function analyzeC2DPerformance(options = {}) {
         -- ✅ Plan统计：所有订单（不限制状态，用于Plan时效统计）
         COUNT(*) as PLAN_TOTAL_ORDERS,
         
-        -- ✅ C2D Actual统计：只统计已签收订单（DIS_STATUS='93'或'95'）
+        -- ✅ C2D Actual统计：总数不做限制（与Plan一致）
         -- C2D时效 = (DELIVERY_TIME - PAYMENTDATE_D) * 24小时
-        COUNT(CASE WHEN t.DIS_STATUS IN ('93', '95') 
-                   AND t.PAYMENTDATE_D IS NOT NULL 
-                   AND t.DELIVERY_TIME IS NOT NULL 
-                   AND t.DELIVERY_TIME >= t.PAYMENTDATE_D THEN 1 END) as TOTAL_C2D_ORDERS,
+        COUNT(*) as TOTAL_C2D_ORDERS,
         
-        COUNT(CASE WHEN t.DIS_STATUS IN ('93', '95') 
-                   AND t.PAYMENTDATE_D IS NOT NULL 
-                   AND t.DELIVERY_TIME IS NOT NULL 
-                   AND t.DELIVERY_TIME >= t.PAYMENTDATE_D
-                   AND (t.DELIVERY_TIME - t.PAYMENTDATE_D) * 24 <= 24 THEN 1 END) as ACTUAL_24H_COUNT,
+        COUNT(CASE WHEN t.PAYMENTDATE_D IS NOT NULL 
+             AND t.DELIVERY_TIME IS NOT NULL 
+             AND t.DELIVERY_TIME >= t.PAYMENTDATE_D
+             AND (t.DELIVERY_TIME - t.PAYMENTDATE_D) * 24 <= 24 THEN 1 END) as ACTUAL_24H_COUNT,
         
-        COUNT(CASE WHEN t.DIS_STATUS IN ('93', '95') 
-                   AND t.PAYMENTDATE_D IS NOT NULL 
-                   AND t.DELIVERY_TIME IS NOT NULL 
-                   AND t.DELIVERY_TIME >= t.PAYMENTDATE_D
-                   AND (t.DELIVERY_TIME - t.PAYMENTDATE_D) * 24 > 24 
-                   AND (t.DELIVERY_TIME - t.PAYMENTDATE_D) * 24 <= 48 THEN 1 END) as ACTUAL_48H_COUNT,
+        COUNT(CASE WHEN t.PAYMENTDATE_D IS NOT NULL 
+             AND t.DELIVERY_TIME IS NOT NULL 
+             AND t.DELIVERY_TIME >= t.PAYMENTDATE_D
+             AND (t.DELIVERY_TIME - t.PAYMENTDATE_D) * 24 > 24 
+             AND (t.DELIVERY_TIME - t.PAYMENTDATE_D) * 24 <= 48 THEN 1 END) as ACTUAL_48H_COUNT,
         
-        COUNT(CASE WHEN t.DIS_STATUS IN ('93', '95') 
-                   AND t.PAYMENTDATE_D IS NOT NULL 
-                   AND t.DELIVERY_TIME IS NOT NULL 
-                   AND t.DELIVERY_TIME >= t.PAYMENTDATE_D
-                   AND (t.DELIVERY_TIME - t.PAYMENTDATE_D) * 24 > 48 
-                   AND (t.DELIVERY_TIME - t.PAYMENTDATE_D) * 24 <= 72 THEN 1 END) as ACTUAL_72H_COUNT,
+        COUNT(CASE WHEN t.PAYMENTDATE_D IS NOT NULL 
+             AND t.DELIVERY_TIME IS NOT NULL 
+             AND t.DELIVERY_TIME >= t.PAYMENTDATE_D
+             AND (t.DELIVERY_TIME - t.PAYMENTDATE_D) * 24 > 48 
+             AND (t.DELIVERY_TIME - t.PAYMENTDATE_D) * 24 <= 72 THEN 1 END) as ACTUAL_72H_COUNT,
         
-        COUNT(CASE WHEN t.DIS_STATUS IN ('93', '95') 
-                   AND t.PAYMENTDATE_D IS NOT NULL 
-                   AND t.DELIVERY_TIME IS NOT NULL 
-                   AND t.DELIVERY_TIME >= t.PAYMENTDATE_D
-                   AND (t.DELIVERY_TIME - t.PAYMENTDATE_D) * 24 > 72 THEN 1 END) as ACTUAL_OVER72H_COUNT,
+        COUNT(CASE WHEN t.PAYMENTDATE_D IS NOT NULL 
+             AND t.DELIVERY_TIME IS NOT NULL 
+             AND t.DELIVERY_TIME >= t.PAYMENTDATE_D
+             AND (t.DELIVERY_TIME - t.PAYMENTDATE_D) * 24 > 72 THEN 1 END) as ACTUAL_OVER72H_COUNT,
         
-        AVG(CASE WHEN t.DIS_STATUS IN ('93', '95') 
-                 AND t.PAYMENTDATE_D IS NOT NULL 
-                 AND t.DELIVERY_TIME IS NOT NULL 
-                 AND t.DELIVERY_TIME >= t.PAYMENTDATE_D
-                 AND (t.DELIVERY_TIME - t.PAYMENTDATE_D) * 24 <= 1000 
-                 THEN (t.DELIVERY_TIME - t.PAYMENTDATE_D) * 24 END) as AVG_C2D_TIME
+        AVG(CASE WHEN t.PAYMENTDATE_D IS NOT NULL 
+           AND t.DELIVERY_TIME IS NOT NULL 
+           AND t.DELIVERY_TIME >= t.PAYMENTDATE_D
+           AND (t.DELIVERY_TIME - t.PAYMENTDATE_D) * 24 <= 1000 
+           THEN (t.DELIVERY_TIME - t.PAYMENTDATE_D) * 24 END) as AVG_C2D_TIME
         
       FROM APP_CMS.TSK_LIST_TASK t
+      LEFT JOIN APP_CMS.VIEW_TSK_LIST_TASK v ON t.TSK_MERGE_NO = v.TSK_MERGE_NO
       LEFT JOIN APP_CMS.BAS_AREA ba ON t.DEST_CITY = ba.AREA_ID
       LEFT JOIN APP_CMS.BAS_COMPANY bc ON t.CUSTOMERNO = bc.COMPANY_SYSID
       ${whereClause}
@@ -1034,7 +1024,7 @@ async function analyzeC2DPerformance(options = {}) {
         console.log('📋 第一条数据解析结果:');
         console.log('   🎯 Plan相关（所有订单）:');
         console.log(`      - planTotalOrders: ${planTotalOrders}`);
-        console.log('   📦 C2D Actual相关（已签收订单 DIS_STATUS=93或95）:');
+        console.log('   📦 C2D Actual相关（基于付款+签收时间，不限制订单状态）:');
         console.log(`      - totalOrders: ${totalOrders}`);
         console.log(`      - actual24h: ${actual24h}`);
         console.log(`      - actual48h: ${actual48h}`);
@@ -1048,7 +1038,7 @@ async function analyzeC2DPerformance(options = {}) {
         console.log(`      - areaId: ${areaId}`);
       }
 
-      // Actual统计（已签收订单的实际表现）
+      // Actual统计（基于付款+签收时间的实际表现）
       actualStats.total += totalOrders;
       actualStats.within24h += actual24h;
       actualStats.within48h += actual48h;

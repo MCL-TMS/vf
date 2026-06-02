@@ -10,11 +10,14 @@ import { OrderKPIData } from "../../data/orderData";
 import { FilteredData } from "../../utils/dataFilter";
 import { getUnifiedExceptionData } from "../../utils/exceptionDataCalculator";
 import { DataLoadingState } from "../DataLoadingState";
+import { ApiService } from "../../services/apiService";
+import { ShippedTransferDialog, type TransferCarrierSummary } from "../ShippedTransferDialog";
 
 interface OverviewDashboardProps {
   filteredData: FilteredData;
   selectedBrand: string | string[] | null;
   selectedPlatform: string | null;
+  selectedSelfFlag?: string | null;
   onKPIDetailClick: (kpi: OrderKPIData) => void; // 修改为接受OrderKPIData对象
   onExceptionClick?: (exceptionType: string, brand?: string, courier?: string) => void;
   useRealData?: boolean;
@@ -22,19 +25,72 @@ interface OverviewDashboardProps {
   dateRange?: { from: string; to: string };
   rawApiData?: any; // 新增：API原始数据，用于获取异常统计
   unifiedCourierData?: any; // 新增：统一的快递商数据
+  userBrands?: string[];
 }
 
 export function OverviewDashboard({ 
   filteredData, 
   selectedBrand, 
   selectedPlatform, 
+  selectedSelfFlag,
   onKPIDetailClick, 
   onExceptionClick,
   useRealData = false,
   apiLoading = false,
   dateRange,
-  rawApiData
+  rawApiData,
+  userBrands
 }: OverviewDashboardProps) {
+  const [transferDialogOpen, setTransferDialogOpen] = React.useState(false);
+  const [transferLoading, setTransferLoading] = React.useState(false);
+  const [transferError, setTransferError] = React.useState<string | null>(null);
+  const [transferSummary, setTransferSummary] = React.useState<TransferCarrierSummary[]>([]);
+  const [transferTotalOrders, setTransferTotalOrders] = React.useState(0);
+
+  const transferBrandCodes = new Set([
+    "18405",
+    "18405-1",
+    "18405-2",
+    "18405-3",
+    "18405-4",
+    "18405-5"
+  ]);
+
+  const selectedBrandList = React.useMemo(() => {
+    if (!selectedBrand || selectedBrand === "all") {
+      return null;
+    }
+    return Array.isArray(selectedBrand) ? selectedBrand : [selectedBrand];
+  }, [selectedBrand]);
+
+  const effectiveBrandList = selectedBrandList || (userBrands && userBrands.length > 0 ? userBrands : null);
+  const canShowTransferDig = useRealData && (!effectiveBrandList || effectiveBrandList.some((brand) => transferBrandCodes.has(brand)));
+
+  const courierOrderData = React.useMemo(() => {
+    if (!filteredData?.courierData || !Array.isArray(filteredData.courierData)) {
+      return [];
+    }
+
+    return filteredData.courierData.map((courier, index) => {
+      const orderCount = courier.orderCount || 0;
+      const percentage = (courier.percentage !== null && courier.percentage !== undefined) ?
+        courier.percentage.toFixed(1) : '0.0';
+
+      return {
+        name: courier.name,
+        orderCount: orderCount,
+        percentage: percentage,
+        color: index === 0 ? 'var(--chart-1)' :
+               index === 1 ? 'var(--chart-4)' :
+               index === 2 ? 'var(--chart-2)' :
+               index === 3 ? 'var(--chart-3)' : 'var(--chart-5)',
+        deliveryRate: courier.deliveryRate !== null ? courier.deliveryRate : 'null',
+        pickupRate: courier.pickupRate !== null ? courier.pickupRate : 'null',
+        shippingRate: courier.shippingRate !== null ? courier.shippingRate : 'null'
+      };
+    });
+  }, [filteredData?.courierData]);
+
   // 添加安全检查，防止 filteredData 为 undefined
   if (!filteredData) {
     return (
@@ -234,33 +290,6 @@ export function OverviewDashboard({
     }, // maersk-blue: 蓝色
   ];
 
-  // 计算快递公司订单量占比 - 使用API真实数据，基于CARRIERID字段统计
-  const courierOrderData = React.useMemo(() => {
-    if (!filteredData.courierData || !Array.isArray(filteredData.courierData)) {
-      return [];
-    }
-
-    return filteredData.courierData.map((courier, index) => {
-      // 使用API返回的真实数据，不再使用硬编码比例
-      const orderCount = courier.orderCount || 0;
-      const percentage = (courier.percentage !== null && courier.percentage !== undefined) ? 
-        courier.percentage.toFixed(1) : '0.0';
-      
-      return {
-        name: courier.name,
-        orderCount: orderCount,
-        percentage: percentage,
-        color: index === 0 ? 'var(--chart-1)' : 
-               index === 1 ? 'var(--chart-4)' : 
-               index === 2 ? 'var(--chart-2)' :
-               index === 3 ? 'var(--chart-3)' : 'var(--chart-5)', // 支持更多快递商颜色
-        deliveryRate: courier.deliveryRate !== null ? courier.deliveryRate : 'null',
-        pickupRate: courier.pickupRate !== null ? courier.pickupRate : 'null',
-        shippingRate: courier.shippingRate !== null ? courier.shippingRate : 'null'
-      };
-    });
-  }, [filteredData.courierData]);
-
   // 将KPI数据按行分组 - 添加安全检查
   const kpiRows = [
     filteredData.kpiData?.slice(0, 3) || [], // 第一行：已揽收、已发运、已签收
@@ -272,6 +301,38 @@ export function OverviewDashboard({
   const handleKPIClick = (kpi: OrderKPIData) => {
     if (onKPIDetailClick) {
       onKPIDetailClick(kpi); // 传递完整的KPI对象
+    }
+  };
+
+  const handleTransferDig = async () => {
+    setTransferDialogOpen(true);
+    setTransferSummary([]);
+    setTransferTotalOrders(0);
+    setTransferError(null);
+
+    if (!dateRange?.from || !dateRange?.to) {
+      setTransferError("缺少日期范围，无法查询转运情况");
+      return;
+    }
+
+    setTransferLoading(true);
+    try {
+      const response = await ApiService.getShippedTransferStatus({
+        dateRange,
+        brand: selectedBrand,
+        platform: selectedPlatform,
+        selfFlag: selectedSelfFlag,
+        userBrands
+      });
+
+      const summaryByCarrier = response?.data?.summaryByCarrier || [];
+      const totalOrders = response?.data?.summary?.totalOrders || 0;
+      setTransferSummary(summaryByCarrier);
+      setTransferTotalOrders(totalOrders);
+    } catch (error: any) {
+      setTransferError(error?.message || "转运挖掘数据获取失败");
+    } finally {
+      setTransferLoading(false);
     }
   };
 
@@ -367,6 +428,9 @@ export function OverviewDashboard({
               key={`row1-${index}`} 
               data={kpi} 
               onDetailClick={handleKPIClick}
+              showDigButton={canShowTransferDig && kpi.label === "已发运"}
+              onDigClick={() => handleTransferDig()}
+              digLabel="挖掘转运"
             />
           ))}
         </div>
@@ -676,6 +740,17 @@ export function OverviewDashboard({
           </CardContent>
         </Card>
       )}
+
+      <ShippedTransferDialog
+        open={transferDialogOpen}
+        onClose={() => setTransferDialogOpen(false)}
+        loading={transferLoading}
+        error={transferError}
+        summaryByCarrier={transferSummary}
+        totalOrders={transferTotalOrders}
+        dateRange={dateRange}
+        selectedBrand={selectedBrand}
+      />
 
     </div>
   );
