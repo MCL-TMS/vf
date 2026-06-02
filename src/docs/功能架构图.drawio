@@ -36,7 +36,7 @@
         </mxCell>
         
         <!-- 右侧：API 服务与业务路由 -->
-        <mxCell id="11" value="后端 API 服务（Node.js + Express）&#xa;提供 REST/JSON 数据接口" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;" vertex="1" parent="1">
+        <mxCell id="11" value="前置应用服务器 (In-front Application Server)&#xa;提供 REST/JSON 数据接口与业务逻辑" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;" vertex="1" parent="1">
           <mxGeometry x="720" y="30" width="420" height="610" as="geometry"/>
         </mxCell>
         <mxCell id="12" value="认证/品牌/平台映射&#xa;获取用户可用品牌范围" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ead1dc;strokeColor=#b85475;fontSize=12;" vertex="1" parent="1">

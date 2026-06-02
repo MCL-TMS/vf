@@ -1198,6 +1198,90 @@ class ApiServiceClass {
     }
   }
 
+  async getShippedTransferStatus(options: APIRequestOptions = {}): Promise<any> {
+    const { dateRange, brand, platform, selfFlag, userBrands, signal } = options;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+    try {
+      const params = new URLSearchParams();
+
+      if (dateRange?.from) {
+        params.append('dateFrom', dateRange.from);
+      }
+      if (dateRange?.to) {
+        params.append('dateTo', dateRange.to);
+      }
+
+      if (brand && brand !== 'all') {
+        if (Array.isArray(brand)) {
+          params.append('brand', brand.join(','));
+          console.log('🏷️ [ApiService.getShippedTransferStatus] 多品牌查询:', brand);
+        } else {
+          const mappedBrand = this.BRAND_MAPPING[brand as keyof typeof this.BRAND_MAPPING] || brand;
+          params.append('brand', mappedBrand);
+        }
+      }
+
+      if (userBrands && Array.isArray(userBrands) && userBrands.length > 0) {
+        params.append('userBrands', userBrands.join(','));
+        console.log('🔐 [ApiService.getShippedTransferStatus] 传递用户品牌权限:', userBrands.join(','));
+      }
+
+      if (platform && platform !== 'all') {
+        params.append('platform', platform);
+      }
+
+      if (selfFlag && selfFlag !== 'all') {
+        params.append('selfFlag', selfFlag);
+      }
+
+      const url = `${this.baseURL}/overview/shipped-transfer${params.toString() ? `?${params.toString()}` : ''}`;
+      console.log('🌐 [ApiService.getShippedTransferStatus] 请求URL:', url);
+
+      const controller = new AbortController();
+      const timeoutMs = 60000;
+      timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+      const response = await this.performanceFetch(url, {
+        method: 'GET',
+        signal: signal || controller.signal,
+        headers: this.getAuthHeaders(),
+      });
+
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+
+      const data = await this.parseApiResponse<any>(response, '转运挖掘数据获取');
+
+      console.log('✅ [ApiService.getShippedTransferStatus] 数据获取成功:', {
+        success: data.success,
+        orderCount: data.data?.orders?.length || 0
+      });
+
+      return data;
+    } catch (error: any) {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+
+      if (error.name === 'AbortError') {
+        throw new Error('转运挖掘请求超时，请稍后重试');
+      }
+
+      if (error instanceof ApiClientError) {
+        throw error;
+      }
+
+      if (error.message.includes('fetch')) {
+        throw new Error('无法连接到API服务器，请确认后端服务是否已启动');
+      }
+
+      console.error('❌ [ApiService.getShippedTransferStatus] 获取转运挖掘数据失败:', error);
+      throw new Error(`获取转运挖掘数据失败: ${error.message}`);
+    }
+  }
+
   // 🔥 新增：获取快递商基础数据
   private async fetchLogisticsCouriers(params: URLSearchParams, signal?: AbortSignal): Promise<any> {
     const url = `${this.baseURL}/logistics/couriers${params.toString() ? `?${params.toString()}` : ''}`;
@@ -2308,6 +2392,7 @@ export const getHealthStatus = () => ApiService.getHealthStatus();
 export const quickHealthCheck = () => ApiService.quickHealthCheck();
 export const getOverviewData = (options?: APIRequestOptions) => ApiService.getOverviewData(options);
 export const getOverviewFlowAnalysis = (options?: APIRequestOptions) => ApiService.getOverviewFlowAnalysis(options);
+export const getShippedTransferStatus = (options?: APIRequestOptions) => ApiService.getShippedTransferStatus(options);
 export const getLogisticsData = (options?: APIRequestOptions) => ApiService.getLogisticsData(options);
 export const getLogisticsBrands = (options?: APIRequestOptions) => ApiService.getLogisticsBrands(options);
 export const getWeightDistribution = (options?: WeightDistributionOptions) => ApiService.getWeightDistribution(options);

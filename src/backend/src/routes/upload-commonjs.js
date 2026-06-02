@@ -1627,7 +1627,7 @@ router.post('/export-timeliness-rawdata', async (req, res) => {
         ${carrierFilter}
         AND v.CARRIERID != 'EMS'
         AND v.DIS_TYPE = '01'
-        AND v.DIS_STATUS IN ('93', '95')  -- ✅ 修复问题1：只导出已签收订单
+        AND v.DIS_STATUS IN ('93', '95', '100')  -- ✅ 修复问题1：只导出已签收订单
       ORDER BY v.WMS_OUTBOUND_TIME DESC
     `;
     

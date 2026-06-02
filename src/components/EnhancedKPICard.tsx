@@ -2,16 +2,25 @@ import { Card, CardContent, CardHeader } from "./ui/card";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
-import { TrendingUp, TrendingDown, AlertTriangle, Info, Code } from "lucide-react";
+import { TrendingUp, TrendingDown, AlertTriangle, Info, Code, Search } from "lucide-react";
 import { OrderKPIData } from "../data/orderData";
 import { formatGrowthRate, analyzeGrowthTrend } from "../utils/apiDataTransformer";
 
 interface EnhancedKPICardProps {
   data: OrderKPIData;
   onDetailClick?: (data: OrderKPIData) => void;
+  onDigClick?: (data: OrderKPIData) => void;
+  showDigButton?: boolean;
+  digLabel?: string;
 }
 
-export function EnhancedKPICard({ data, onDetailClick }: EnhancedKPICardProps) {
+export function EnhancedKPICard({
+  data,
+  onDetailClick,
+  onDigClick,
+  showDigButton = false,
+  digLabel = "挖掘转运"
+}: EnhancedKPICardProps) {
   const { label, value, icon, change, details } = data;
 
   const hasExceptions = details?.exceptions && details.exceptions.length > 0;
@@ -52,6 +61,20 @@ export function EnhancedKPICard({ data, onDetailClick }: EnhancedKPICardProps) {
             <h3 className={`font-medium text-sm ${isNullValue ? 'text-functional-mid-grey' : ''}`}>{label}</h3>
           </div>
           <div className="flex items-center space-x-1">
+            {showDigButton && onDigClick && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 w-6 p-0"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDigClick(data);
+                }}
+                title={digLabel}
+              >
+                <Search className="h-3.5 w-3.5 text-maersk-blue" />
+              </Button>
+            )}
             {/* 异常监控 - 优先显示 */}
             {hasExceptions && (
               <Popover>

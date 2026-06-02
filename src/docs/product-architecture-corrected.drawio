@@ -73,23 +73,23 @@
         <mxCell id="db" value="Oracle Database" style="shape=cylinder;whiteSpace=wrap;html=1;boundedLbl=1;size=16;fillColor=#f4cccc;strokeColor=#b85450;fontSize=22;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
           <mxGeometry x="100" y="880" width="380" height="190" as="geometry" />
         </mxCell>
-        <mxCell id="api" value="Main API&#xa;Auth | Overview | Logistics | Regional | Trends | Exception Analysis | Data Export" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce5cd;strokeColor=#d79b00;fontSize=20;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+        <mxCell id="api" value="In-front Application Server&#xa;Auth | Overview | Logistics | Regional | Trends | Exception Analysis | Data Export" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce5cd;strokeColor=#d79b00;fontSize=20;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
           <mxGeometry x="620" y="860" width="1260" height="230" as="geometry" />
         </mxCell>
 
-        <mxCell id="e1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#d79b00;" edge="1" parent="1" source="customer" target="m3pl">
+        <mxCell id="e1" value="HTTPS / Web UI Interaction" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#d79b00;fontSize=14;align=center;" edge="1" parent="1" source="customer" target="m3pl">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="e2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#b85450;" edge="1" parent="1" source="internal" target="m4pl">
+        <mxCell id="e2" value="HTTPS / Web UI Interaction" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#b85450;fontSize=14;align=center;" edge="1" parent="1" source="internal" target="m4pl">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="e3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#b85450;" edge="1" parent="1" source="m3pl" target="api">
+        <mxCell id="e3" value="REST API / JWT" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#b85450;fontSize=14;align=center;verticalAlign=bottom;" edge="1" parent="1" source="m3pl" target="api">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="e4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#b85450;" edge="1" parent="1" source="m4pl" target="api">
+        <mxCell id="e4" value="REST API / JWT" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#b85450;fontSize=14;align=center;verticalAlign=bottom;" edge="1" parent="1" source="m4pl" target="api">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="e5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#b85450;" edge="1" parent="1" source="api" target="db">
+        <mxCell id="e5" value="SQL / Oracle Net" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeWidth=2;strokeColor=#b85450;fontSize=14;align=center;verticalAlign=bottom;" edge="1" parent="1" source="api" target="db">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
 

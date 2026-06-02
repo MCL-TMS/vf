@@ -12,7 +12,7 @@ const express = require('express');
 const router = express.Router();
 const { getConnection, executeQuery, DateHelper } = require('../config/database-api');
 const { getBrandMapping } = require('../utils/brandMapping'); // ✅ 导入动态品牌映射
-const { buildScopedBrandFilter, getAuthorizedCustomerNos } = require('../utils/brandScope');
+const { buildScopedBrandFilter, getAuthorizedCustomerNos, VF_BRAND_CODES, normalizeBrandValues } = require('../utils/brandScope');
 const { ERROR_CODES, sendError, sendRouteError } = require('../utils/apiError');
 
 // 高频看板请求短缓存，降低大数据量场景下重复聚合压力
@@ -284,11 +284,11 @@ router.get('/kpi', async (req, res) => {
         LEFT JOIN APP_CMS.BAS_CODES bs ON t.DIS_STATUS = bs.CODE AND bs.CODEID = 'BL_STATUS'
         WHERE t.WMS_OUTBOUND_TIME IS NOT NULL
           AND (
-            (t.WMS_OUTBOUND_TIME >= TO_DATE(:dateFrom, 'YYYY-MM-DD') AND t.WMS_OUTBOUND_TIME < TO_DATE(:dateTo, 'YYYY-MM-DD') + 1)
+            (to_char(t.WMS_OUTBOUND_TIME,'yyyy-mm-dd') >= :dateFrom AND to_char(t.WMS_OUTBOUND_TIME,'yyyy-mm-dd') <= :dateTo)
             OR
-            (t.WMS_OUTBOUND_TIME >= TO_DATE(:lastMonthFrom, 'YYYY-MM-DD') AND t.WMS_OUTBOUND_TIME < TO_DATE(:lastMonthTo, 'YYYY-MM-DD') + 1)
+            (to_char(t.WMS_OUTBOUND_TIME,'yyyy-mm-dd') >= :lastMonthFrom AND to_char(t.WMS_OUTBOUND_TIME,'yyyy-mm-dd') <= :lastMonthTo)
             OR
-            (t.WMS_OUTBOUND_TIME >= TO_DATE(:lastYearFrom, 'YYYY-MM-DD') AND t.WMS_OUTBOUND_TIME < TO_DATE(:lastYearTo, 'YYYY-MM-DD') + 1)
+            (to_char(t.WMS_OUTBOUND_TIME,'yyyy-mm-dd') >= :lastYearFrom AND to_char(t.WMS_OUTBOUND_TIME,'yyyy-mm-dd') <= :lastYearTo)
           )
           AND t.TSK_MERGE_NO IS NOT NULL
           AND t.CARRIERID IS NOT NULL
@@ -1323,6 +1323,157 @@ router.get('/kpi', async (req, res) => {
         await connection.close();
       } catch (closeError) {
         console.error('❌ [KPI查询] 关闭数据库连接失败:', closeError);
+      }
+    }
+  }
+});
+
+/**
+ * 获取已发运订单转运挖掘数据
+ * GET /api/overview/shipped-transfer
+ */
+router.get('/shipped-transfer', async (req, res) => {
+  let connection;
+
+  try {
+    const { dateFrom, dateTo, brand, platform, selfFlag } = req.query;
+    const authorizedCustomerNos = getAuthorizedCustomerNos(req.user);
+
+    console.log('🔄 [Shipped Transfer] 收到请求参数:', { dateFrom, dateTo, brand, platform, selfFlag, authorizedCustomerNos });
+
+    if (!dateFrom || !dateTo) {
+      return sendError(res, req, {
+        status: 400,
+        code: ERROR_CODES.VALIDATION_ERROR,
+        error: '缺少必需的日期参数',
+        details: { requiredFields: ['dateFrom', 'dateTo'] }
+      });
+    }
+
+    if (!DateHelper.isValidDateString(dateFrom) || !DateHelper.isValidDateString(dateTo)) {
+      return sendError(res, req, {
+        status: 400,
+        code: ERROR_CODES.VALIDATION_ERROR,
+        error: '日期格式无效',
+        details: { expectedFormat: 'YYYY-MM-DD' }
+      });
+    }
+
+    const requestedBrands = normalizeBrandValues(brand);
+    let effectiveBrands = requestedBrands;
+
+    if (!requestedBrands) {
+      effectiveBrands = VF_BRAND_CODES;
+    } else {
+      const filtered = requestedBrands.filter((item) => VF_BRAND_CODES.includes(item));
+      if (filtered.length === 0) {
+        return res.json({
+          success: true,
+          data: { orders: [], summary: { totalOrders: 0 } },
+          timestamp: new Date().toISOString(),
+          filters: { dateFrom, dateTo, brand: brand || 'all', platform: platform || 'all' }
+        });
+      }
+      effectiveBrands = filtered;
+    }
+
+    connection = await getConnection();
+
+    const queryParams = { dateFrom, dateTo };
+    const { brandFilter, platformFilter, selfFlagFilter } = await QueryUtils.buildFiltersAsync(
+      queryParams,
+      effectiveBrands,
+      platform,
+      selfFlag,
+      authorizedCustomerNos
+    );
+
+    console.log('🔎 [Shipped Transfer] 过滤条件:', {
+      effectiveBrands,
+      brandFilter: brandFilter || '(无)',
+      platformFilter: platformFilter || '(无)',
+      selfFlagFilter: selfFlagFilter || '(无)',
+      queryParams
+    });
+
+    const transferQuery = `
+      WITH base_orders AS (
+        SELECT
+          t.TSK_MERGE_NO,
+          t.CARRIERID
+        FROM APP_CMS.TSK_LIST_TASK t
+        LEFT JOIN APP_CMS.VIEW_TSK_LIST_TASK v ON t.TSK_MERGE_NO = v.TSK_MERGE_NO
+        ${QueryUtils.BASE_WHERE_CONDITIONS}
+          AND t.DIS_STATUS = '70'
+          ${brandFilter}
+          ${platformFilter}
+          ${selfFlagFilter}
+      ),
+      matched_orders AS (
+        SELECT
+          b.CARRIERID AS carrier_id
+        FROM base_orders b
+        WHERE EXISTS (
+          SELECT 1
+          FROM APP_CMS.VIEW_TSK_TRACKING_LOG l
+          WHERE l.TSK_MERGE_NO = b.TSK_MERGE_NO
+            AND l.TO_SO_STATUS = '70'
+            AND (
+              (COALESCE(l.CARRIERID, b.CARRIERID) = 'SF'
+                AND l.TRACKING_DESCR LIKE '%苏州市%'
+                AND l.TRACKING_DESCR LIKE '%快件在【苏州昆山大客店】完成分拣%'
+                AND l.TRACKING_DESCR LIKE '%准备发往下一站%'
+              )
+              OR
+              (COALESCE(l.CARRIERID, b.CARRIERID) = 'ZTO'
+                AND l.TRACKING_DESCR LIKE '%苏州市%'
+                AND l.TRACKING_DESCR LIKE '%快件离开【苏州昆山】已发往【昆常转运中心】%'
+              )
+            )
+        )
+      )
+      SELECT
+        carrier_id,
+        COUNT(*) AS order_count
+      FROM matched_orders
+      GROUP BY carrier_id
+      ORDER BY order_count DESC
+    `;
+
+    const transferResult = await connection.execute(transferQuery, queryParams);
+    const summaryByCarrier = transferResult.rows.map(row => ({
+      carrierId: row[0],
+      orderCount: row[1] || 0
+    }));
+    const totalOrders = summaryByCarrier.reduce((sum, item) => sum + (item.orderCount || 0), 0);
+
+    const response = {
+      success: true,
+      data: {
+        summaryByCarrier,
+        summary: {
+          totalOrders
+        }
+      },
+      timestamp: new Date().toISOString(),
+      filters: {
+        dateFrom: dateFrom,
+        dateTo: dateTo,
+        brand: brand || 'all',
+        platform: platform || 'all'
+      }
+    };
+
+    res.json(response);
+  } catch (error) {
+    console.error('❌ [Shipped Transfer] 查询失败:', error);
+    return sendRouteError(res, req, error, { fallbackError: '转运挖掘数据查询失败' });
+  } finally {
+    if (connection) {
+      try {
+        await connection.close();
+      } catch (closeError) {
+        console.error('❌ [Shipped Transfer] 关闭数据库连接失败:', closeError);
       }
     }
   }
