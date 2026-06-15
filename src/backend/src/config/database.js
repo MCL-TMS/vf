@@ -3,20 +3,28 @@ const dotenv = require('dotenv');
 
 dotenv.config();
 
+function parseNumberEnv(value, fallback) {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
 // Oracle数据库连接配置
 const dbConfig = {
   user: process.env.ORACLE_USER,
   password: process.env.ORACLE_PASSWORD,
   connectString: process.env.ORACLE_CONNECT_STRING,
-  poolMin: parseInt(process.env.ORACLE_POOL_MIN) || 2,
-  poolMax: parseInt(process.env.ORACLE_POOL_MAX) || 10,
-  poolIncrement: parseInt(process.env.ORACLE_POOL_INCREMENT) || 2,
-  poolTimeout: parseInt(process.env.ORACLE_POOL_TIMEOUT) || 60,
+  poolMin: parseNumberEnv(process.env.ORACLE_POOL_MIN, 2),
+  poolMax: parseNumberEnv(process.env.ORACLE_POOL_MAX, 30),
+  poolIncrement: parseNumberEnv(process.env.ORACLE_POOL_INCREMENT, 2),
+  poolTimeout: parseNumberEnv(process.env.ORACLE_POOL_TIMEOUT, 60),
+  queueTimeout: parseNumberEnv(process.env.ORACLE_QUEUE_TIMEOUT, 120000),
+  queueMax: parseNumberEnv(process.env.ORACLE_QUEUE_MAX, 0),
   stmtCacheSize: 23,
   // 设置获取结果为对象格式而不是数组
   outFormat: oracledb.OUT_FORMAT_OBJECT,
   // 启用自动提交（根据需要调整）
-  autoCommit: false
+  autoCommit: false,
+  _enableStats: true
 };
 
 let pool = null;
@@ -55,6 +63,13 @@ async function getConnection() {
     
     return connection;
   } catch (error) {
+    if (error && error.code === 'NJS-040' && pool && typeof pool.getStatistics === 'function') {
+      try {
+        console.error('📉 连接池统计(NJS-040):', pool.getStatistics());
+      } catch (statsError) {
+        console.error('⚠️ 获取连接池统计失败:', statsError.message);
+      }
+    }
     console.error('❌ 获取数据库连接失败:', error);
     throw error;
   }

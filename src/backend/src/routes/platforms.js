@@ -7,6 +7,85 @@ const express = require('express');
 const router = express.Router();
 const { executeQuery } = require('../config/database-api');
 
+function normalizeBrandArray(brand) {
+  if (!brand || brand === 'all') {
+    return [];
+  }
+
+  if (Array.isArray(brand)) {
+    return brand.map((item) => String(item || '').trim()).filter(Boolean);
+  }
+
+  return String(brand)
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function buildPlatformFilters(queryParams) {
+  const { startDate, endDate, selfFlag, brand } = queryParams;
+  const whereConditions = [
+    'PLATFORM_CLASS IS NOT NULL'
+  ];
+  const bindParams = {};
+
+  if (startDate) {
+    whereConditions.push("WMS_OUTBOUND_TIME >= TO_DATE(:startDate, 'YYYY-MM-DD HH24:MI:SS')");
+    bindParams.startDate = `${startDate} 00:00:00`;
+  }
+
+  if (endDate) {
+    whereConditions.push("WMS_OUTBOUND_TIME <= TO_DATE(:endDate, 'YYYY-MM-DD HH24:MI:SS')");
+    bindParams.endDate = `${endDate} 23:59:59`;
+  }
+
+  if (selfFlag && selfFlag !== 'all') {
+    whereConditions.push('SELF_FLAG = :selfFlag');
+    bindParams.selfFlag = selfFlag;
+  }
+
+  const brandArray = normalizeBrandArray(brand);
+  if (brandArray.length > 0) {
+    const placeholders = brandArray.map((_, i) => `:brand${i}`).join(', ');
+    // 品牌筛选直接使用 VIEW_TSK_LIST_TASK 的 CUSTOMERNO，避免额外表关联。
+    whereConditions.push(`CUSTOMERNO IN (${placeholders})`);
+    brandArray.forEach((brandCode, i) => {
+      bindParams[`brand${i}`] = brandCode;
+    });
+  }
+
+  return { whereConditions, bindParams };
+}
+
+function mapPlatformRows(rows) {
+  return rows
+    .map((row) => {
+      // 兼容对象格式和数组格式，处理Oracle键名大写问题
+      if (!row) return null;
+      if (Array.isArray(row)) return row[0];
+      
+      // 优先从 platformName 属性获取（因为 SQL 中使用了别名 "platformName"）
+      const name = row.platformName || row.PLATFORMNAME || row.PLATFORM_CLASS || row.PLATFORM_NAME || 
+                   row.PLATFORM_CODE || row.PLATFORMCODE || Object.values(row)[0];
+      
+      // 优先从 platformCode 属性获取
+      const code = row.platformCode || row.PLATFORMCODE || row.platform_code || row.PLATFORM_CODE || name;
+      
+      return { name, code };
+    })
+    .filter(item => item && item.name)
+    .map((item) => {
+      const value = String(item.name || '').trim();
+      const code = String(item.code || value).trim();
+      return {
+        platformCode: code,
+        platformName: value,
+        displayName: value
+      };
+    })
+    .filter(p => p.platformCode);
+}
+
 /**
  * GET /api/platform/mappings
  * 获取平台代码和平台名称的映射关系
@@ -20,86 +99,35 @@ router.get('/mappings', async (req, res) => {
   console.log('📊 筛选条件:', { startDate, endDate, selfFlag, brand });
   
   try {
-    let whereConditions = [];
-    let bindParams = {};
-
-    whereConditions.push("PLATFORM_CLASS IS NOT NULL");
-    whereConditions.push("PLATFORM_CLASS <> ' '");
-
-    // 日期范围处理（可选）
-    if (startDate) {
-      whereConditions.push("WMS_OUTBOUND_TIME >= TO_DATE(:startDate, 'YYYY-MM-DD HH24:MI:SS')");
-      bindParams.startDate = `${startDate} 00:00:00`;
-    }
-    if (endDate) {
-      whereConditions.push("WMS_OUTBOUND_TIME <= TO_DATE(:endDate, 'YYYY-MM-DD HH24:MI:SS')");
-      bindParams.endDate = `${endDate} 23:59:59`;
-    }
-
-    // 自管筛选处理（可选）
-    if (selfFlag && selfFlag !== 'all') {
-      whereConditions.push("SELF_FLAG = :selfFlag");
-      bindParams.selfFlag = selfFlag;
-    }
-
-    // 品牌限制（可选）
-    if (brand && brand !== 'all') {
-        const brandArray = Array.isArray(brand) ? brand : brand.split(',').map(b => b.trim()).filter(Boolean);
-      if (brandArray.length > 0) {
-        const placeholders = brandArray.map((_, i) => `:brand${i}`).join(', ');
-        whereConditions.push(`COMPANY_NAME IN (SELECT COMPANY_ABNAME FROM APP_CMS.BAS_COMPANY WHERE COMPANY_SYSID IN (${placeholders}))`);
-        brandArray.forEach((b, i) => {
-          bindParams[`brand${i}`] = b;
-        });
-      }
-    }
+    const { whereConditions, bindParams } = buildPlatformFilters({ startDate, endDate, selfFlag, brand });
 
     const whereClause = whereConditions.length > 0 
       ? 'WHERE ' + whereConditions.join(' AND ') 
       : '';
 
-    // 使用 CTE 和 EXISTS 断路查询来避免全表/全视图扫描，极大提升页面筛选下拉加载速度
-    const P_CTE = `
-      WITH P AS (
-        SELECT '天猫' AS P_CLASS FROM DUAL UNION ALL
-        SELECT '抖音' AS P_CLASS FROM DUAL UNION ALL
-        SELECT '京东' AS P_CLASS FROM DUAL UNION ALL
-        SELECT '拼多多' AS P_CLASS FROM DUAL UNION ALL
-        SELECT '官网/小程序' AS P_CLASS FROM DUAL UNION ALL
-        SELECT 'O2O' AS P_CLASS FROM DUAL UNION ALL
-        SELECT '小红书' AS P_CLASS FROM DUAL UNION ALL
-        SELECT '微信' AS P_CLASS FROM DUAL
-      )
-    `;
-
-    const extraAnd = whereConditions.length > 0 ? ' AND ' : ' WHERE ';
-
+    // 使用引号包裹别名以保持大小写，或者在 mapPlatformRows 中处理
     const query = `
-      ${P_CTE}
-      SELECT 
-        P.P_CLASS AS platformName
-      FROM P
-      WHERE EXISTS (
-        SELECT 1 
-        FROM APP_CMS.VIEW_TSK_LIST_TASK
-        ${whereClause} ${extraAnd} PLATFORM_CLASS = P.P_CLASS
-      )
-      ORDER BY P.P_CLASS
+      SELECT DISTINCT TRIM(PLATFORM_CLASS) AS "platformName",
+                      TRIM(PLATFORM_CLASS) AS "platformCode"
+      FROM APP_CMS.VIEW_TSK_LIST_TASK
+      ${whereClause}
+      ORDER BY "platformName"
     `;
 
     console.log('📊 执行SQL查询:', { query: query.replace(/\n\s+/g, ' ').substring(0, 200) + '...', bindParams });
 
     const result = await executeQuery(query, bindParams);
+
+    console.log('🔍 /mappings 数据库原始结果:', {
+      hasResult: !!result,
+      rowsLength: result && Array.isArray(result.rows) ? result.rows.length : 'N/A',
+      metaData: result ? result.metaData : 'none',
+      firstRowLine: result && result.rows && result.rows.length > 0 ? JSON.stringify(result.rows[0]) : 'empty'
+    });
+
     const rows = Array.isArray(result.rows) ? result.rows : [];
 
-    const platformMapping = rows.map((row) => {
-      const value = row.PLATFORMNAME || row.platformName || row.PLATFORM_CLASS || row.platform_class || row[0];
-      return {
-        platformCode: value,
-        platformName: value,
-        displayName: value
-      };
-    });
+    const platformMapping = mapPlatformRows(rows);
 
 
     console.log('✅ 返回 ' + platformMapping.length + ' 个有订单的平台:', platformMapping.slice(0, 5).map(p => `${p.platformName}`).join(", "));
@@ -127,65 +155,17 @@ router.get('/available', async (req, res) => {
   const { startDate, endDate, selfFlag, brand } = req.query;
   console.log('📊 筛选条件:', { startDate, endDate, selfFlag, brand });
   try {
-    let whereConditions = [];
-    let bindParams = {};
-
-    whereConditions.push("PLATFORM_CLASS IS NOT NULL");
-    whereConditions.push("PLATFORM_CLASS <> ' '");
-
-    if (startDate) {
-      whereConditions.push("WMS_OUTBOUND_TIME >= TO_DATE(:startDate, 'YYYY-MM-DD HH24:MI:SS')");
-      bindParams.startDate = `${startDate} 00:00:00`;
-    }
-    if (endDate) {
-      whereConditions.push("WMS_OUTBOUND_TIME <= TO_DATE(:endDate, 'YYYY-MM-DD HH24:MI:SS')");
-      bindParams.endDate = `${endDate} 23:59:59`;
-    }
-    if (selfFlag && selfFlag !== 'all') {
-      whereConditions.push("SELF_FLAG = :selfFlag");
-      bindParams.selfFlag = selfFlag;
-    }
-    if (brand && brand !== 'all') {
-      const brandArray = Array.isArray(brand) ? brand : brand.split(',').map(b => b.trim()).filter(Boolean);
-      if (brandArray.length > 0) {
-        const placeholders = brandArray.map((_, i) => `:brand${i}`).join(', ');
-        whereConditions.push(`COMPANY_NAME IN (SELECT COMPANY_ABNAME FROM APP_CMS.BAS_COMPANY WHERE COMPANY_SYSID IN (${placeholders}))`);
-        brandArray.forEach((b, i) => {
-          bindParams[`brand${i}`] = b;
-        });
-      }
-    }
+    const { whereConditions, bindParams } = buildPlatformFilters({ startDate, endDate, selfFlag, brand });
 
     const whereClause = whereConditions.length > 0 
       ? 'WHERE ' + whereConditions.join(' AND ') 
       : '';
 
-    const P_CTE = `
-      WITH P AS (
-        SELECT '天猫' AS P_CLASS FROM DUAL UNION ALL
-        SELECT '抖音' AS P_CLASS FROM DUAL UNION ALL
-        SELECT '京东' AS P_CLASS FROM DUAL UNION ALL
-        SELECT '拼多多' AS P_CLASS FROM DUAL UNION ALL
-        SELECT '官网/小程序' AS P_CLASS FROM DUAL UNION ALL
-        SELECT 'O2O' AS P_CLASS FROM DUAL UNION ALL
-        SELECT '小红书' AS P_CLASS FROM DUAL UNION ALL
-        SELECT '微信' AS P_CLASS FROM DUAL
-      )
-    `;
-
-    const extraAnd = whereConditions.length > 0 ? ' AND ' : ' WHERE ';
-
     const query = `
-      ${P_CTE}
-      SELECT 
-        P.P_CLASS AS platformName
-      FROM P
-      WHERE EXISTS (
-        SELECT 1 
-        FROM APP_CMS.VIEW_TSK_LIST_TASK
-        ${whereClause} ${extraAnd} PLATFORM_CLASS = P.P_CLASS
-      )
-      ORDER BY P.P_CLASS
+      SELECT DISTINCT TRIM(PLATFORM_CLASS) AS "platformName"
+      FROM APP_CMS.VIEW_TSK_LIST_TASK
+      ${whereClause}
+      ORDER BY "platformName"
     `;
 
     console.log('📊 执行SQL查询:', { query: query.replace(/\n\s+/g, ' ').substring(0, 200) + '...', bindParams });
@@ -193,14 +173,8 @@ router.get('/available', async (req, res) => {
     const result = await executeQuery(query, bindParams);
     const rows = Array.isArray(result.rows) ? result.rows : [];
 
-    const platformMapping = rows.map((row) => {
-      const value = row.PLATFORMNAME || row.platformName || row.PLATFORM_CLASS || row.platform_class || row[0];
-      return {
-        platformCode: value,
-        platformName: value,
-        displayName: value
-      };
-    });
+    const platformMapping = mapPlatformRows(rows);
+
 
     console.log('✅ 返回 ' + platformMapping.length + ' 个有订单的平台:', platformMapping.slice(0, 5).map(p => `${p.platformName}`).join(", "));
 

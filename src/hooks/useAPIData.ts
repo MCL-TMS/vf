@@ -8,7 +8,7 @@ interface UseAPIDataOptions {
   enabled?: boolean;
   dateRange?: DateRange;
   selectedBrand?: string | string[] | null;
-  selectedPlatform?: string | null;
+  selectedPlatform?: string | string[] | null; // 🔥 修复：支持多选平台
   selectedSelfFlag?: string | null;
   activeMenu?: string;
 }
@@ -132,8 +132,8 @@ export function useAPIData(options: UseAPIDataOptions = {}) {
       return;
     }
     
-    // 如果正在加载中，跳过重复请求
-    if (state.loading && !force) {
+    // 如果正在加载中，仅在“参数完全相同”时跳过，避免筛选变化后被旧请求锁住一直loading。
+    if (state.loading && !force && currentParams === lastFetchParamsRef.current) {
       return;
     }
     

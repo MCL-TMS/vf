@@ -8,6 +8,68 @@ import { getConnection } from '../config/database.js';
 
 const router = express.Router();
 
+function normalizeBrandArray(brand) {
+  if (!brand || brand === 'all') {
+    return [];
+  }
+
+  if (Array.isArray(brand)) {
+    return brand.map((item) => String(item || '').trim()).filter(Boolean);
+  }
+
+  return String(brand)
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function buildPlatformFilters(queryParams) {
+  const { startDate, endDate, selfFlag, brand } = queryParams;
+  const whereConditions = [
+    'PLATFORM_CLASS IS NOT NULL',
+    "TRIM(PLATFORM_CLASS) <> ''"
+  ];
+  const bindParams = {};
+
+  if (startDate) {
+    whereConditions.push("WMS_OUTBOUND_TIME >= TO_DATE(:startDate, 'YYYY-MM-DD HH24:MI:SS')");
+    bindParams.startDate = `${startDate} 00:00:00`;
+  }
+
+  if (endDate) {
+    whereConditions.push("WMS_OUTBOUND_TIME <= TO_DATE(:endDate, 'YYYY-MM-DD HH24:MI:SS')");
+    bindParams.endDate = `${endDate} 23:59:59`;
+  }
+
+  if (selfFlag && selfFlag !== 'all') {
+    whereConditions.push('SELF_FLAG = :selfFlag');
+    bindParams.selfFlag = selfFlag;
+  }
+
+  const brandArray = normalizeBrandArray(brand);
+  if (brandArray.length > 0) {
+    const placeholders = brandArray.map((_, i) => `:brand${i}`).join(', ');
+    whereConditions.push(`CUSTOMERNO IN (${placeholders})`);
+    brandArray.forEach((brandCode, i) => {
+      bindParams[`brand${i}`] = brandCode;
+    });
+  }
+
+  return { whereConditions, bindParams };
+}
+
+function mapPlatformRows(rows = []) {
+  return rows
+    .map((row) => row.PLATFORMNAME || row.platformName || row.PLATFORM_CLASS || row.platform_class || row[0])
+    .map((value) => String(value || '').trim())
+    .filter(Boolean)
+    .map((value) => ({
+      platformCode: value,
+      platformName: value,
+      displayName: value
+    }));
+}
+
 /**
  * GET /api/platform/mappings
  * 获取平台代码和平台名称的映射关系
@@ -24,40 +86,22 @@ router.get('/mappings', async (req, res) => {
     connection = await getConnection();
     console.log('✅ 数据库连接成功');
 
-    // 🔥 修复：移除硬编码的品牌列表
-    // 查询平台映射关系
-    // 从视图中查询所有不同的平台名称（PLATFORM_CLASS已经是最终的平台名称）
+    const { startDate, endDate, selfFlag, brand } = req.query;
+    const { whereConditions, bindParams } = buildPlatformFilters({ startDate, endDate, selfFlag, brand });
+    const whereClause = 'WHERE ' + whereConditions.join(' AND ');
+
     const query = `
-      WITH P AS (
-  SELECT '天猫' AS P_CLASS FROM DUAL UNION ALL
-  SELECT '抖音' AS P_CLASS FROM DUAL UNION ALL
-  SELECT '京东' AS P_CLASS FROM DUAL UNION ALL
-  SELECT '拼多多' AS P_CLASS FROM DUAL UNION ALL
-  SELECT '官网/小程序' AS P_CLASS FROM DUAL UNION ALL
-  SELECT 'O2O' AS P_CLASS FROM DUAL UNION ALL
-  SELECT '小红书' AS P_CLASS FROM DUAL UNION ALL
-  SELECT '微信' AS P_CLASS FROM DUAL
-)
-SELECT P.P_CLASS as platformName
-FROM P
-WHERE EXISTS (
-  SELECT 1 FROM APP_CMS.VIEW_TSK_LIST_TASK
-  WHERE PLATFORM_CLASS = P.P_CLASS
-)
+      SELECT DISTINCT TRIM(PLATFORM_CLASS) AS platformName
+      FROM APP_CMS.VIEW_TSK_LIST_TASK
+      ${whereClause}
+      ORDER BY platformName
     `;
 
     console.log('📊 执行SQL查询...');
 
-    const result = await connection.execute(query);
-    console.log(`✅ 查询成功，返回 ${result.rows.length} 个平台`);
-
-    // 转换为前端友好的格式
-    // platformCode 和 platformName 都使用 PLATFORM_CLASS 的值
-    const platformMapping = result.rows.map(row => ({
-      platformCode: row[0],   // PLATFORM_CLASS
-      platformName: row[0],   // PLATFORM_CLASS
-      displayName: row[0]     // PLATFORM_CLASS
-    }));
+    const result = await connection.execute(query, bindParams);
+    const platformMapping = mapPlatformRows(result.rows || []);
+    console.log(`✅ 查询成功，返回 ${platformMapping.length} 个平台`);
 
     console.log('🏪 平台映射列表:');
     platformMapping.forEach(platform => {
@@ -115,73 +159,21 @@ router.get('/available', async (req, res) => {
   try {
     connection = await getConnection();
     
-    let whereConditions = [];
-    let bindParams = {};
-
-    whereConditions.push("PLATFORM_CLASS IS NOT NULL");
-    whereConditions.push("PLATFORM_CLASS <> ''");
-
-    // 日期范围处理（以出库时间为准）
-    if (startDate) {
-      whereConditions.push("WMS_OUTBOUND_TIME >= TO_DATE(:startDate, 'YYYY-MM-DD HH24:MI:SS')");
-      bindParams.startDate = `${startDate} 00:00:00`;
-    }
-    if (endDate) {
-      whereConditions.push("WMS_OUTBOUND_TIME <= TO_DATE(:endDate, 'YYYY-MM-DD HH24:MI:SS')");
-      bindParams.endDate = `${endDate} 23:59:59`;
-    }
-
-    // 自管筛选处理
-    if (selfFlag && selfFlag !== 'all') {
-      whereConditions.push("SELF_FLAG = :selfFlag");
-      bindParams.selfFlag = selfFlag;
-    }
-
-    // 品牌限制
-    if (brand && brand !== 'all') {
-      const brandArray = brand.split(',').map(b => b.trim()).filter(Boolean);
-      if (brandArray.length > 0) {
-        const placeholders = brandArray.map((_, i) => `:brand${i}`).join(', ');
-        whereConditions.push(`COMPANY_NAME IN (SELECT COMPANY_ABNAME FROM APP_CMS.BAS_COMPANY WHERE COMPANY_SYSID IN (${placeholders}))`);
-        brandArray.forEach((b, i) => {
-          bindParams[`brand${i}`] = b;
-        });
-      }
-    }
-
-    const whereClause = whereConditions.length > 0 
-      ? 'WHERE ' + whereConditions.join(' AND ') 
-      : '';
+    const { whereConditions, bindParams } = buildPlatformFilters({ startDate, endDate, selfFlag, brand });
+    const whereClause = 'WHERE ' + whereConditions.join(' AND ');
 
     const query = `
-        WITH P AS (
-  SELECT '天猫' AS P_CLASS FROM DUAL UNION ALL
-  SELECT '抖音' AS P_CLASS FROM DUAL UNION ALL
-  SELECT '京东' AS P_CLASS FROM DUAL UNION ALL
-  SELECT '拼多多' AS P_CLASS FROM DUAL UNION ALL
-  SELECT '官网/小程序' AS P_CLASS FROM DUAL UNION ALL
-  SELECT 'O2O' AS P_CLASS FROM DUAL UNION ALL
-  SELECT '小红书' AS P_CLASS FROM DUAL UNION ALL
-  SELECT '微信' AS P_CLASS FROM DUAL
-)
-SELECT P.P_CLASS as platformName, 0 as orderCount
-FROM P
-WHERE EXISTS (
-  SELECT 1 FROM APP_CMS.VIEW_TSK_LIST_TASK
-  ${whereClause} ${whereConditions.length > 0 ? 'AND' : 'WHERE'} PLATFORM_CLASS = P.P_CLASS
-)
+      SELECT DISTINCT TRIM(PLATFORM_CLASS) AS platformName
+      FROM APP_CMS.VIEW_TSK_LIST_TASK
+      ${whereClause}
+      ORDER BY platformName
+    `;
 
     const result = await connection.execute(query, bindParams);
-    
-    const platformList = (result.rows || []).map(row => {
-        const code = row.PLATFORMCODE || row.platformCode || row.PLATFORMNAME || row.platformName || row.PLATFORM_CLASS || row.platform_class || row[0];
-        const count = row.ORDERCOUNT || row.orderCount || row[1] || 0;
-        platformCode: code,
-        platformName: code,
-        displayName: code,
-        orderCount: count
-      };
-    });
+    const platformList = mapPlatformRows(result.rows || []).map((item) => ({
+      ...item,
+      orderCount: 0
+    }));
 
     console.log(`✅ 返回 ${platformList.length} 个有订单的平台:`, 
       platformList.slice(0, 5).map(p => `${p.platformName}(${p.orderCount}单)`).join(', '));

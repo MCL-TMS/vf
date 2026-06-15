@@ -1,1 +1,0 @@
-﻿const { executeQuery } = require('./src/backend/src/config/database-api.js'); executeQuery('SELECT table_name FROM all_tables WHERE owner = ''APP_CMS'' AND table_name LIKE ''%PLATFORM%''').then(res => console.log(res.rows)).catch(console.error);

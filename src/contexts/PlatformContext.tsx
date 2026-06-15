@@ -5,6 +5,17 @@
 
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 
+const DEFAULT_PLATFORM_MAPPINGS: PlatformMapping[] = [
+  { platformCode: 'tmall', platformName: '天猫', displayName: '天猫' },
+  { platformCode: 'douyin', platformName: '抖音', displayName: '抖音' },
+  { platformCode: 'jd', platformName: '京东', displayName: '京东' },
+  { platformCode: 'pdd', platformName: '拼多多', displayName: '拼多多' },
+  { platformCode: 'official', platformName: '官网', displayName: '官网' },
+  { platformCode: 'o2o', platformName: 'O2O', displayName: 'O2O' },
+  { platformCode: 'xiaohongshu', platformName: '小红书', displayName: '小红书' },
+  { platformCode: 'wechat', platformName: '微信', displayName: '微信' },
+];
+
 // 平台映射数据类型
 export interface PlatformMapping {
   platformCode: string;    // 平台代码 (如 'tmall', 'douyin')
@@ -43,13 +54,25 @@ interface PlatformProviderProps {
 }
 
 export const PlatformProvider: React.FC<PlatformProviderProps> = ({ children }) => {
-  const [platformMappings, setPlatformMappings] = useState<PlatformMapping[]>([]);
+  const [platformMappings, setPlatformMappings] = useState<PlatformMapping[]>(DEFAULT_PLATFORM_MAPPINGS);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   
   // 映射表（提升查询性能）
-  const [codeToNameMap, setCodeToNameMap] = useState<Record<string, string>>({});
-  const [nameToCodeMap, setNameToCodeMap] = useState<Record<string, string>>({});
+  const [codeToNameMap, setCodeToNameMap] = useState<Record<string, string>>(() => {
+    const map: Record<string, string> = {};
+    DEFAULT_PLATFORM_MAPPINGS.forEach(m => {
+      map[m.platformCode] = m.platformName;
+    });
+    return map;
+  });
+  const [nameToCodeMap, setNameToCodeMap] = useState<Record<string, string>>(() => {
+    const map: Record<string, string> = {};
+    DEFAULT_PLATFORM_MAPPINGS.forEach(m => {
+      map[m.platformName] = m.platformCode;
+    });
+    return map;
+  });
 
   // 🔥 从API获取平台映射
   const fetchPlatformMappings = async () => {
@@ -82,7 +105,28 @@ export const PlatformProvider: React.FC<PlatformProviderProps> = ({ children }) 
         throw new Error('平台映射数据格式错误');
       }
 
-      const mappings: PlatformMapping[] = data.data;
+      const mappings: PlatformMapping[] = (data.data || []).map((item: any) => ({
+        platformCode: item.platformCode || item.platform_code || item.PLATFORMCODE || item.platformName || item.platform_name || item.PLATFORMNAME,
+        platformName: item.platformName || item.platform_name || item.PLATFORMNAME || item.platformCode || item.platform_code || item.PLATFORMCODE,
+        displayName: item.displayName || item.display_name || item.DISPLAYNAME || item.platformName || item.platform_name || item.PLATFORMNAME || item.platformCode || item.platform_code || item.PLATFORMCODE,
+      })).filter((item: PlatformMapping) => !!item.platformCode && !!item.platformName);
+
+      // 接口“成功但空数据”时也需要兜底，避免筛选器只剩“全部平台”。
+      if (mappings.length === 0) {
+        console.warn('⚠️ [PlatformContext] 平台映射接口返回空数据，使用默认平台映射兜底');
+        setPlatformMappings(DEFAULT_PLATFORM_MAPPINGS);
+
+        const codeToName: Record<string, string> = {};
+        const nameToCode: Record<string, string> = {};
+        DEFAULT_PLATFORM_MAPPINGS.forEach(mapping => {
+          codeToName[mapping.platformCode] = mapping.platformName;
+          nameToCode[mapping.platformName] = mapping.platformCode;
+        });
+
+        setCodeToNameMap(codeToName);
+        setNameToCodeMap(nameToCode);
+        return;
+      }
       
       console.log('✅ [PlatformContext] 平台映射加载成功:', mappings);
       
@@ -111,24 +155,13 @@ export const PlatformProvider: React.FC<PlatformProviderProps> = ({ children }) 
       setError(err.message || '加载平台映射失败');
       
       // 🔥 回退到默认平台映射（确保应用可用）
-      const fallbackMappings: PlatformMapping[] = [
-        { platformCode: 'tmall', platformName: '天猫', displayName: '天猫' },
-        { platformCode: 'douyin', platformName: '抖音', displayName: '抖音' },
-        { platformCode: 'jd', platformName: '京东', displayName: '京东' },
-        { platformCode: 'pdd', platformName: '拼多多', displayName: '拼多多' },
-        { platformCode: 'official', platformName: '官网', displayName: '官网' },
-        { platformCode: 'o2o', platformName: 'O2O', displayName: 'O2O' },
-        { platformCode: 'xiaohongshu', platformName: '小红书', displayName: '小红书' },
-        { platformCode: 'wechat', platformName: '微信', displayName: '微信' },
-      ];
-      
       console.warn('⚠️ [PlatformContext] 使用回退平台映射');
-      setPlatformMappings(fallbackMappings);
+      setPlatformMappings(DEFAULT_PLATFORM_MAPPINGS);
       
       const codeToName: Record<string, string> = {};
       const nameToCode: Record<string, string> = {};
       
-      fallbackMappings.forEach(mapping => {
+      DEFAULT_PLATFORM_MAPPINGS.forEach(mapping => {
         codeToName[mapping.platformCode] = mapping.platformName;
         nameToCode[mapping.platformName] = mapping.platformCode;
       });

@@ -19,10 +19,10 @@ import { toast } from 'sonner'; // 🔥 导入toast提示
 interface TopToolbarProps {
   onDateRangeChange: (dateRange: { from: string; to: string }) => void;
   onBrandChange: (brand: string | string[]) => void;
-  onPlatformChange?: (platform: string) => void;
+  onPlatformChange?: (platform: string | string[]) => void;
   onSelfFlagChange?: (selfFlag: string) => void;
   selectedBrand: string | string[] | null;
-  selectedPlatform?: string | null;
+  selectedPlatform?: string | string[] | null;
   selectedSelfFlag?: string | null;
   activeMenu: string;
   currentDateRange?: { from: string; to: string };
@@ -59,6 +59,15 @@ export function TopToolbar({
       : []
   );
 
+  // 🔥 新增：本地待确认平台选择
+  const [pendingSelectedPlatforms, setPendingSelectedPlatforms] = useState<Array<string>>(
+    Array.isArray(selectedPlatform)
+      ? selectedPlatform
+      : selectedPlatform && selectedPlatform !== 'all'
+      ? [selectedPlatform]
+      : []
+  );
+
   // 同步外部selectedBrand变化到本地pendingSelectedBrands
   useEffect(() => {
     setPendingSelectedBrands(
@@ -69,6 +78,17 @@ export function TopToolbar({
         : []
     );
   }, [selectedBrand]);
+
+  // 🔥 同步外部selectedPlatform变化到本地pendingSelectedPlatforms
+  useEffect(() => {
+    setPendingSelectedPlatforms(
+      Array.isArray(selectedPlatform)
+        ? selectedPlatform
+        : selectedPlatform && selectedPlatform !== 'all'
+        ? [selectedPlatform]
+        : []
+    );
+  }, [selectedPlatform]);
 
   const brandNameToCodeMap = useMemo(() => {
     const nameToCode: Record<string, string> = {};
@@ -129,7 +149,8 @@ export function TopToolbar({
     const hasOrderPlatforms = Array.isArray(orderBasedPlatforms) && orderBasedPlatforms.length > 0;
     
     if (user?.isAdmin) {
-      return hasOrderPlatforms ? orderBasedPlatforms : [];
+      // 管理员优先使用“有订单平台”，但接口空结果/失败时回退到完整平台映射，避免下拉只剩“全部平台”。
+      return hasOrderPlatforms ? orderBasedPlatforms : platformOptions;
     }
 
     // 普通用户：如果有订单获取到的平台，与平台全集求交集；没获取到则返回全集
@@ -236,14 +257,16 @@ export function TopToolbar({
       console.log('🔍 [TopToolbar] 管理员查询可用平台（基于VIEW_TSK_LIST_TASK）:', {
         startDate: currentDateRange.from,
         endDate: currentDateRange.to,
-        selfFlag: selfFlagValue
+        selfFlag: selfFlagValue,
+        brand: selectedBrand
       });
 
       try {
         const result = await getAvailablePlatforms({
           startDate: currentDateRange.from,
           endDate: currentDateRange.to,
-          selfFlag: selfFlagValue
+          selfFlag: selfFlagValue,
+          brand: selectedBrand || 'all'
         });
 
         console.log('📊 [TopToolbar.queryAdminAvailablePlatforms] API返回结果:', result);
@@ -354,9 +377,8 @@ export function TopToolbar({
           }
 
           if (!cancelled) {
-            if (loadedPlatforms.length > 0) {
-              setOrderBasedPlatforms(loadedPlatforms);
-            }
+            // ALWAYS update orderBasedPlatforms, even if empty, to reflect "no orders for these filters"
+            setOrderBasedPlatforms(loadedPlatforms);
             setOrderPlatformsStatus('loaded');
           }
         } catch (error) {
@@ -512,8 +534,8 @@ export function TopToolbar({
     }
   };
 
-const hasActiveFilters = (selectedBrand && selectedBrand !== 'all' && (!Array.isArray(selectedBrand) || selectedBrand.length > 0)) ||
-                          (selectedPlatform && selectedPlatform !== 'all') ||
+  const hasActiveFilters = (selectedBrand && selectedBrand !== 'all' && (!Array.isArray(selectedBrand) || selectedBrand.length > 0)) ||
+                          (selectedPlatform && selectedPlatform !== 'all' && (!Array.isArray(selectedPlatform) || selectedPlatform.length > 0)) ||
                           (selectedSelfFlag && selectedSelfFlag !== 'Y');
 
   return (
@@ -564,22 +586,28 @@ const hasActiveFilters = (selectedBrand && selectedBrand !== 'all' && (!Array.is
         {/* Platform Filter */}
         <div className="flex items-center space-x-2">
           <Label className="text-sm text-functional-mid-grey whitespace-nowrap">平台:</Label>
-          <Select 
-            value={selectedPlatform || "all"} 
-            onValueChange={onPlatformChange || (() => {})}
-          >
-            <SelectTrigger className="w-32 h-8 text-sm border-functional-light-grey bg-white">
-              <SelectValue placeholder="选择平台" />
-            </SelectTrigger>
-            <SelectContent className="bg-white border border-functional-light-grey shadow-md rounded-lg">
-              <SelectItem value="all">全部平台</SelectItem>
-              {accessiblePlatforms.map((platform) => (
-                <SelectItem key={platform.code} value={platform.code}>
-                  {platform.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <MultiSelect
+            options={accessiblePlatforms.map((p: { code: string; name: string }) => ({ label: p.name, value: p.code }))}
+            selected={pendingSelectedPlatforms}
+            onChange={setPendingSelectedPlatforms}
+            placeholder="选择平台"
+            className="w-40 bg-white border-functional-light-grey"
+            footer={
+              <Button
+                size="sm"
+                variant="outline"
+                className="w-full mt-2"
+                onClick={() => {
+                  if (onPlatformChange) {
+                    if (pendingSelectedPlatforms.length === 0) onPlatformChange('all');
+                    else onPlatformChange(pendingSelectedPlatforms);
+                  }
+                }}
+              >
+                确定
+              </Button>
+            }
+          />
         </div>
 
         {/* Self-Managed Filter */}
@@ -612,14 +640,18 @@ const hasActiveFilters = (selectedBrand && selectedBrand !== 'all' && (!Array.is
               )}
               {selectedPlatform && selectedPlatform !== 'all' && (
                 <Badge variant="outline" className="maersk-badge-secondary text-xs">
-                  平台: {selectedPlatform === 'tmall' ? '天猫' : 
-                         selectedPlatform === 'douyin' ? '抖音' : 
-                         selectedPlatform === 'jd' ? '京东' : 
-                         selectedPlatform === 'pdd' ? '拼多多' : 
-                         selectedPlatform === 'official' ? '官网/小程序' : 
-                         selectedPlatform === 'o2o' ? 'O2O' : 
-                         selectedPlatform === 'xiaohongshu' ? '小红书' : 
-                         selectedPlatform === 'wechat' ? '微信小程序' : selectedPlatform}
+                  平台: {Array.isArray(selectedPlatform) ? (
+                    selectedPlatform.length > 3 ? `已选 ${selectedPlatform.length} 个平台` : selectedPlatform.join(', ')
+                  ) : (
+                    selectedPlatform === 'tmall' ? '天猫' : 
+                    selectedPlatform === 'douyin' ? '抖音' : 
+                    selectedPlatform === 'jd' ? '京东' : 
+                    selectedPlatform === 'pdd' ? '拼多多' : 
+                    selectedPlatform === 'official' ? '官网/小程序' : 
+                    selectedPlatform === 'o2o' ? 'O2O' : 
+                    selectedPlatform === 'xiaohongshu' ? '小红书' : 
+                    selectedPlatform === 'wechat' ? '微信小程序' : selectedPlatform
+                  )}
                 </Badge>
               )}
               {selectedSelfFlag && selectedSelfFlag !== 'Y' && (

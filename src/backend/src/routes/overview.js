@@ -136,9 +136,20 @@ const QueryUtils = {
     });
     
     if (platform && platform !== 'all') {
-      platformFilter = ` AND v.PLATFORM_CLASS = :platform`;
-      queryParams.platform = this.PLATFORM_MAPPING[platform] || platform;
-      console.log(`🏪 [Platform Filter] 平台筛选映射: ${platform} -> ${queryParams.platform} (从VIEW_TSK_LIST_TASK视图获取)`);
+      const normalizedPlatform = this.normalizeStringOrStringArray(platform);
+      if (Array.isArray(normalizedPlatform)) {
+        const platformPlaceholders = normalizedPlatform.map((p, i) => {
+          const mappedValue = this.PLATFORM_MAPPING[p] || p;
+          queryParams[`platform_${i}`] = mappedValue;
+          return `:platform_${i}`;
+        }).join(', ');
+        platformFilter = ` AND v.PLATFORM_CLASS IN (${platformPlaceholders})`;
+        console.log(`🏪 [Platform Filter] 平台多选筛选: [${normalizedPlatform.join(', ')}]`);
+      } else if (normalizedPlatform) {
+        platformFilter = ` AND v.PLATFORM_CLASS = :platform`;
+        queryParams.platform = this.PLATFORM_MAPPING[normalizedPlatform] || normalizedPlatform;
+        console.log(`🏪 [Platform Filter] 平台单选筛选: ${normalizedPlatform} -> ${queryParams.platform}`);
+      }
     }
     
     if (selfFlag === 'all') {

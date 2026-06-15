@@ -8,25 +8,41 @@
 const oracledb = require('oracledb');
 require('dotenv').config();
 
+function parseNumberEnv(value, fallback) {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
 // 使用与现有配置相同的环境变量
 const dbConfig = {
   user: process.env.ORACLE_USER,
   password: process.env.ORACLE_PASSWORD,
   connectString: process.env.ORACLE_CONNECT_STRING,
-  poolMin: parseInt(process.env.ORACLE_POOL_MIN) || 2,
-  poolMax: parseInt(process.env.ORACLE_POOL_MAX) || 10,
-  poolIncrement: parseInt(process.env.ORACLE_POOL_INCREMENT) || 2,
-  poolTimeout: parseInt(process.env.ORACLE_POOL_TIMEOUT) || 60,
+  poolMin: parseNumberEnv(process.env.ORACLE_POOL_MIN, 2),
+  poolMax: parseNumberEnv(process.env.ORACLE_POOL_MAX, 30),
+  poolIncrement: parseNumberEnv(process.env.ORACLE_POOL_INCREMENT, 2),
+  poolTimeout: parseNumberEnv(process.env.ORACLE_POOL_TIMEOUT, 60),
+  queueTimeout: parseNumberEnv(process.env.ORACLE_QUEUE_TIMEOUT, 120000),
+  queueMax: parseNumberEnv(process.env.ORACLE_QUEUE_MAX, 0),
   stmtCacheSize: 23,
   outFormat: oracledb.OUT_FORMAT_OBJECT,
   autoCommit: false,
   // 🔥 增加超时配置（解决大数据查询超时）
-  fetchArraySize: 1000,  // 每次获取1000行
-  queueTimeout: 60000,   // 队列超时60秒
-  _enableStats: true      // 启用连接池统计
+  fetchArraySize: parseNumberEnv(process.env.ORACLE_FETCH_ARRAY_SIZE, 1000),
+  _enableStats: true
 };
 
 let pool = null;
+let dbUnavailableUntil = 0;
+
+function isDatabaseConnectivityError(error) {
+  if (!error) {
+    return false;
+  }
+
+  const code = String(error.code || '').toUpperCase();
+  return code === 'NJS-510' || code === 'NJS-040' || code.startsWith('ORA-');
+}
 
 /**
  * 初始化数据库连接池
@@ -51,15 +67,34 @@ async function initializeDatabase() {
  */
 async function getConnection() {
   try {
+    if (dbUnavailableUntil > Date.now()) {
+      const waitSeconds = Math.ceil((dbUnavailableUntil - Date.now()) / 1000);
+      const circuitError = new Error(`数据库连接短路保护中，请约 ${waitSeconds} 秒后重试`);
+      circuitError.code = 'DB_CIRCUIT_OPEN';
+      throw circuitError;
+    }
+
     if (!pool) {
       await initializeDatabase();
     }
     
     const connection = await pool.getConnection();
+    dbUnavailableUntil = 0;
     console.log('🔗 获取数据库连接成功');
     
     return connection;
   } catch (error) {
+    if (isDatabaseConnectivityError(error)) {
+      dbUnavailableUntil = Date.now() + 30000;
+    }
+
+    if (error && error.code === 'NJS-040' && pool && typeof pool.getStatistics === 'function') {
+      try {
+        console.error('📉 连接池统计(NJS-040):', pool.getStatistics());
+      } catch (statsError) {
+        console.error('⚠️ 获取连接池统计失败:', statsError.message);
+      }
+    }
     console.error('❌ 获取数据库连接失败:', error);
     throw error;
   }

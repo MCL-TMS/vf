@@ -143,17 +143,34 @@ const QueryUtils = {
     });
     
     if (platform && platform !== 'all') {
-      platformFilter = ` AND EXISTS (
-        SELECT 1 FROM APP_CMS.BAS_CODES bc 
-        WHERE t.PLATFORM = bc.CODE 
-          AND bc.CODEID = 'PLATFORM_CLASS' 
-          AND bc.UDF1 = :platform
-      )`;
-      queryParams.platform = this.PLATFORM_MAPPING[platform] || platform;
-      console.log(`🏪 [Platform Filter] 平台筛选映射: ${platform} -> ${queryParams.platform} (通过UDF1字段)`);
+      // ✅ 修复：物流页面也直接通过 VIEW_TSK_LIST_TASK 视图过滤 PLATFORM_CLASS
+      const normalizeStringOrStringArray = (v) => {
+        if (v == null) return undefined;
+        if (typeof v === 'string') return v.trim() === '' ? undefined : v.trim();
+        if (Array.isArray(v)) {
+          const res = v.filter(i => typeof i === 'string').map(i => i.trim()).filter(i => i);
+          return res.length > 0 ? res : undefined;
+        }
+        return undefined;
+      };
+
+      const normalizedPlatform = normalizeStringOrStringArray(platform);
+      if (Array.isArray(normalizedPlatform)) {
+        const platformPlaceholders = normalizedPlatform.map((p, i) => {
+          const mappedValue = this.PLATFORM_MAPPING[p] || p;
+          queryParams[`platform_${i}`] = mappedValue;
+          return `:platform_${i}`;
+        }).join(', ');
+        // 物流统计查询通常 join 了 VIEW_TSK_LIST_TASK 别名为 v
+        platformFilter = ` AND v.PLATFORM_CLASS IN (${platformPlaceholders})`;
+        console.log(`🏪 [Logistics Platform Filter] 平台多选筛选: [${normalizedPlatform.join(', ')}]`);
+      } else if (normalizedPlatform) {
+        platformFilter = ` AND v.PLATFORM_CLASS = :platform`;
+        queryParams.platform = this.PLATFORM_MAPPING[normalizedPlatform] || normalizedPlatform;
+        console.log(`🏪 [Logistics Platform Filter] 平台单选筛选: ${normalizedPlatform} -> ${queryParams.platform}`);
+      }
     }
     
-
     // 🔥 自管筛选条件 - 默认筛选自管订单
     if (selfFlag === 'all') {
       // 选择"全部"：不添加SELF_FLAG筛选条件

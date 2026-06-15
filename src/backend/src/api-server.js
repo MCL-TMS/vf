@@ -5,6 +5,13 @@
  * 为前端React应用提供数据接口
  */
 
+const path = require('path');
+const dotenv = require('dotenv');
+
+// 优先加载 backend 根目录 .env；随后兜底当前工作目录 .env。
+dotenv.config({ path: path.resolve(__dirname, '../.env') });
+dotenv.config();
+
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');

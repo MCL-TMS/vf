@@ -289,7 +289,7 @@ function AppContent() {
                     <div className="text-sm text-functional-dark-blue">
                       当前筛选条件: 
                         {selectedBrand && <Badge variant="outline" className="ml-1 mr-1 maersk-badge-secondary truncate max-w-[200px]">品牌: {Array.isArray(selectedBrand) ? selectedBrand.join(', ') : selectedBrand}</Badge>}
-                      {selectedPlatform && <Badge variant="outline" className="ml-1 mr-1 maersk-badge-secondary">平台: {selectedPlatform === 'tmall' ? '天猫' : selectedPlatform === 'douyin' ? '抖音' : selectedPlatform === 'jd' ? '京东' : selectedPlatform === 'pdd' ? '拼多多' : selectedPlatform === 'official' ? '官网/小程序' : selectedPlatform === 'o2o' ? 'O2O' : selectedPlatform === 'xiaohongshu' ? '小红书' : selectedPlatform === 'wechat' ? '微信小程序' : selectedPlatform}</Badge>}
+                      {selectedPlatform && <Badge variant="outline" className="ml-1 mr-1 maersk-badge-secondary">平台: {Array.isArray(selectedPlatform) ? (selectedPlatform.length > 3 ? `已选 ${selectedPlatform.length} 项` : selectedPlatform.join(', ')) : (selectedPlatform === 'tmall' ? '天猫' : selectedPlatform === 'douyin' ? '抖音' : selectedPlatform === 'jd' ? '京东' : selectedPlatform === 'pdd' ? '拼多多' : selectedPlatform === 'official' ? '官网/小程序' : selectedPlatform === 'o2o' ? 'O2O' : selectedPlatform === 'xiaohongshu' ? '小红书' : selectedPlatform === 'wechat' ? '微信小程序' : selectedPlatform)}</Badge>}
                       {selectedSelfFlag && selectedSelfFlag !== 'Y' && <Badge variant="outline" className="ml-1 mr-1 maersk-badge-secondary">自管: {selectedSelfFlag === 'N' ? '非自管' : selectedSelfFlag === 'all' ? '全部' : selectedSelfFlag}</Badge>}
                       {" "}所有图表和统计都已根据筛选条件进行过滤。
                     </div>

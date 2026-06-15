@@ -13,11 +13,21 @@ export interface User {
   refreshToken?: string;   // 🔥 新增：Refresh Token
 }
 
+type LoginResult = {
+  success: boolean;
+  error?: string;
+  mfaRequired?: boolean;
+  challengeId?: string;
+  maskedEmail?: string;
+  expiresIn?: number;
+};
+
 // 认证上下文接口
 interface AuthContextType {
   user: User | null;
   isAuthenticated: boolean;
-  login: (userId: string, password: string) => Promise<{ success: boolean; error?: string }>;
+  login: (userId: string, password: string) => Promise<LoginResult>;
+  verifyMfaCode: (challengeId: string, otpCode: string) => Promise<LoginResult>;
   logout: () => Promise<void>; // 🔥 改为异步
   hasAccessToBrand: (brandCode: string) => boolean;
   getAccessibleBrands: () => string[];
@@ -69,8 +79,39 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setIsLoading(false);
   }, []);
 
+  const completeLogin = (data: any): LoginResult => {
+    if (!(data?.success && data?.user && data?.token && data?.refreshToken)) {
+      return {
+        success: false,
+        error: '登录失败，服务器返回数据异常'
+      };
+    }
+
+    const customerNos = data.user.customerNo
+      ? data.user.customerNo.split(',').map((code: string) => code.trim()).filter(Boolean)
+      : [];
+    const isAdmin = customerNos.length === 0 || customerNos.includes('all') || customerNos.includes('ALL');
+
+    const userInfo: User = {
+      userId: data.user.userId,
+      userName: data.user.userName,
+      roleId: data.user.roleId || '',
+      customerNos: isAdmin ? [] : customerNos,
+      isAdmin,
+      token: data.token,
+      refreshToken: data.refreshToken,
+    };
+
+    setUser(userInfo);
+    sessionStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(userInfo));
+    ApiService.setAccessToken(userInfo.token || null);
+    ApiService.clearHealthCheckCache();
+
+    return { success: true };
+  };
+
   // 登录函数
-  const login = async (userId: string, password: string): Promise<{ success: boolean; error?: string }> => {
+  const login = async (userId: string, password: string): Promise<LoginResult> => {
     try {
       // 所有账号统一走后端认证
       // 开发环境下使用完整URL（绕过可能存在的Vite代理问题）
@@ -105,42 +146,60 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // 解析成功响应
       const data = await response.json();
 
-      if (data.success && data.user) {
-        // 解析 CUSTOMERNO 字段（可能是逗号分隔的多个品牌）
-        const customerNos = data.user.customerNo 
-          ? data.user.customerNo.split(',').map((code: string) => code.trim()).filter(Boolean)
-          : [];
-
-        // 判断是否管理员（customerNos 为空或包含 'all'）
-        const isAdmin = customerNos.length === 0 || customerNos.includes('all') || customerNos.includes('ALL');
-
-        const userInfo: User = {
-          userId: data.user.userId,
-          userName: data.user.userName,
-          roleId: data.user.roleId || '',
-          customerNos: isAdmin ? [] : customerNos, // 管理员 customerNos 为空表示可查看全部
-          isAdmin,
-          token: data.token, // 🔥 新增：保存token
-          refreshToken: data.refreshToken, // 🔥 新增：保存refreshToken
+      if (data.success && data.mfaRequired) {
+        return {
+          success: false,
+          mfaRequired: true,
+          challengeId: data.challengeId,
+          maskedEmail: data.maskedEmail,
+          expiresIn: data.expiresIn
         };
-
-        setUser(userInfo);
-        sessionStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(userInfo));
-        ApiService.setAccessToken(userInfo.token || null);
-        ApiService.clearHealthCheckCache();
-
-        return { success: true };
       }
 
-      return {
-        success: false,
-        error: '登录失败，服务器返回数据异常',
-      };
+      return completeLogin(data);
     } catch (error) {
       console.error('Login error:', error);
       return {
         success: false,
         error: '登录失败，无法连接到服务器。请检查后端API是否启动。',
+      };
+    }
+  };
+
+  const verifyMfaCode = async (challengeId: string, otpCode: string): Promise<LoginResult> => {
+    try {
+      const isDevelopment = import.meta.env.DEV;
+      const apiBaseUrl = isDevelopment ? 'http://localhost:3001' : '';
+
+      const response = await fetch(`${apiBaseUrl}/api/auth/login/verify-otp`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ challengeId, otpCode }),
+      });
+
+      if (!response.ok) {
+        const errorPayload = await response.clone().json().catch(() => null);
+        const apiError = createApiClientError({
+          status: response.status,
+          payload: errorPayload,
+          fallbackError: '验证码校验失败'
+        });
+
+        return {
+          success: false,
+          error: apiError.message,
+        };
+      }
+
+      const data = await response.json();
+      return completeLogin(data);
+    } catch (error) {
+      console.error('verifyMfaCode error:', error);
+      return {
+        success: false,
+        error: '验证码校验失败，无法连接到服务器。',
       };
     }
   };
@@ -288,6 +347,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     user,
     isAuthenticated: !!user,
     login,
+    verifyMfaCode,
     logout,
     hasAccessToBrand,
     getAccessibleBrands,

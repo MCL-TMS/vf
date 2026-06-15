@@ -1,154 +1,271 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<mxfile host="app.diagrams.net" modified="2026-03-30T00:00:00.000Z" agent="Cursor" version="24.7.10" type="device">
-  <diagram id="functional-architecture" name="功能架构图">
-    <mxGraphModel dx="1440" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="900" math="0" shadow="0">
+<mxfile host="app.diagrams.net" modified="2026-06-08T12:00:00.000Z" agent="v0" version="22.0.0">
+  <diagram name="Functional Architecture" id="func-arch">
+    <mxGraphModel dx="960" dy="720" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="960" pageHeight="680" math="0" shadow="0">
       <root>
         <mxCell id="0"/>
         <mxCell id="1" parent="0"/>
-        
-        <!-- 左侧：用户与前端 -->
-        <mxCell id="2" value="用户/业务角色&#xa;运营、分析师、客服管理" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;" vertex="1" parent="1">
-          <mxGeometry x="40" y="60" width="260" height="70" as="geometry"/>
+
+        <!-- Title -->
+        <mxCell id="title" value="VF Logistics Analytics Platform — Functional Architecture" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontSize=17;fontStyle=1;fontColor=#1e3a5f;" vertex="1" parent="1">
+          <mxGeometry x="120" y="12" width="520" height="28" as="geometry"/>
         </mxCell>
-        <mxCell id="3" value="前端仪表板（React + TS）&#xa;展示 KPI/地图/异常/时效/SLA" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;" vertex="1" parent="1">
-          <mxGeometry x="350" y="30" width="330" height="610" as="geometry"/>
+        <mxCell id="dev-badge" value="Development Environment / 开发环境&#xa;HTTP only (no HTTPS)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#f59e0b;fontSize=9;fontStyle=1;fontColor=#92400e;align=center;" vertex="1" parent="1">
+          <mxGeometry x="660" y="10" width="200" height="32" as="geometry"/>
         </mxCell>
-        <mxCell id="4" value="登录与权限&#xa;JWT Bearer&#xa;品牌/平台筛选项加载" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;" vertex="1" parent="1">
-          <mxGeometry x="380" y="70" width="270" height="70" as="geometry"/>
+
+        <!-- ===== Layer 1: User ===== -->
+        <mxCell id="user-layer" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e0f2fe;strokeColor=#0284c7;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="40" y="48" width="880" height="58" as="geometry"/>
         </mxCell>
-        <mxCell id="5" value="总览 KPI &amp; 趋势&#xa;同比/环比、状态分布、异常概览" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;" vertex="1" parent="1">
-          <mxGeometry x="380" y="150" width="270" height="75" as="geometry"/>
+        <mxCell id="user-label" value="① User Layer / 用户层" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=11;fontStyle=1;fontColor=#0369a1;" vertex="1" parent="1">
+          <mxGeometry x="52" y="52" width="160" height="16" as="geometry"/>
         </mxCell>
-        <mxCell id="6" value="地域分析&#xa;省份/城市分布、履约效率、异常率" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;" vertex="1" parent="1">
-          <mxGeometry x="380" y="240" width="270" height="75" as="geometry"/>
+        <mxCell id="admin-user" value="Internal User&#xa;(WPSADMIN / WPSAMIN)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1e40af;strokeColor=#1e3a8a;fontColor=#ffffff;fontSize=9;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="60" y="72" width="130" height="28" as="geometry"/>
         </mxCell>
-        <mxCell id="7" value="物流监控&#xa;快递商绩效、重量/节点相关可视化" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;" vertex="1" parent="1">
-          <mxGeometry x="380" y="330" width="270" height="75" as="geometry"/>
+        <mxCell id="customer-user" value="External User&#xa;(CUSTOMER / BRAND / CS)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#059669;strokeColor=#047857;fontColor=#ffffff;fontSize=9;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="205" y="72" width="145" height="28" as="geometry"/>
         </mxCell>
-        <mxCell id="8" value="异常监控 &amp; RCA&#xa;责任方/原因归因&#xa;快递商×责任方×原因交叉" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;" vertex="1" parent="1">
-          <mxGeometry x="380" y="420" width="270" height="85" as="geometry"/>
+
+        <!-- Arrow 1 -->
+        <mxCell id="arrow1" value="Browser HTTP / 用户访问 SPA&#xa;(Dev: http://localhost:3000 — 无 HTTPS)" style="endArrow=block;endFill=1;html=1;strokeColor=#2563eb;strokeWidth=2;fontSize=9;fontColor=#2563eb;fontStyle=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="user-layer" target="pres-layer">
+          <mxGeometry x="-0.1" relative="1" as="geometry">
+            <mxPoint x="480" y="118" as="sourcePoint"/>
+            <mxPoint x="480" y="128" as="targetPoint"/>
+            <mxPoint as="offset"/>
+          </mxGeometry>
         </mxCell>
-        <mxCell id="9" value="时效分析与 SLA&#xa;上传/校验（可选）&#xa;Plan vs Actual 与 SLA 匹配状态" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;" vertex="1" parent="1">
-          <mxGeometry x="380" y="520" width="270" height="80" as="geometry"/>
+
+        <!-- ===== Layer 2: Frontend ===== -->
+        <mxCell id="pres-layer" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#3b82f6;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="40" y="128" width="880" height="158" as="geometry"/>
         </mxCell>
-        <mxCell id="10" value="订单明细导出&#xa;原始数据导出用于报表/稽核" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;" vertex="1" parent="1">
-          <mxGeometry x="380" y="600" width="270" height="70" as="geometry"/>
+        <mxCell id="pres-label" value="② Frontend Layer / 前端层  (React 18 + TypeScript + Vite 6 · http://localhost:3000)" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=11;fontStyle=1;fontColor=#1d4ed8;" vertex="1" parent="1">
+          <mxGeometry x="52" y="132" width="480" height="16" as="geometry"/>
         </mxCell>
-        
-        <!-- 右侧：API 服务与业务路由 -->
-        <mxCell id="11" value="前置应用服务器 (In-front Application Server)&#xa;提供 REST/JSON 数据接口与业务逻辑" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;" vertex="1" parent="1">
-          <mxGeometry x="720" y="30" width="420" height="610" as="geometry"/>
+
+        <!-- 5 visible modules only -->
+        <mxCell id="mod1" value="Dashboard Overview&#xa;总览" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eff6ff;strokeColor=#3b82f6;fontSize=9;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="55" y="155" width="108" height="38" as="geometry"/>
         </mxCell>
-        <mxCell id="12" value="认证/品牌/平台映射&#xa;获取用户可用品牌范围" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ead1dc;strokeColor=#b85475;fontSize=12;" vertex="1" parent="1">
-          <mxGeometry x="750" y="70" width="190" height="70" as="geometry"/>
+        <mxCell id="mod1-desc" value="Order KPIs · Stats" style="text;html=1;strokeColor=none;fillColor=none;align=center;fontSize=7;fontColor=#64748b;" vertex="1" parent="1">
+          <mxGeometry x="55" y="193" width="108" height="12" as="geometry"/>
         </mxCell>
-        <mxCell id="13" value="总览 API&#xa;/overview/kpi-with-trends&#xa;/overview/kpi" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ead1dc;strokeColor=#b85475;fontSize=12;" vertex="1" parent="1">
-          <mxGeometry x="960" y="70" width="190" height="70" as="geometry"/>
+        <mxCell id="mod2" value="Logistics Monitoring&#xa;物流监控" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eff6ff;strokeColor=#3b82f6;fontSize=9;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="173" y="155" width="108" height="38" as="geometry"/>
         </mxCell>
-        <mxCell id="14" value="地域 API&#xa;/regional/provinces、/cities、/efficiency（路由集合）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ead1dc;strokeColor=#b85475;fontSize=12;" vertex="1" parent="1">
-          <mxGeometry x="750" y="160" width="190" height="85" as="geometry"/>
+        <mxCell id="mod2-desc" value="Tracking · Courier" style="text;html=1;strokeColor=none;fillColor=none;align=center;fontSize=7;fontColor=#64748b;" vertex="1" parent="1">
+          <mxGeometry x="173" y="193" width="108" height="12" as="geometry"/>
         </mxCell>
-        <mxCell id="15" value="物流监控 API&#xa;/logistics/couriers&#xa;节点与效率类统计" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ead1dc;strokeColor=#b85475;fontSize=12;" vertex="1" parent="1">
-          <mxGeometry x="960" y="160" width="190" height="85" as="geometry"/>
+        <mxCell id="mod3" value="Exception Monitoring&#xa;异常监控" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef2f2;strokeColor=#ef4444;fontSize=9;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="291" y="155" width="108" height="38" as="geometry"/>
         </mxCell>
-        <mxCell id="16" value="异常分析 API&#xa;/exception-analysis/overview&#xa;按责任方/原因/RCA" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ead1dc;strokeColor=#b85475;fontSize=12;" vertex="1" parent="1">
-          <mxGeometry x="750" y="260" width="400" height="100" as="geometry"/>
+        <mxCell id="mod3-desc" value="Exceptions · Delay" style="text;html=1;strokeColor=none;fillColor=none;align=center;fontSize=7;fontColor=#64748b;" vertex="1" parent="1">
+          <mxGeometry x="291" y="193" width="108" height="12" as="geometry"/>
         </mxCell>
-        <mxCell id="17" value="时效 &amp; SLA API&#xa;/upload/timeliness-excel（可选）&#xa;/upload/analyze-timeliness&#xa;/upload/sla-matching-status" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ead1dc;strokeColor=#b85475;fontSize=12;" vertex="1" parent="1">
-          <mxGeometry x="750" y="370" width="400" height="115" as="geometry"/>
+        <mxCell id="mod4" value="Trend Analysis&#xa;趋势分析" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f0fdf4;strokeColor=#22c55e;fontSize=9;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="409" y="155" width="108" height="38" as="geometry"/>
         </mxCell>
-        <mxCell id="18" value="订单明细导出 API&#xa;/order-details/export&#xa;Raw Data 输出" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ead1dc;strokeColor=#b85475;fontSize=12;" vertex="1" parent="1">
-          <mxGeometry x="750" y="505" width="400" height="85" as="geometry"/>
+        <mxCell id="mod4-desc" value="Daily/Weekly Trends" style="text;html=1;strokeColor=none;fillColor=none;align=center;fontSize=7;fontColor=#64748b;" vertex="1" parent="1">
+          <mxGeometry x="409" y="193" width="108" height="12" as="geometry"/>
         </mxCell>
-        
-        <!-- 数据层 -->
-        <mxCell id="19" value="Oracle 数据库（APP_CMS）&#xa;TSK_LIST_TASK / VIEW_TSK_LIST_TASK&#xa;BAS_CODES / BAS_COMPANY / BAS_AREA" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b45f06;fontSize=12;" vertex="1" parent="1">
-          <mxGeometry x="1180" y="120" width="360" height="210" as="geometry"/>
+        <mxCell id="mod5" value="Weight Analysis&#xa;重量分析" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fefce8;strokeColor=#eab308;fontSize=9;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="527" y="155" width="108" height="38" as="geometry"/>
         </mxCell>
-        <mxCell id="20" value="文件系统/上传目录&#xa;Excel/模板/时效文件存储&#xa;解析与降级（模拟数据）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b45f06;fontSize=12;" vertex="1" parent="1">
-          <mxGeometry x="1180" y="360" width="360" height="180" as="geometry"/>
+        <mxCell id="mod5-desc" value="Distribution · Cost" style="text;html=1;strokeColor=none;fillColor=none;align=center;fontSize=7;fontColor=#64748b;" vertex="1" parent="1">
+          <mxGeometry x="527" y="193" width="108" height="12" as="geometry"/>
         </mxCell>
-        
-        <!-- 商业价值说明 -->
-        <mxCell id="21" value="商业价值&#xa;1) 实时异常预警与责任归因，降低异常处置成本&#xa;2) SLA 覆盖率评估与时效改进，提升履约体验&#xa;3) 快递商绩效量化，辅助策略/资源分配&#xa;4) 地域履约差异定位，提升运营效率&#xa;5) 订单明细导出用于稽核与报表" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5f5e3;strokeColor=#28a745;fontSize=12;" vertex="1" parent="1">
-          <mxGeometry x="40" y="690" width="1500" height="170" as="geometry"/>
+
+        <!-- Shared Components -->
+        <mxCell id="shared-box" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f1f5f9;strokeColor=#94a3b8;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="650" y="150" width="258" height="128" as="geometry"/>
         </mxCell>
-        
-        <!-- 边：调用关系 -->
-        <mxCell id="30" style="endArrow=block;html=1;strokeWidth=2;" edge="1" parent="1" source="2" target="3">
-          <mxGeometry relative="1" as="geometry"/>
+        <mxCell id="shared-title" value="Shared Components" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=9;fontStyle=1;fontColor=#475569;" vertex="1" parent="1">
+          <mxGeometry x="660" y="155" width="120" height="12" as="geometry"/>
         </mxCell>
-        
-        <mxCell id="31" value="登录/取数" style="endArrow=block;html=1;strokeWidth=2;" edge="1" parent="1" source="4" target="12">
-          <mxGeometry relative="1" as="geometry"/>
+        <mxCell id="comp1" value="Global Filters" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e2e8f0;strokeColor=#64748b;fontSize=8;" vertex="1" parent="1">
+          <mxGeometry x="662" y="172" width="72" height="22" as="geometry"/>
         </mxCell>
-        <mxCell id="32" value="筛选 + KPI" style="endArrow=block;html=1;strokeWidth=2;" edge="1" parent="1" source="5" target="13">
-          <mxGeometry relative="1" as="geometry"/>
+        <mxCell id="comp2" value="Sidebar" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e2e8f0;strokeColor=#64748b;fontSize=8;" vertex="1" parent="1">
+          <mxGeometry x="742" y="172" width="72" height="22" as="geometry"/>
         </mxCell>
-        <mxCell id="33" value="地图/效率" style="endArrow=block;html=1;strokeWidth=2;" edge="1" parent="1" source="6" target="14">
-          <mxGeometry relative="1" as="geometry"/>
+        <mxCell id="comp3" value="Top Toolbar" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e2e8f0;strokeColor=#64748b;fontSize=8;" vertex="1" parent="1">
+          <mxGeometry x="822" y="172" width="72" height="22" as="geometry"/>
         </mxCell>
-        <mxCell id="34" value="绩效/节点" style="endArrow=block;html=1;strokeWidth=2;" edge="1" parent="1" source="7" target="15">
-          <mxGeometry relative="1" as="geometry"/>
+        <mxCell id="comp4" value="Recharts" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e2e8f0;strokeColor=#64748b;fontSize=8;" vertex="1" parent="1">
+          <mxGeometry x="662" y="200" width="72" height="22" as="geometry"/>
         </mxCell>
-        <mxCell id="35" value="异常归因/交叉分析" style="endArrow=block;html=1;strokeWidth=2;" edge="1" parent="1" source="8" target="16">
-          <mxGeometry relative="1" as="geometry"/>
+        <mxCell id="comp5" value="KPI Cards" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e2e8f0;strokeColor=#64748b;fontSize=8;" vertex="1" parent="1">
+          <mxGeometry x="742" y="200" width="72" height="22" as="geometry"/>
         </mxCell>
-        <mxCell id="36" value="时效计算 &amp; SLA" style="endArrow=block;html=1;strokeWidth=2;" edge="1" parent="1" source="9" target="17">
-          <mxGeometry relative="1" as="geometry"/>
+        <mxCell id="comp6" value="Data Tables" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e2e8f0;strokeColor=#64748b;fontSize=8;" vertex="1" parent="1">
+          <mxGeometry x="822" y="200" width="72" height="22" as="geometry"/>
         </mxCell>
-        
-        <mxCell id="37" value="导出 Raw Data" style="endArrow=block;html=1;strokeWidth=2;" edge="1" parent="1" source="10" target="18">
-          <mxGeometry relative="1" as="geometry"/>
+        <mxCell id="comp7" value="Auth Context" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce7f3;strokeColor=#ec4899;fontSize=8;" vertex="1" parent="1">
+          <mxGeometry x="662" y="228" width="72" height="22" as="geometry"/>
         </mxCell>
-        
-        <mxCell id="40" value="Oracle 查询（统计/聚合/归因）" style="endArrow=block;html=1;strokeWidth=1.5;dashed=1;" edge="1" parent="1" source="13" target="19">
-          <mxGeometry relative="1" as="geometry"/>
+        <mxCell id="comp8" value="Brand Context" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce7f3;strokeColor=#ec4899;fontSize=8;" vertex="1" parent="1">
+          <mxGeometry x="742" y="228" width="72" height="22" as="geometry"/>
         </mxCell>
-        <mxCell id="41" value="Oracle 查询（地域履约）" style="endArrow=block;html=1;strokeWidth=1.5;dashed=1;" edge="1" parent="1" source="14" target="19">
-          <mxGeometry relative="1" as="geometry"/>
+        <mxCell id="comp9" value="Platform Context" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce7f3;strokeColor=#ec4899;fontSize=8;" vertex="1" parent="1">
+          <mxGeometry x="822" y="228" width="72" height="22" as="geometry"/>
         </mxCell>
-        <mxCell id="42" value="Oracle 查询（绩效/异常条件统计）" style="endArrow=block;html=1;strokeWidth=1.5;dashed=1;" edge="1" parent="1" source="15" target="19">
-          <mxGeometry relative="1" as="geometry"/>
+        <mxCell id="comp10" value="ApiService (HTTP Client)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#3b82f6;fontSize=8;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="662" y="254" width="232" height="20" as="geometry"/>
         </mxCell>
-        <mxCell id="43" value="Oracle 查询（责任方/原因归因）" style="endArrow=block;html=1;strokeWidth=1.5;dashed=1;" edge="1" parent="1" source="16" target="19">
-          <mxGeometry relative="1" as="geometry"/>
+
+        <!-- Arrow 2 -->
+        <mxCell id="arrow2" value="HTTP REST + JWT Bearer Token&#xa;Dev: HTTP only · Prod: HTTPS (Nginx or FORCE_HTTPS)" style="endArrow=block;endFill=1;html=1;strokeColor=#16a34a;strokeWidth=2;fontSize=9;fontColor=#16a34a;fontStyle=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="pres-layer" target="backend-layer">
+          <mxGeometry x="-0.1" relative="1" as="geometry">
+            <mxPoint x="480" y="298" as="sourcePoint"/>
+            <mxPoint x="480" y="308" as="targetPoint"/>
+            <mxPoint as="offset"/>
+          </mxGeometry>
         </mxCell>
-        <mxCell id="44" value="Oracle 查询（导出原始数据）" style="endArrow=block;html=1;strokeWidth=1.5;dashed=1;" edge="1" parent="1" source="18" target="19">
-          <mxGeometry relative="1" as="geometry"/>
+
+        <mxCell id="api-env-note" value="API 通信说明: 开发环境 HTTP；生产环境建议启用 TLS 终止与强制 HTTPS" style="text;html=1;strokeColor=none;fillColor=none;align=center;fontSize=8;fontColor=#15803d;fontStyle=2;" vertex="1" parent="1">
+          <mxGeometry x="250" y="292" width="460" height="12" as="geometry"/>
         </mxCell>
-        <mxCell id="45" value="Oracle 查询（品牌/权限/映射）" style="endArrow=block;html=1;strokeWidth=1.5;dashed=1;" edge="1" parent="1" source="12" target="19">
-          <mxGeometry relative="1" as="geometry"/>
+
+        <!-- ===== Layer 3: Backend ===== -->
+        <mxCell id="backend-layer" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#16a34a;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="40" y="308" width="880" height="132" as="geometry"/>
         </mxCell>
-        
-        <mxCell id="46" value="Excel/解析/时效文件存储" style="endArrow=block;html=1;strokeWidth=1.5;dashed=1;" edge="1" parent="1" source="17" target="20">
-          <mxGeometry relative="1" as="geometry"/>
+        <mxCell id="backend-label" value="③ Backend Layer / 后端层  (Express.js · http://localhost:3001)" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=11;fontStyle=1;fontColor=#15803d;" vertex="1" parent="1">
+          <mxGeometry x="52" y="312" width="420" height="16" as="geometry"/>
         </mxCell>
-        <mxCell id="47" value="Oracle 查询（城市映射/SLA相关）" style="endArrow=block;html=1;strokeWidth=1.5;dashed=1;" edge="1" parent="1" source="17" target="19">
-          <mxGeometry relative="1" as="geometry"/>
+
+        <!-- API Endpoints (mapped to visible features) -->
+        <mxCell id="api1" value="/api/auth" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f0fdf4;strokeColor=#22c55e;fontSize=8;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="55" y="334" width="78" height="24" as="geometry"/>
         </mxCell>
-        
-        <mxCell id="48" value="JWT Bearer &amp; REST/JSON 返回数据" style="endArrow=block;html=1;strokeWidth=2;" edge="1" parent="1" source="13" target="5">
-          <mxGeometry relative="1" as="geometry"/>
+        <mxCell id="api2" value="/api/brands" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f0fdf4;strokeColor=#22c55e;fontSize=8;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="140" y="334" width="78" height="24" as="geometry"/>
         </mxCell>
-        <mxCell id="49" value="REST/JSON 返回数据" style="endArrow=block;html=1;strokeWidth=2;" edge="1" parent="1" source="14" target="6">
-          <mxGeometry relative="1" as="geometry"/>
+        <mxCell id="api3" value="/api/platform" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f0fdf4;strokeColor=#22c55e;fontSize=8;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="225" y="334" width="78" height="24" as="geometry"/>
         </mxCell>
-        <mxCell id="50" value="REST/JSON 返回数据" style="endArrow=block;html=1;strokeWidth=2;" edge="1" parent="1" source="15" target="7">
-          <mxGeometry relative="1" as="geometry"/>
+        <mxCell id="api4" value="/api/overview" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f0fdf4;strokeColor=#22c55e;fontSize=8;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="310" y="334" width="78" height="24" as="geometry"/>
         </mxCell>
-        <mxCell id="51" value="REST/JSON 返回数据" style="endArrow=block;html=1;strokeWidth=2;" edge="1" parent="1" source="16" target="8">
-          <mxGeometry relative="1" as="geometry"/>
+        <mxCell id="api5" value="/api/logistics" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f0fdf4;strokeColor=#22c55e;fontSize=8;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="395" y="334" width="78" height="24" as="geometry"/>
         </mxCell>
-        <mxCell id="52" value="REST/JSON 返回数据" style="endArrow=block;html=1;strokeWidth=2;" edge="1" parent="1" source="17" target="9">
-          <mxGeometry relative="1" as="geometry"/>
+        <mxCell id="api6" value="/api/trends" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f0fdf4;strokeColor=#22c55e;fontSize=8;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="480" y="334" width="78" height="24" as="geometry"/>
         </mxCell>
-        <mxCell id="53" value="REST/JSON 返回导出结果" style="endArrow=block;html=1;strokeWidth=2;" edge="1" parent="1" source="18" target="10">
-          <mxGeometry relative="1" as="geometry"/>
+        <mxCell id="api7" value="/api/exception-analysis" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f0fdf4;strokeColor=#22c55e;fontSize=8;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="565" y="334" width="110" height="24" as="geometry"/>
         </mxCell>
-        
+        <mxCell id="api8" value="/api/order-details" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f0fdf4;strokeColor=#22c55e;fontSize=8;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="682" y="334" width="90" height="24" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="backend-security-box" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ecfeff;strokeColor=#0891b2;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="782" y="334" width="128" height="38" as="geometry"/>
+        </mxCell>
+        <mxCell id="backend-security-title" value="Security/Token" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=7;fontStyle=1;fontColor=#0e7490;" vertex="1" parent="1">
+          <mxGeometry x="788" y="336" width="100" height="10" as="geometry"/>
+        </mxCell>
+        <mxCell id="backend-jwt-lib" value="jsonwebtoken" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#cffafe;strokeColor=#0891b2;fontSize=7;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="788" y="348" width="116" height="20" as="geometry"/>
+        </mxCell>
+
+        <!-- Module → API mapping hint -->
+        <mxCell id="api-map" value="↕ Module mapping: Overview→overview · Logistics→logistics · Exception→exception-analysis · Trends→trends · Weight→logistics/weight-analysis" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=7;fontColor=#64748b;fontStyle=2;" vertex="1" parent="1">
+          <mxGeometry x="55" y="360" width="620" height="12" as="geometry"/>
+        </mxCell>
+
+        <!-- Middleware -->
+        <mxCell id="mw-box" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ecfccb;strokeColor=#84cc16;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="55" y="376" width="855" height="56" as="geometry"/>
+        </mxCell>
+        <mxCell id="mw-title" value="Middleware:" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=8;fontStyle=1;fontColor=#4d7c0f;" vertex="1" parent="1">
+          <mxGeometry x="62" y="382" width="70" height="12" as="geometry"/>
+        </mxCell>
+        <mxCell id="mw1" value="JWT Auth" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef9c3;strokeColor=#ca8a04;fontSize=8;" vertex="1" parent="1">
+          <mxGeometry x="130" y="386" width="62" height="20" as="geometry"/>
+        </mxCell>
+        <mxCell id="mw2" value="Rate Limit" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef9c3;strokeColor=#ca8a04;fontSize=8;" vertex="1" parent="1">
+          <mxGeometry x="200" y="386" width="62" height="20" as="geometry"/>
+        </mxCell>
+        <mxCell id="mw3" value="CORS" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef9c3;strokeColor=#ca8a04;fontSize=8;" vertex="1" parent="1">
+          <mxGeometry x="270" y="386" width="50" height="20" as="geometry"/>
+        </mxCell>
+        <mxCell id="mw4" value="Helmet" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef9c3;strokeColor=#ca8a04;fontSize=8;" vertex="1" parent="1">
+          <mxGeometry x="328" y="386" width="50" height="20" as="geometry"/>
+        </mxCell>
+        <mxCell id="mw5" value="Brand Scope" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef9c3;strokeColor=#ca8a04;fontSize=8;" vertex="1" parent="1">
+          <mxGeometry x="386" y="386" width="72" height="20" as="geometry"/>
+        </mxCell>
+        <mxCell id="mw6" value="Token Store (Redis/Memory)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef9c3;strokeColor=#ca8a04;fontSize=8;" vertex="1" parent="1">
+          <mxGeometry x="466" y="386" width="130" height="20" as="geometry"/>
+        </mxCell>
+        <mxCell id="mw7" value="express.json/urlencoded (10MB)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef9c3;strokeColor=#ca8a04;fontSize=8;" vertex="1" parent="1">
+          <mxGeometry x="604" y="386" width="152" height="20" as="geometry"/>
+        </mxCell>
+        <mxCell id="mw-note" value="注: ApiService 与 Body Parser 可视作实现细节（可按受众裁剪显示）" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=7;fontColor=#4d7c0f;fontStyle=2;" vertex="1" parent="1">
+          <mxGeometry x="62" y="410" width="430" height="12" as="geometry"/>
+        </mxCell>
+
+        <!-- Arrow 3 -->
+        <mxCell id="arrow3" value="oracledb / SQL 连接池" style="endArrow=block;endFill=1;html=1;strokeColor=#7c3aed;strokeWidth=2;fontSize=9;fontColor=#7c3aed;fontStyle=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="backend-layer" target="data-layer">
+          <mxGeometry x="-0.1" relative="1" as="geometry">
+            <mxPoint x="480" y="438" as="sourcePoint"/>
+            <mxPoint x="480" y="448" as="targetPoint"/>
+            <mxPoint as="offset"/>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="arrow-redis" value="Redis 客户端连接" style="endArrow=block;endFill=1;html=1;strokeColor=#0ea5e9;strokeWidth=2;fontSize=8;fontColor=#0369a1;fontStyle=1;exitX=0.88;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="backend-layer" target="redis-store">
+          <mxGeometry x="-0.1" relative="1" as="geometry">
+            <mxPoint x="815" y="438" as="sourcePoint"/>
+            <mxPoint x="770" y="448" as="targetPoint"/>
+            <mxPoint as="offset"/>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- ===== Layer 4: Data ===== -->
+        <mxCell id="data-layer" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f3e8ff;strokeColor=#9333ea;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="40" y="448" width="880" height="82" as="geometry"/>
+        </mxCell>
+        <mxCell id="data-label" value="④ Data Layer / 数据层  (Oracle · APP_CMS Schema)" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=11;fontStyle=1;fontColor=#7c3aed;" vertex="1" parent="1">
+          <mxGeometry x="52" y="452" width="280" height="16" as="geometry"/>
+        </mxCell>
+        <mxCell id="oracle" value="Oracle DB&#xa;(APP_CMS)" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=8;fillColor=#ede9fe;strokeColor=#7c3aed;fontSize=9;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="55" y="472" width="100" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="tbl1" value="RWSYS_USER&#xa;(Auth)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e9d5ff;strokeColor=#a855f7;fontSize=8;" vertex="1" parent="1">
+          <mxGeometry x="175" y="474" width="90" height="36" as="geometry"/>
+        </mxCell>
+        <mxCell id="tbl2" value="TSK_LIST_TASK&#xa;(Orders)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e9d5ff;strokeColor=#a855f7;fontSize=8;" vertex="1" parent="1">
+          <mxGeometry x="275" y="474" width="90" height="36" as="geometry"/>
+        </mxCell>
+        <mxCell id="tbl5" value="VIEW_TSK_LIST_TASK&#xa;(Extended Fields)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ddd6fe;strokeColor=#7c3aed;fontSize=8;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="375" y="474" width="105" height="36" as="geometry"/>
+        </mxCell>
+        <mxCell id="tbl3" value="BAS_CODES&#xa;(Reference)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e9d5ff;strokeColor=#a855f7;fontSize=8;" vertex="1" parent="1">
+          <mxGeometry x="490" y="474" width="90" height="36" as="geometry"/>
+        </mxCell>
+        <mxCell id="tbl4" value="DOC_COMPLAINT&#xa;(Interception)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e9d5ff;strokeColor=#a855f7;fontSize=8;" vertex="1" parent="1">
+          <mxGeometry x="590" y="474" width="95" height="36" as="geometry"/>
+        </mxCell>
+        <mxCell id="redis-store" value="Redis&#xa;Token Blacklist + Refresh Token" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=8;fillColor=#e0f2fe;strokeColor=#0284c7;fontSize=8;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="705" y="472" width="170" height="50" as="geometry"/>
+        </mxCell>
+
+        <!-- Footer -->
+        <mxCell id="legend" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8fafc;strokeColor=#e2e8f0;" vertex="1" parent="1">
+          <mxGeometry x="40" y="548" width="880" height="48" as="geometry"/>
+        </mxCell>
+        <mxCell id="tech1" value="Frontend: React 18 · TypeScript · Vite 6 · TailwindCSS · Recharts    |    Backend: Node.js · Express · oracledb · JWT · Redis    |    Database: Oracle APP_CMS" style="text;html=1;strokeColor=none;fillColor=none;align=center;fontSize=8;fontColor=#64748b;" vertex="1" parent="1">
+          <mxGeometry x="50" y="558" width="860" height="14" as="geometry"/>
+        </mxCell>
+        <mxCell id="tech2" value="⚠ Dev Environment: 全链路使用 HTTP（localhost:3000 → localhost:3001），未启用 HTTPS / TLS；生产环境需配置反向代理与证书" style="text;html=1;strokeColor=none;fillColor=none;align=center;fontSize=8;fontColor=#92400e;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="50" y="574" width="860" height="14" as="geometry"/>
+        </mxCell>
+
       </root>
     </mxGraphModel>
   </diagram>
 </mxfile>
-

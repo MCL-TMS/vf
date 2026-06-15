@@ -6,11 +6,23 @@
 const express = require('express');
 const router = express.Router();
 const oracledb = require('oracledb');
+const { randomInt } = require('crypto');
 const { getConnection, releaseConnection } = require('../config/database-api');
 const { generateToken, generateRefreshToken, verifyRefreshToken, verifyToken, revokeToken, revokeRefreshToken, rotateRefreshToken } = require('../middleware/authMiddleware'); // 🔥 JWT生成函数
 const { loginRateLimit } = require('../middleware/rateLimitMiddleware'); // 🔥 防暴力破解中间件
 const { ERROR_CODES, sendError } = require('../utils/apiError');
 const { verifyAndUpgradePassword } = require('../utils/passwordUtils');
+const { createOtpChallenge, verifyOtpChallenge, deleteChallenge, maskEmailAddress } = require('../utils/mfaOtpStore');
+const { sendOtpEmail, isEmailMfaEnabled } = require('../utils/emailSender');
+
+function isDatabaseUnavailableError(error) {
+  if (!error) {
+    return false;
+  }
+
+  const code = String(error.code || '').toUpperCase();
+  return code === 'NJS-040' || code === 'NJS-510' || code.startsWith('ORA-');
+}
 
 function getCustomerNoScopeForUser(rawCustomerNo, isAdmin) {
   // 管理员用显式 all 表示“全量品牌可见”，避免空字符串被误解为“无权限”。
@@ -21,13 +33,35 @@ function getCustomerNoScopeForUser(rawCustomerNo, isAdmin) {
   return rawCustomerNo || '';
 }
 
+function generateNumericOtpCode() {
+  return String(randomInt(0, 1000000)).padStart(6, '0');
+}
+
+function buildAuthPayload(user) {
+  const customerNos = user.CUSTOMERNO ? user.CUSTOMERNO.split(',').map(c => c.trim()).filter(Boolean) : [];
+  const isAdmin = customerNos.length === 0 || customerNos.includes('all') || customerNos.includes('ALL');
+  const customerNoScope = getCustomerNoScopeForUser(user.CUSTOMERNO, isAdmin);
+
+  return {
+    tokenPayload: {
+      userId: user.USERID,
+      userName: user.USER_NAME_C,
+      roleId: user.ROLE_ID || '',
+      customerNo: customerNoScope,
+      customerNos: isAdmin ? [] : customerNos,
+      isAdmin
+    },
+    customerNoScope
+  };
+}
+
 /**
  * GET /api/auth/login
  * 返回端点使用说明（浏览器直接访问）
  */
 router.get('/login', (req, res) => {
   res.status(200).json({
-    message: '✅ 认证端点工作正常',
+    message: '✅ 认证端点工作正常（邮箱MFA已启用）',
     method: 'POST',
     endpoint: '/api/auth/login',
     usage: {
@@ -38,6 +72,13 @@ router.get('/login', (req, res) => {
       body: {
         userId: 'your_username',
         password: 'your_password'
+      }
+    },
+    mfa: {
+      verifyEndpoint: '/api/auth/login/verify-otp',
+      requestBody: {
+        challengeId: 'from login response',
+        otpCode: '6-digit numeric code'
       }
     },
     example: `
@@ -103,6 +144,7 @@ router.post('/login', loginRateLimit, async (req, res) => {
         USER_NAME_C,
         ROLE_ID,
         CUSTOMERNO,
+        USER_EMAIL,
         PASSWORD,
         ACTIVE_FLAG
       FROM APP_CMS.RWSYS_USER
@@ -149,51 +191,213 @@ router.post('/login', loginRateLimit, async (req, res) => {
       console.warn(`⚠️ [Auth] 用户 ${user.USERID} 使用${passwordCheck.legacyFormat}密码格式登录，当前账号仅具备查询权限，未执行密码升级`);
     }
 
-    // 🔥 登录成功，清除尝试记录
+    // 邮箱MFA流程（默认启用）。
+    if (isEmailMfaEnabled()) {
+      if (!user.USER_EMAIL) {
+        return sendError(res, req, {
+          status: 403,
+          code: ERROR_CODES.AUTH_FAILED,
+          error: '当前账号未配置邮箱，无法完成二次验证，请联系管理员'
+        });
+      }
+
+      const otpCode = generateNumericOtpCode();
+      const { challengeId, ttlSeconds } = await createOtpChallenge(
+        {
+          userId: user.USERID,
+          email: user.USER_EMAIL,
+          purpose: 'login'
+        },
+        otpCode
+      );
+
+      try {
+        await sendOtpEmail({
+          to: user.USER_EMAIL,
+          code: otpCode,
+          userId: user.USERID
+        });
+      } catch (mailError) {
+        console.error('❌ [Auth] MFA邮件发送失败:', mailError.message);
+        await deleteChallenge(challengeId);
+        return sendError(res, req, {
+          status: 500,
+          code: ERROR_CODES.INTERNAL_ERROR,
+          error: '验证码发送失败，请稍后重试'
+        });
+      }
+
+      console.log('✅ [Auth] 用户密码验证通过，已发送MFA验证码:', {
+        userId: user.USERID,
+        challengeId,
+        expiresInSeconds: ttlSeconds
+      });
+
+      return res.json({
+        success: true,
+        mfaRequired: true,
+        challengeId,
+        expiresIn: ttlSeconds,
+        maskedEmail: maskEmailAddress(user.USER_EMAIL),
+        message: '验证码已发送到您的邮箱'
+      });
+    }
+
+    // 若MFA未启用，保持原登录行为（兼容环境开关）
+    const { tokenPayload, customerNoScope } = buildAuthPayload(user);
+    const token = generateToken(tokenPayload);
+    const refreshToken = await generateRefreshToken(tokenPayload);
+
     if (req.clearLoginAttempts) {
       await req.clearLoginAttempts();
     }
 
-    // 🔥 准备JWT载荷
-    const customerNos = user.CUSTOMERNO ? user.CUSTOMERNO.split(',').map(c => c.trim()).filter(Boolean) : [];
-    const isAdmin = customerNos.length === 0 || customerNos.includes('all') || customerNos.includes('ALL');
-    const customerNoScope = getCustomerNoScopeForUser(user.CUSTOMERNO, isAdmin);
-
-    const tokenPayload = {
-      userId: user.USERID,
-      userName: user.USER_NAME_C,
-      roleId: user.ROLE_ID || '',
-      customerNo: customerNoScope,
-      customerNos: isAdmin ? [] : customerNos,
-      isAdmin: isAdmin
-    };
-
-    // 🔥 生成JWT token
-    const token = generateToken(tokenPayload);
-    const refreshToken = await generateRefreshToken(tokenPayload);
-
-    console.log('✅ [Auth] 用户登录成功，生成token:', {
-      userId: user.USERID,
-      isAdmin: isAdmin,
-      tokenLength: token.length,
-      refreshTokenLength: refreshToken.length
-    });
-
-    // 登录成功，返回用户信息和token
     return res.json({
       success: true,
       user: {
         userId: user.USERID,
         userName: user.USER_NAME_C,
         roleId: user.ROLE_ID || '',
-        customerNo: customerNoScope // 可查看的品牌范围（管理员返回 all）
+        customerNo: customerNoScope
       },
-      token: token, // 🔥 返回JWT token
-      refreshToken: refreshToken
+      token,
+      refreshToken
     });
 
   } catch (error) {
     console.error('❌ Login API Error:', error);
+
+    if (isDatabaseUnavailableError(error)) {
+      if (req.clearLoginAttempts) {
+        await req.clearLoginAttempts('数据库不可用，不计入失败次数');
+      }
+
+      return sendError(res, req, {
+        status: 503,
+        code: ERROR_CODES.DB_UNAVAILABLE,
+        error: '数据库连接不可用，请稍后重试'
+      });
+    }
+
+    return sendError(res, req, {
+      status: 500,
+      code: ERROR_CODES.INTERNAL_ERROR,
+      error: '服务器错误，请稍后重试'
+    });
+  } finally {
+    if (connection) {
+      try {
+        await releaseConnection(connection);
+      } catch (err) {
+        console.error('Error closing connection:', err);
+      }
+    }
+  }
+});
+
+/**
+ * POST /api/auth/login/verify-otp
+ * 校验邮箱验证码并完成登录
+ */
+router.post('/login/verify-otp', loginRateLimit, async (req, res) => {
+  let connection;
+
+  try {
+    const { challengeId, otpCode } = req.body || {};
+
+    if (!challengeId || !otpCode) {
+      return sendError(res, req, {
+        status: 400,
+        code: ERROR_CODES.VALIDATION_ERROR,
+        error: 'challengeId和otpCode不能为空',
+        details: {
+          missingFields: [!challengeId ? 'challengeId' : null, !otpCode ? 'otpCode' : null].filter(Boolean)
+        }
+      });
+    }
+
+    const verifyResult = await verifyOtpChallenge(challengeId, String(otpCode).trim());
+    if (!verifyResult.success) {
+      if (verifyResult.reason === 'TOO_MANY_ATTEMPTS') {
+        return sendError(res, req, {
+          status: 429,
+          code: ERROR_CODES.LOGIN_RATE_LIMITED,
+          error: '验证码错误次数过多，请重新登录获取新验证码'
+        });
+      }
+
+      if (verifyResult.reason === 'NOT_FOUND') {
+        return sendError(res, req, {
+          status: 401,
+          code: ERROR_CODES.AUTH_FAILED,
+          error: '验证码已过期，请重新登录获取新验证码'
+        });
+      }
+
+      return sendError(res, req, {
+        status: 401,
+        code: ERROR_CODES.AUTH_FAILED,
+        error: '验证码错误',
+        details: {
+          attemptsLeft: verifyResult.attemptsLeft
+        }
+      });
+    }
+
+    connection = await getConnection();
+    const query = `
+      SELECT 
+        USERID,
+        USER_NAME_C,
+        ROLE_ID,
+        CUSTOMERNO,
+        ACTIVE_FLAG
+      FROM APP_CMS.RWSYS_USER
+      WHERE UPPER(USERID) = UPPER(:userId)
+        AND ACTIVE_FLAG = 'Y'
+    `;
+
+    const result = await connection.execute(
+      query,
+      { userId: verifyResult.challenge.userId },
+      { outFormat: oracledb.OUT_FORMAT_OBJECT }
+    );
+
+    if (result.rows.length === 0) {
+      return sendError(res, req, {
+        status: 401,
+        code: ERROR_CODES.AUTH_USER_INACTIVE,
+        error: '用户不存在或已被停用，请重新登录'
+      });
+    }
+
+    const user = result.rows[0];
+    const { tokenPayload, customerNoScope } = buildAuthPayload(user);
+    const token = generateToken(tokenPayload);
+    const refreshToken = await generateRefreshToken(tokenPayload);
+
+    if (req.clearLoginAttempts) {
+      await req.clearLoginAttempts();
+    }
+
+    console.log('✅ [Auth] 用户MFA验证通过并登录成功:', {
+      userId: user.USERID
+    });
+
+    return res.json({
+      success: true,
+      user: {
+        userId: user.USERID,
+        userName: user.USER_NAME_C,
+        roleId: user.ROLE_ID || '',
+        customerNo: customerNoScope
+      },
+      token,
+      refreshToken,
+      mfaVerified: true
+    });
+  } catch (error) {
+    console.error('❌ [Auth] MFA验证码校验失败:', error);
     return sendError(res, req, {
       status: 500,
       code: ERROR_CODES.INTERNAL_ERROR,

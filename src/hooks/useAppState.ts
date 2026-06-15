@@ -39,7 +39,7 @@ export function useAppState() {
   
   // Filter states
   const [selectedBrand, setSelectedBrand] = useState<string | string[] | null>(null); // 🔥 修复：支持数组
-  const [selectedPlatform, setSelectedPlatform] = useState<string | null>(null);
+  const [selectedPlatform, setSelectedPlatform] = useState<string | string[] | null>(null); // 🔥 修改：支持多选平台
   const [selectedSelfFlag, setSelectedSelfFlag] = useState<string | null>('Y'); // 🔧 默认为"自管"，筛选SELF_FLAG='Y'的订单
   const [filters, setFilters] = useState<FilterState>({
     brand: null,

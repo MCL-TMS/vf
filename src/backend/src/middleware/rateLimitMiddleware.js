@@ -215,10 +215,10 @@ async function checkLoginAttempt(ip, userId) {
  * @param {string} ip - 客户端IP
  * @param {string} userId - 用户名
  */
-async function clearAttempts(ip, userId) {
+async function clearAttempts(ip, userId, reason = '登录成功') {
   const key = getAttemptKey(ip, userId);
   await deleteAttemptRecord(key);
-  console.log(`✅ [Rate Limit] ${key} 登录成功，清除尝试记录`);
+  console.log(`✅ [Rate Limit] ${key} ${reason}，清除尝试记录`);
 }
 
 /**
@@ -253,7 +253,7 @@ async function loginRateLimit(req, res, next) {
   }
   
   // 将清除函数附加到req对象，供登录成功后调用
-  req.clearLoginAttempts = () => clearAttempts(ip, userId);
+  req.clearLoginAttempts = (reason) => clearAttempts(ip, userId, reason);
   
   next();
 }

@@ -13,9 +13,12 @@ import loginBg from '../assets/微信图片_20260323172528.png'; // 替换为你
 const REMEMBERED_USERNAME_KEY = 'vf_logistics_remembered_username';
 
 export const LoginPage: React.FC = () => {
-  const { login } = useAuth();
+  const { login, verifyMfaCode } = useAuth();
   const [userId, setUserId] = useState('');
   const [password, setPassword] = useState('');
+  const [otpCode, setOtpCode] = useState('');
+  const [mfaChallengeId, setMfaChallengeId] = useState<string | null>(null);
+  const [maskedEmail, setMaskedEmail] = useState('');
   const [rememberUsername, setRememberUsername] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -32,19 +35,46 @@ export const LoginPage: React.FC = () => {
     e.preventDefault();
     setError(null);
 
-    if (!userId.trim() || !password.trim()) {
+    if (!mfaChallengeId && (!userId.trim() || !password.trim())) {
       setError('请输入用户名和密码');
+      return;
+    }
+
+    if (mfaChallengeId && !/^\d{6}$/.test(otpCode)) {
+      setError('请输入6位数字验证码');
       return;
     }
 
     setIsLoading(true);
 
     try {
-      const result = await login(userId.trim(), password);
-      
-      if (!result.success) {
-        setError(result.error || '登录失败');
+      if (!mfaChallengeId) {
+        const result = await login(userId.trim(), password);
+
+        if (result.mfaRequired && result.challengeId) {
+          setMfaChallengeId(result.challengeId);
+          setMaskedEmail(result.maskedEmail || '您的邮箱');
+          setOtpCode('');
+          return;
+        }
+
+        if (!result.success) {
+          setError(result.error || '登录失败');
+          return;
+        }
+
+        if (rememberUsername) {
+          localStorage.setItem(REMEMBERED_USERNAME_KEY, userId.trim());
+        } else {
+          localStorage.removeItem(REMEMBERED_USERNAME_KEY);
+        }
       } else {
+        const result = await verifyMfaCode(mfaChallengeId, otpCode);
+        if (!result.success) {
+          setError(result.error || '验证码校验失败');
+          return;
+        }
+
         if (rememberUsername) {
           localStorage.setItem(REMEMBERED_USERNAME_KEY, userId.trim());
         } else {
@@ -88,7 +118,7 @@ export const LoginPage: React.FC = () => {
           <CardHeader>
             <CardTitle className="text-2xl text-center">用户登录</CardTitle>
             <CardDescription className="text-center">
-              请输入您的账号和密码
+              {mfaChallengeId ? `请输入发送到 ${maskedEmail} 的6位验证码` : '请输入您的账号和密码'}
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -100,36 +130,53 @@ export const LoginPage: React.FC = () => {
                 </Alert>
               )}
 
-              {/* 用户名 */}
-              <div className="space-y-2">
-                <Label htmlFor="userId" className="text-sm font-medium">用户名</Label>
-                <Input
-                  id="userId"
-                  type="text"
-                  placeholder="请输入用户名"
-                  value={userId}
-                  onChange={(e) => setUserId(e.target.value)}
-                  disabled={isLoading}
-                  className="h-11 border-functional-light-grey"
-                  autoComplete="username"
-                  autoFocus
-                />
-              </div>
+              {!mfaChallengeId ? (
+                <>
+                  <div className="space-y-2">
+                    <Label htmlFor="userId" className="text-sm font-medium">用户名</Label>
+                    <Input
+                      id="userId"
+                      type="text"
+                      placeholder="请输入用户名"
+                      value={userId}
+                      onChange={(e) => setUserId(e.target.value)}
+                      disabled={isLoading}
+                      className="h-11 border-functional-light-grey"
+                      autoComplete="username"
+                      autoFocus
+                    />
+                  </div>
 
-              {/* 密码 */}
-              <div className="space-y-2">
-                <Label htmlFor="password" className="text-sm font-medium">密码</Label>
-                <Input
-                  id="password"
-                  type="password"
-                  placeholder="请输入密码"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  disabled={isLoading}
-                  className="h-11 border-functional-light-grey"
-                  autoComplete="current-password"
-                />
-              </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="password" className="text-sm font-medium">密码</Label>
+                    <Input
+                      id="password"
+                      type="password"
+                      placeholder="请输入密码"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      disabled={isLoading}
+                      className="h-11 border-functional-light-grey"
+                      autoComplete="current-password"
+                    />
+                  </div>
+                </>
+              ) : (
+                <div className="space-y-2">
+                  <Label htmlFor="otpCode" className="text-sm font-medium">邮箱验证码</Label>
+                  <Input
+                    id="otpCode"
+                    type="text"
+                    placeholder="请输入6位数字验证码"
+                    value={otpCode}
+                    onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                    disabled={isLoading}
+                    className="h-11 border-functional-light-grey tracking-[0.25em] text-center"
+                    autoComplete="one-time-code"
+                    autoFocus
+                  />
+                </div>
+              )}
 
               <div className="flex items-center space-x-2">
                 <Checkbox
@@ -155,15 +202,32 @@ export const LoginPage: React.FC = () => {
                 {isLoading ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    登录中...
+                    {mfaChallengeId ? '验证中...' : '登录中...'}
                   </>
                 ) : (
                   <>
                     <LogIn className="mr-2 h-4 w-4" />
-                    登录
+                    {mfaChallengeId ? '验证并登录' : '登录'}
                   </>
                 )}
               </Button>
+
+              {mfaChallengeId && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={isLoading}
+                  className="w-full"
+                  onClick={() => {
+                    setMfaChallengeId(null);
+                    setMaskedEmail('');
+                    setOtpCode('');
+                    setError(null);
+                  }}
+                >
+                  返回账号密码登录
+                </Button>
+              )}
             </form>
 
             <div className="mt-6 text-center text-xs text-functional-mid-grey space-y-1">

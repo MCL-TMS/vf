@@ -43,7 +43,35 @@ Request body:
 }
 ```
 
-Successful response:
+Successful response (MFA challenge):
+
+```json
+{
+  "success": true,
+  "mfaRequired": true,
+  "challengeId": "<challenge-id>",
+  "expiresIn": 300,
+  "maskedEmail": "ab***@example.com",
+  "message": "验证码已发送到您的邮箱"
+}
+```
+
+### 3.1.1 Verify MFA OTP
+
+- Endpoint: `POST /api/auth/login/verify-otp`
+- Auth: no
+- Content-Type: `application/json`
+
+Request body:
+
+```json
+{
+  "challengeId": "<challenge-id>",
+  "otpCode": "123456"
+}
+```
+
+Successful response (login completed):
 
 ```json
 {
@@ -54,7 +82,8 @@ Successful response:
     "customerNo": "18405,18405-1"
   },
   "token": "<access-token>",
-  "refreshToken": "<refresh-token>"
+  "refreshToken": "<refresh-token>",
+  "mfaVerified": true
 }
 ```
 
