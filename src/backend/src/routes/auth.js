@@ -416,7 +416,7 @@ router.post('/login/verify-otp', loginRateLimit, async (req, res) => {
  * POST /api/auth/refresh
  * 刷新Access Token
  */
-router.post('/refresh', async (req, res) => {
+router.post('/refresh', loginRateLimit, async (req, res) => {
   let connection;
 
   try {
@@ -487,9 +487,7 @@ router.post('/refresh', async (req, res) => {
     const newToken = generateToken(tokenPayload);
     const newRefreshToken = await rotateRefreshToken(refreshToken, tokenPayload);
 
-    console.log('🔄 [Auth] Token刷新成功:', {
-      userId: user.USERID
-    });
+    console.log('🔄 [Auth] Token刷新成功');
 
     return res.json({
       success: true,
@@ -518,18 +516,18 @@ router.post('/refresh', async (req, res) => {
  * POST /api/auth/logout
  * 登出并撤销当前 access token / refresh token
  */
-router.post('/logout', verifyToken, async (req, res) => {
+router.post('/logout', loginRateLimit, verifyToken, async (req, res) => {
   try {
     const { refreshToken } = req.body || {};
 
     if (req.token) {
       await revokeToken(req.token);
-      console.log('👋 [Auth] 用户登出，token已撤销:', { userId: req.user.userId });
+      console.log('👋 [Auth] 用户登出，token已撤销');
     }
 
     if (refreshToken) {
       await revokeRefreshToken(refreshToken);
-      console.log('👋 [Auth] Refresh token已撤销:', { userId: req.user.userId });
+      console.log('👋 [Auth] Refresh token已撤销');
     }
 
     return res.json({

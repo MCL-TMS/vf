@@ -1,4 +1,4 @@
-const { randomUUID, createHash } = require('crypto');
+const { randomUUID, createHash, pbkdf2Sync } = require('crypto');
 const { getRedisClient, buildRedisKey } = require('./redisStore');
 
 const memoryChallengeStore = new Map();
@@ -6,11 +6,15 @@ const DEFAULT_OTP_TTL_SECONDS = Number.parseInt(process.env.MFA_OTP_TTL_SECONDS 
 const MAX_VERIFY_ATTEMPTS = Number.parseInt(process.env.MFA_MAX_VERIFY_ATTEMPTS || '5', 10);
 
 function getOtpPepper() {
-  return process.env.MFA_OTP_PEPPER || '';
+  return process.env.MFA_OTP_PEPPER || 'default_otp_pepper_2025';
 }
 
+/**
+ * 使用 PBKDF2 增加计算量，防止针对 OTP 的暴力破解
+ */
 function hashOtpCode(code) {
-  return createHash('sha256').update(`${code}:${getOtpPepper()}`).digest('hex');
+  // 使用 PBKDF2 迭代 1000 次
+  return pbkdf2Sync(code, getOtpPepper(), 1000, 64, 'sha512').toString('hex');
 }
 
 function getChallengeStorageKey(challengeId) {

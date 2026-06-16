@@ -189,7 +189,7 @@ async function analyzeS2DPerformance(options = {}) {
       // 单品牌筛选
       whereClauses.push(`t.CUSTOMERNO = :brandCode`);
       params.brandCode = brandCode;
-      console.log(`[Brand Filter] 单品牌筛选: ${brandCode}`);
+      console.log('[Brand Filter] 单品牌筛选:', brandCode);
     } else if (selectedBrand === 'all' && userBrands && Array.isArray(userBrands) && userBrands.length > 0) {
       // 🔥 新增：当选择"全部品牌"时，使用用户权限范围
       const placeholders = userBrands.map((_, index) => `:userBrand${index}`).join(', ');
@@ -197,11 +197,11 @@ async function analyzeS2DPerformance(options = {}) {
       userBrands.forEach((code, index) => {
         params[`userBrand${index}`] = code;
       });
-      console.log(`🔐 [Brand Filter] 全部品牌 - 基于用户权限 (${userBrands.length}个):`, userBrands);
+      console.log('🔐 [Brand Filter] 全部品牌 - 基于用户权限 (%d个):', userBrands.length, userBrands);
     } else if (!selectedBrand || selectedBrand === 'all') {
       // 🔥 回退：VF品牌范围（当没有userBrands时）
       whereClauses.push(`t.CUSTOMERNO IN ('18405', '18405-1', '18405-2', '18405-3', '18405-4')`);
-      console.log(`🏷️ [Brand Filter] 全部品牌 - 回退到VF品牌范围（未提供userBrands）`);
+      console.log('🏷️ [Brand Filter] 全部品牌 - 回退到VF品牌范围（未提供userBrands）');
     }
     
     if (selectedCarrier) {
@@ -860,7 +860,7 @@ async function analyzeC2DPerformance(options = {}) {
       // 单品牌筛选
       whereClauses.push(`t.CUSTOMERNO = :brandCode`);
       params.brandCode = brandCode;
-      console.log(`[C2D Brand Filter] 单品牌筛选: ${brandCode}`);
+      console.log('[C2D Brand Filter] 单品牌筛选:', brandCode);
     } else if (selectedBrand === 'all' && userBrands && Array.isArray(userBrands) && userBrands.length > 0) {
       // 🔥 新增：当选择"全部品牌"时，使用用户权限范围
       const placeholders = userBrands.map((_, index) => `:userBrand${index}`).join(', ');
@@ -868,11 +868,11 @@ async function analyzeC2DPerformance(options = {}) {
       userBrands.forEach((code, index) => {
         params[`userBrand${index}`] = code;
       });
-      console.log(`🔐 [C2D Brand Filter] 全部品牌 - 基于用户权限 (${userBrands.length}个):`, userBrands);
+      console.log('🔐 [C2D Brand Filter] 全部品牌 - 基于用户权限 (%d个):', userBrands.length, userBrands);
     } else if (!selectedBrand || selectedBrand === 'all') {
       // 🔥 回退：VF品牌范围（当没有userBrands时）
       whereClauses.push(`t.CUSTOMERNO IN ('18405', '18405-1', '18405-2', '18405-3', '18405-4')`);
-      console.log(`[C2D Brand Filter] 全部品牌 - 回退到VF品牌范围（未提供userBrands）`);
+      console.log('[C2D Brand Filter] 全部品牌 - 回退到VF品牌范围（未提供userBrands）');
     }
     
     if (selectedCarrier) {

@@ -768,81 +768,66 @@ const regionAnalysis = useMemo(() => {
                 <Package className="h-5 w-5 text-purple-600" />
                 重点地区轻量包裹分析
               </h4>
-              {isLoadingRegion ? (
-                <div className="text-center text-blue-600 py-8">地区分析数据加载中...</div>
-              ) : regionError ? (
-                <div className="text-center text-red-600 py-8">{regionError}</div>
-              ) : (
-                <>
-                  <div className="space-y-4">
-                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-                      {(showAllRegions ? regionAnalysis : regionAnalysis.slice(0, 3)).map((region, index) => (
-                        <div key={index} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
-                          <div className="text-center">
-                            <h5 className="font-semibold text-gray-900 mb-2">{region.province}</h5>
-                            <div className="text-3xl font-bold text-blue-600 mb-1">{region.lightRatio.toFixed(1)}%</div>
-                            <p className="text-sm text-gray-600 mb-3">轻量包裹占比</p>
-                            <div className="space-y-2 text-sm">
-                              <div className="flex justify-between">
-                                <span className="text-gray-600">轻量包裹:</span>
-                                <span className="font-medium">{region.lightOrders.toLocaleString()}</span>
-                              </div>
-                              <div className="flex justify-between">
-                                <span className="text-gray-600">平均运费:</span>
-                                <span className="font-medium text-green-600">¥{region.avgCost.toFixed(1)}</span>
-                              </div>
-                              <div className="flex justify-between">
-                                <span className="text-gray-600">优化潜力:</span>
-                                <span className="font-medium text-purple-600">
-                                  ¥{Math.round(region.lightOrders * region.avgCost * 0.15 / 10000)}万
-                                </span>
+              
+              <div className="relative">
+                {isLoadingRegion ? (
+                  <div className="text-center text-blue-600 py-8">地区分析数据加载中...</div>
+                ) : regionError ? (
+                  <div className="text-center text-red-600 py-8">{regionError}</div>
+                ) : (
+                  <>
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                        {(showAllRegions ? regionAnalysis : regionAnalysis.slice(0, 3)).map((region, index) => (
+                          <div key={index} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
+                            <div className="text-center">
+                              <h5 className="font-semibold text-gray-900 mb-2">{region.province}</h5>
+                              <div className="text-3xl font-bold text-blue-600 mb-1">{region.lightRatio.toFixed(1)}%</div>
+                              <p className="text-sm text-gray-600 mb-3">轻量包裹占比</p>
+                              <div className="space-y-2 text-sm">
+                                <div className="flex justify-between">
+                                  <span className="text-gray-600">轻量包裹:</span>
+                                  <span className="font-medium">{region.lightOrders.toLocaleString()}</span>
+                                </div>
+                                <div className="flex justify-between">
+                                  <span className="text-gray-600">平均运费:</span>
+                                  <span className="font-medium text-green-600">¥{region.avgCost.toFixed(1)}</span>
+                                </div>
+                                <div className="flex justify-between">
+                                  <span className="text-gray-600">优化潜力:</span>
+                                  <span className="font-medium text-purple-600">
+                                    ¥{Math.round(region.lightOrders * region.avgCost * 0.15 / 10000)}万
+                                  </span>
+                                </div>
                               </div>
                             </div>
                           </div>
-                        </div>
-                      ))}
-                    </div>
-                    {regionAnalysis.length > 3 && (
-                      <div className="text-center">
-                        <Button
-                          variant="outline"
-                          onClick={() => setShowAllRegions(!showAllRegions)}
-                          className="text-blue-600 border-blue-300 hover:bg-blue-50"
-                        >
-                          {showAllRegions ? '收起更多 ↑' : `查看全部 ${regionAnalysis.length} 个地区 ↓`}
-                        </Button>
+                        ))}
                       </div>
-                    )}
-                  </div>
+                      {regionAnalysis.length > 3 && (
+                        <div className="text-center">
+                          <Button
+                            variant="outline"
+                            onClick={() => setShowAllRegions(!showAllRegions)}
+                            className="text-blue-600 border-blue-300 hover:bg-blue-50"
+                          >
+                            {showAllRegions ? '收起更多 ↑' : `查看全部 ${regionAnalysis.length} 个地区 ↓`}
+                          </Button>
+                        </div>
+                      )}
+                    </div>
 
-                                    {/* 基于地区数据的优化建议 */}
-                  <div className="mt-6 bg-blue-50/50 rounded-lg p-6 border border-dashed border-blue-200 flex flex-col items-center justify-center">
-                    <div className="p-2 bg-white rounded-full shadow-sm mb-2">
-                      <Sparkles className="h-5 w-5 text-blue-400 opacity-50" />
+                    {/* 地区优化建议 (AI) */}
+                    <div className="mt-8 bg-blue-50/50 rounded-xl p-6 border border-dashed border-blue-200 flex flex-col items-center justify-center">
+                      <div className="p-3 bg-white rounded-full shadow-sm mb-3">
+                        <Sparkles className="h-6 w-6 text-blue-400 opacity-60" />
+                      </div>
+                      <h5 className="font-semibold text-blue-900 mb-1">地区优化建议 (AI)</h5>
+                      <p className="text-sm text-blue-600">功能暂未开放，敬请期待</p>
                     </div>
-                    <h5 className="font-semibold text-blue-900 mb-1">地区优化建议 (AI)</h5>
-                    <p className="text-xs text-blue-600">功能暂未开放，敬请期待</p>
-                    
-                    {/* 源代码保留供后续开放使用
-                    <h5 className="font-semibold text-blue-900 mb-2 flex items-center gap-2">
-                      <AlertCircle className="h-5 w-5" />
-                      基于数据的地区优化建议
-                    </h5>
-                    <div className="text-sm text-blue-800 space-y-1">
-                      {(showAllRegions ? regionAnalysis : regionAnalysis.slice(0, 3)).map((region, index) => (
-                        <p key={index}>
-                          • <strong>{region.province}</strong>: 
-                          {region.lightRatio > 60 ? '轻量包裹占比极高，建议优先实施包装优化' : ''}
-                          {region.lightRatio > 50 && region.lightRatio <= 60 ? '具备费率谈判优势，建议启动批量协商' : ''}
-                          {region.lightRatio <= 50 ? '可作为重包裹专线优化试点' : ''}
-                          (占比{region.lightRatio.toFixed(1)}%，潜在节省¥{Math.round(region.lightOrders * region.avgCost * 0.15 / 10000)}万)
-                        </p>
-                      ))}
-                    </div>
-                    */}
-                  </div>
-                </>
-              )}
+                  </>
+                )}
+              </div>
             </div>
           )}
         </div>
