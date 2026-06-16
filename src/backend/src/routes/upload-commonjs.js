@@ -12,6 +12,7 @@ const path = require('path');
 const fs = require('fs');
 const XLSX = require('xlsx');
 const timelinessFileStore = require('../utils/timelinessFileStore');
+const { globalRateLimiter } = require('../middleware/rateLimitMiddleware');
 const { ERROR_CODES, sendError, sendRouteError } = require('../utils/apiError');
 
 // 统一的上传文件根目录，应与 multer 的存储目录保持一致
@@ -375,7 +376,7 @@ const upload = multer({
  * 上传时效分析Excel表格
  * POST /api/upload/timeliness-excel
  */
-router.post('/timeliness-excel', upload.single('file'), async (req, res) => {
+router.post('/timeliness-excel', globalRateLimiter, upload.single('file'), async (req, res) => {
   try {
     if (!req.file) {
       return sendError(res, req, {
@@ -755,7 +756,7 @@ router.get('/dest-city-lookup', async (req, res) => {
  * 验证Excel文件格式（不实际上传）
  * POST /api/upload/validate-format
  */
-router.post('/validate-format', upload.single('file'), async (req, res) => {
+router.post('/validate-format', globalRateLimiter, upload.single('file'), async (req, res) => {
   try {
     if (!req.file) {
       return sendError(res, req, {
@@ -805,8 +806,12 @@ router.post('/validate-format', upload.single('file'), async (req, res) => {
     } finally {
       // 清理临时文件
       try {
-        if (fs.existsSync(file.path)) {
-          fs.unlinkSync(file.path);
+        if (file && file.path) {
+          // 🔥 安全加固：使用 path.basename 确保不发生路径穿越
+          const safePath = path.join(UPLOAD_ROOT, path.basename(file.path));
+          if (fs.existsSync(safePath)) {
+            fs.unlinkSync(safePath);
+          }
         }
       } catch (cleanupError) {
         console.warn('清理临时文件失败:', cleanupError.message);
@@ -1299,7 +1304,7 @@ router.get('/file-statistics', async (req, res) => {
  * 功能：扫描 backend/uploads/timeliness 目录，自动加载用户预置的时效Excel文件
  * 这样用户就不需要手工上传，只需将Excel文件放在指定目录即可
  */
-router.post('/load-default-timeliness', async (req, res) => {
+router.post('/load-default-timeliness', globalRateLimiter, async (req, res) => {
   try {
     console.log('\n📁 加载预置时效表文件请求');
     

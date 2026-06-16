@@ -8,6 +8,14 @@ const crypto = require('crypto');
 const SCRYPT_PREFIX = 'scrypt';
 const SCRYPT_KEY_LENGTH = 64;
 
+// 🔥 安全加固：增加计算消耗，防止暴力破解 (OWASP 推荐)
+const SCRYPT_PARAMS = {
+  N: 32768, // Cost factor (power of 2)
+  r: 8,     // Block size
+  p: 1,     // Parallelization
+  maxmem: 64 * 1024 * 1024 // 增加内存限制到 64MB，防止 ERR_CRYPTO_INVALID_SCRYPT_PARAMS
+};
+
 function timingSafeEqualHex(leftHex, rightHex) {
   try {
     const left = Buffer.from(leftHex, 'hex');
@@ -46,7 +54,15 @@ function verifyScryptPassword(plainPassword, storedPassword) {
     return false;
   }
 
-  const computed = crypto.scryptSync(plainPassword, salt, SCRYPT_KEY_LENGTH).toString('hex');
+  // 首先尝试使用高强度参数验证 (新生成的哈希)
+  let computed = crypto.scryptSync(plainPassword, salt, SCRYPT_KEY_LENGTH, SCRYPT_PARAMS).toString('hex');
+  if (timingSafeEqualHex(computed, derivedKey)) {
+    return true;
+  }
+
+  // 兼容旧版参数 (Node.js 默认值: N=16384, r=8, p=1)
+  // 此处保留兼容性，以便后续 verifyAndUpgradePassword 可以自动升级旧账号
+  computed = crypto.scryptSync(plainPassword, salt, SCRYPT_KEY_LENGTH, { N: 16384, r: 8, p: 1 }).toString('hex');
   return timingSafeEqualHex(computed, derivedKey);
 }
 
@@ -68,7 +84,8 @@ async function verifyBcryptPassword(plainPassword, storedPassword) {
 async function hashPassword(plainPassword) {
   try {
     const salt = crypto.randomBytes(16).toString('hex');
-    const derivedKey = crypto.scryptSync(plainPassword, salt, SCRYPT_KEY_LENGTH).toString('hex');
+    // 使用增强版 SCRYPT_PARAMS
+    const derivedKey = crypto.scryptSync(plainPassword, salt, SCRYPT_KEY_LENGTH, SCRYPT_PARAMS).toString('hex');
     return `${SCRYPT_PREFIX}$${salt}$${derivedKey}`;
   } catch (error) {
     console.error('密码加密失败:', error);

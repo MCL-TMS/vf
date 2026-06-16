@@ -188,7 +188,8 @@ router.post('/login', loginRateLimit, async (req, res) => {
     }
 
     if (passwordCheck.needsUpgrade) {
-      console.warn(`⚠️ [Auth] 用户 ${user.USERID} 使用${passwordCheck.legacyFormat}密码格式登录，当前账号仅具备查询权限，未执行密码升级`);
+      // 🔥 安全修复：避免在日志中直接输出敏感信息
+      console.warn(`⚠️ [Auth] 该账号使用${passwordCheck.legacyFormat}密码格式登录，需执行密码升级`);
     }
 
     // 邮箱MFA流程（默认启用）。
@@ -228,7 +229,6 @@ router.post('/login', loginRateLimit, async (req, res) => {
       }
 
       console.log('✅ [Auth] 用户密码验证通过，已发送MFA验证码:', {
-        userId: user.USERID,
         challengeId,
         expiresInSeconds: ttlSeconds
       });
@@ -380,9 +380,7 @@ router.post('/login/verify-otp', loginRateLimit, async (req, res) => {
       await req.clearLoginAttempts();
     }
 
-    console.log('✅ [Auth] 用户MFA验证通过并登录成功:', {
-      userId: user.USERID
-    });
+    console.log('✅ [Auth] 用户MFA验证通过并登录成功');
 
     return res.json({
       success: true,

@@ -15,6 +15,7 @@ const { getConnection } = require('../config/database-api');
 const oracledb = require('oracledb'); // 🔥 新增：导入 oracledb 以使用 OUT_FORMAT_OBJECT
 const { getBrandMapping } = require('../utils/brandMapping');
 const { buildScopedBrandFilter, getAuthorizedCustomerNos } = require('../utils/brandScope');
+const { globalRateLimiter } = require('../middleware/rateLimitMiddleware');
 const { ERROR_CODES, sendError, sendRouteError } = require('../utils/apiError');
 
 /**
@@ -39,7 +40,7 @@ const { ERROR_CODES, sendError, sendRouteError } = require('../utils/apiError');
  *   }
  * }
  */
-router.get('/overview', async (req, res) => {
+router.get('/overview', globalRateLimiter, async (req, res) => {
   let connection;
   
   try {
@@ -360,7 +361,7 @@ router.get('/carrier/:carrierName', async (req, res) => {
     const { dateFrom, dateTo, brand, platform, selfFlag } = req.query;
     const authorizedCustomerNos = getAuthorizedCustomerNos(req.user);
     
-    console.log(`🔄 [Exception-Analysis] 查询快递商异常详情: ${carrierName}`, { 
+    console.log("🔄 [Exception-Analysis] 查询快递商异常详情:", carrierName, { 
       dateFrom, dateTo, brand, platform 
     });
     
