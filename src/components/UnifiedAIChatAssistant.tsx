@@ -623,6 +623,29 @@ export function UnifiedAIChatAssistant({
   dateRange,
   metricType = 'S2D'
 }: UnifiedAIChatAssistantProps) {
+  // 🔒 功能暂未开放提示
+  const handleNotOpenClick = () => {
+    // 可以使用 toast 或者简单的提示
+    alert("AI 问答助手功能暂未开放，敬请期待");
+  };
+
+  return (
+    <div className="fixed bottom-6 right-6 z-50">
+      <Button
+        onClick={handleNotOpenClick}
+        className="h-14 w-14 rounded-full shadow-lg bg-gradient-to-r from-gray-400 to-gray-500 hover:from-gray-500 hover:to-gray-600 opacity-80"
+        title="AI 问答助手 (暂未开放)"
+      >
+        <MessageSquare className="h-6 w-6 text-white opacity-50" />
+      </Button>
+      <div className="absolute -top-1 -right-1">
+        <Badge className="bg-functional-mid-grey h-5 px-1.5 text-[10px] rounded-full flex items-center justify-center border-2 border-white">
+          SOON
+        </Badge>
+      </div>
+    </div>
+  );
+
   const [isOpen, setIsOpen] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);

@@ -370,6 +370,9 @@ export function AIChatAssistant({
   dateRange,
   metricType = 'S2D'
 }: AIChatAssistantProps) {
+  // 🔒 功能暂未开放，直接返回 null 隐藏
+  return null;
+
   const [isOpen, setIsOpen] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);

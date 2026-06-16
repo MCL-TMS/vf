@@ -341,7 +341,7 @@ export function TimeEfficiencyAnalysis({ selectedBrand, selectedSelfFlag, dateRa
         </TabsContent>
       </Tabs>
 
-      {/* AI 问答助手 - 悬浮在右下角 */}
+      {/* AI 问答助手 - 已调整为“暂未开放”提示样式 */}
       <UnifiedAIChatAssistant 
         analysisData={analysisResult}
         competitorData={competitorData} 

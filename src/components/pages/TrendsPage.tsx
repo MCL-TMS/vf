@@ -4,7 +4,13 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, ComposedChart } from "recharts";
-import { Eye, EyeOff, Loader2 } from "lucide-react";
+import { 
+  Eye, 
+  EyeOff, 
+  Loader2,
+  Brain,
+  Sparkles
+} from "lucide-react";
 import { FilteredData } from "../../utils/dataFilter";
 import { getTrendsOrders, getTrendsForecast, getTrendsCarriers, getTrendsExceptions } from "../../services/apiService";
 import type { DateRange } from "../../data/types";
@@ -573,54 +579,78 @@ export function TrendsPage({ data: _data, selectedBrand, dateRange, selfFlag }: 
               </CardContent>
             </Card>
 
-            <Card className="maersk-card">
-              <CardHeader>
-                <CardTitle className="flex items-center justify-between">
+            {/* AI 分析建议 - 已调整为“暂未开放”样式 */}
+            <Card className="maersk-card overflow-hidden">
+              <CardHeader className="bg-functional-bright-grey border-b border-functional-light-grey pb-3">
+                <CardTitle className="flex items-center gap-2">
+                  <Brain className="h-5 w-5 text-maersk-blue" />
                   <span className="text-maersk-black">AI 分析建议</span>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setShowAIAnalysis(!showAIAnalysis)}
-                    className="h-8 w-8 p-0 hover:bg-functional-bright-grey"
-                    title={showAIAnalysis ? "隐藏AI分析" : "显示AI分析"}
-                  >
-                    {showAIAnalysis ? (
-                      <Eye className="h-4 w-4 text-functional-mid-grey" />
-                    ) : (
-                      <EyeOff className="h-4 w-4 text-functional-mid-grey" />
-                    )}
-                  </Button>
+                  <Badge variant="outline" className="ml-auto text-[10px] py-0 h-4 bg-functional-light-grey text-functional-mid-grey border-none">
+                    COMING SOON
+                  </Badge>
                 </CardTitle>
               </CardHeader>
-              <CardContent>
-                {showAIAnalysis ? (
-                  <div className="space-y-3 text-sm">
-                    <div className="p-3 bg-functional-bright-blue rounded-lg border border-functional-light-blue">
-                      <strong className="text-maersk-blue">趋势预测:</strong>
-                      <p className="text-foreground mt-1">
-                        基于历史数据分析，平均每日订单量约 {forecastData?.summary?.avgDailyOrders?.toLocaleString() || 0} 单
-                      </p>
-                    </div>
-                    <div className="p-3 bg-accent-bright-green rounded-lg border border-accent-light-green">
-                      <strong className="text-maersk-blue">性能指标:</strong>
-                      <p className="text-foreground mt-1">
-                        平均签收率 {forecastData?.summary?.avgDeliveryRate || 0}%
-                      </p>
-                    </div>
-                    <div className="p-3 bg-accent-bright-orange rounded-lg border border-accent-light-orange">
-                      <strong className="text-maersk-blue">数据说明:</strong>
-                      <p className="text-foreground mt-1">
-                        预测基于当前筛选时间范围（{forecastSourceRange.from} 至 {forecastSourceRange.to}）的真实订单数据生成
-                      </p>
-                    </div>
+              <CardContent className="py-10">
+                <div className="flex flex-col items-center justify-center text-center">
+                  <div className="w-12 h-12 bg-maersk-white rounded-full flex items-center justify-center shadow-sm mb-3 border border-functional-light-grey">
+                    <Sparkles className="h-6 w-6 text-maersk-blue opacity-20" />
                   </div>
-                ) : (
-                  <div className="text-center py-8 text-muted-foreground">
-                    <EyeOff className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                    <p className="text-sm">AI分析建议已隐藏</p>
-                    <p className="text-xs mt-1">点击眼睛图标可重新显示</p>
-                  </div>
-                )}
+                  <h4 className="text-sm font-medium text-maersk-black mb-1">智能化趋势洞察</h4>
+                  <p className="text-xs text-functional-mid-grey max-w-[200px]">
+                    正在接入大语言模型与专家系统，功能暂未开放，敬请期待
+                  </p>
+                </div>
+
+                {/* 源代码保留供后续开放使用
+                <CardHeader>
+                  <CardTitle className="flex items-center justify-between">
+                    <span className="text-maersk-black">AI 分析建议</span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setShowAIAnalysis(!showAIAnalysis)}
+                      className="h-8 w-8 p-0 hover:bg-functional-bright-grey"
+                      title={showAIAnalysis ? "隐藏AI分析" : "显示AI分析"}
+                    >
+                      {showAIAnalysis ? (
+                        <Eye className="h-4 w-4 text-functional-mid-grey" />
+                      ) : (
+                        <EyeOff className="h-4 w-4 text-functional-mid-grey" />
+                      )}
+                    </Button>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {showAIAnalysis ? (
+                    <div className="space-y-3 text-sm">
+                      <div className="p-3 bg-functional-bright-blue rounded-lg border border-functional-light-blue">
+                        <strong className="text-maersk-blue">趋势预测:</strong>
+                        <p className="text-foreground mt-1">
+                          基于历史数据分析，平均每日订单量约 {forecastData?.summary?.avgDailyOrders?.toLocaleString() || 0} 单
+                        </p>
+                      </div>
+                      <div className="p-3 bg-accent-bright-green rounded-lg border border-accent-light-green">
+                        <strong className="text-maersk-blue">性能指标:</strong>
+                        <p className="text-foreground mt-1">
+                          平均签收率 {forecastData?.summary?.avgDeliveryRate || 0}%
+                        </p>
+                      </div>
+                      <div className="p-3 bg-accent-bright-orange rounded-lg border border-accent-light-orange">
+                        <strong className="text-maersk-blue">数据说明:</strong>
+                        <p className="text-foreground mt-1">
+                          预测基于当前筛选时间范围（{forecastSourceRange.from} 至 {forecastSourceRange.to}）的真实订单数据生成
+                        </p>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-center py-8 text-muted-foreground">
+                      <EyeOff className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                      <p className="text-sm">AI分析建议已隐藏</p>
+                      <p className="text-xs mt-1">点击眼睛图标可重新显示</p>
+                    </div>
+                  )}
+                </CardContent>
+                */}
               </CardContent>
             </Card>
           </div>

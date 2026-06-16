@@ -866,7 +866,16 @@ export function WeightAnalysisPage({ selectedBrand: globalSelectedBrand, dateRan
             </div>
 
             {showAdvancedAnalysis && (
-              <div className="border-t border-functional-light-grey pt-4">
+              <div className="border-t border-functional-light-grey pt-4 mt-4">
+                <div className="flex flex-col items-center justify-center py-10 bg-functional-bright-grey rounded-lg border border-dashed border-functional-light-grey">
+                  <div className="p-3 bg-maersk-white rounded-full shadow-sm mb-3">
+                    <Brain className="h-8 w-8 text-maersk-blue opacity-20" />
+                  </div>
+                  <h4 className="font-medium text-maersk-black mb-1">AI 品牌对比洞察</h4>
+                  <p className="text-sm text-functional-mid-grey">功能暂未开放，敬请期待</p>
+                </div>
+
+                {/* 源代码保留供后续开放使用
                 <div className="flex items-center gap-2 mb-4">
                   <Brain className="h-5 w-5 text-maersk-blue" />
                   <h4 className="font-medium text-maersk-black">AI品牌对比洞察</h4>
@@ -939,6 +948,7 @@ export function WeightAnalysisPage({ selectedBrand: globalSelectedBrand, dateRan
                     <span>最后更新: {pageStats.lastUpdated}</span>
                   </div>
                 </div>
+                */}
               </div>
             )}
           </CardContent>
@@ -1074,6 +1084,15 @@ export function WeightAnalysisPage({ selectedBrand: globalSelectedBrand, dateRan
 
               {showAdvancedAnalysis && (
                 <div className="border-t border-functional-light-grey pt-4">
+                  <div className="flex flex-col items-center justify-center py-10 bg-functional-bright-grey rounded-lg border border-dashed border-functional-light-grey">
+                    <div className="p-3 bg-maersk-white rounded-full shadow-sm mb-3">
+                      <Brain className="h-8 w-8 text-maersk-blue opacity-20" />
+                    </div>
+                    <h4 className="font-medium text-maersk-black mb-1">AI 驱动优化分析</h4>
+                    <p className="text-sm text-functional-mid-grey">功能暂未开放，敬请期待</p>
+                  </div>
+
+                  {/* 源代码保留供后续开放使用
                   <div className="flex items-center gap-2 mb-4">
                     <Brain className="h-5 w-5 text-maersk-blue" />
                     <h4 className="font-medium text-maersk-black">AI驱动优化分析</h4>
@@ -1122,6 +1141,7 @@ export function WeightAnalysisPage({ selectedBrand: globalSelectedBrand, dateRan
                       <span>最后更新: {pageStats.lastUpdated}</span>
                     </div>
                   </div>
+                  */}
                 </div>
               )}
             </CardContent>

@@ -6,7 +6,17 @@ import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { WeightRangeData, weightRangeData, provinceWeightDetails } from "../data/mockData";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
-import { Package, TrendingDown, AlertCircle, CheckCircle, ArrowRight, Calculator } from "lucide-react";
+import { 
+  Package, 
+  TrendingDown, 
+  AlertCircle, 
+  CheckCircle, 
+  ArrowRight, 
+  Calculator,
+  Brain,
+  Sparkles,
+  Lock
+} from "lucide-react";
 import { WEIGHT_RANGE_LABELS } from "../constants/weightRanges";
 
   // ...existing code...
@@ -608,8 +618,8 @@ const regionAnalysis = useMemo(() => {
                 <Package className="h-8 w-8 text-blue-600" />
               </div>
             </div>
-            <div className="bg-gradient-to-r from-orange-50 to-orange-100 rounded-lg p-4 border border-orange-200">
-              <div className="flex items-center justify-between">
+            <div className="bg-gradient-to-r from-orange-50 to-orange-100 rounded-lg p-4 border border-orange-200 relative group overflow-hidden">
+              <div className="flex items-center justify-between opacity-30 grayscale">
                 <div>
                   <p className="text-sm text-orange-600 font-medium">优化机会</p>
                   <p className="text-2xl font-bold text-orange-900">
@@ -619,9 +629,12 @@ const regionAnalysis = useMemo(() => {
                 </div>
                 <AlertCircle className="h-8 w-8 text-orange-600" />
               </div>
+              <div className="absolute inset-0 flex items-center justify-center bg-orange-50/40">
+                <Badge variant="outline" className="bg-white/80 text-orange-600 border-orange-200 shadow-sm text-[10px]">功能暂未开放</Badge>
+              </div>
             </div>
-            <div className="bg-gradient-to-r from-purple-50 to-purple-100 rounded-lg p-4 border border-purple-200">
-              <div className="flex items-center justify-between">
+            <div className="bg-gradient-to-r from-purple-50 to-purple-100 rounded-lg p-4 border border-purple-200 relative group overflow-hidden">
+              <div className="flex items-center justify-between opacity-30 grayscale">
                 <div>
                   <p className="text-sm text-purple-600 font-medium">潜在节省</p>
                   <p className="text-2xl font-bold text-purple-900">
@@ -630,6 +643,9 @@ const regionAnalysis = useMemo(() => {
                   <p className="text-xs text-purple-700 mt-1">年化预估</p>
                 </div>
                 <Calculator className="h-8 w-8 text-purple-600" />
+              </div>
+              <div className="absolute inset-0 flex items-center justify-center bg-purple-50/40">
+                <Badge variant="outline" className="bg-white/80 text-purple-600 border-purple-200 shadow-sm text-[10px]">功能暂未开放</Badge>
               </div>
             </div>
           </div>
@@ -695,6 +711,16 @@ const regionAnalysis = useMemo(() => {
                   <CheckCircle className="h-5 w-5 text-green-600" />
                   数据驱动优化机会
                 </h4>
+                
+                <div className="flex flex-col items-center justify-center h-64 bg-gray-50/50 rounded-lg border border-dashed border-gray-200">
+                  <div className="p-3 bg-white rounded-full shadow-sm mb-3">
+                    <Sparkles className="h-8 w-8 text-green-600 opacity-20" />
+                  </div>
+                  <h5 className="font-medium text-gray-900 mb-1">AI 驱动优化建议</h5>
+                  <p className="text-sm text-gray-500">功能暂未开放，敬请期待</p>
+                </div>
+
+                {/* 源代码保留供后续开放使用
                 <div className="space-y-3 max-h-64 overflow-y-auto">
                   {optimizationOpportunities.map((opportunity, index) => (
                     <div 
@@ -733,6 +759,7 @@ const regionAnalysis = useMemo(() => {
                     </div>
                   ))}
                 </div>
+                */}
               </div>
             </div>
           ) : (
@@ -789,7 +816,14 @@ const regionAnalysis = useMemo(() => {
                   </div>
 
                                     {/* 基于地区数据的优化建议 */}
-                  <div className="mt-6 bg-blue-50 rounded-lg p-4 border border-blue-200">
+                  <div className="mt-6 bg-blue-50/50 rounded-lg p-6 border border-dashed border-blue-200 flex flex-col items-center justify-center">
+                    <div className="p-2 bg-white rounded-full shadow-sm mb-2">
+                      <Sparkles className="h-5 w-5 text-blue-400 opacity-50" />
+                    </div>
+                    <h5 className="font-semibold text-blue-900 mb-1">地区优化建议 (AI)</h5>
+                    <p className="text-xs text-blue-600">功能暂未开放，敬请期待</p>
+                    
+                    {/* 源代码保留供后续开放使用
                     <h5 className="font-semibold text-blue-900 mb-2 flex items-center gap-2">
                       <AlertCircle className="h-5 w-5" />
                       基于数据的地区优化建议
@@ -805,6 +839,7 @@ const regionAnalysis = useMemo(() => {
                         </p>
                       ))}
                     </div>
+                    */}
                   </div>
                 </>
               )}
