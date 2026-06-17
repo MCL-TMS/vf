@@ -30,7 +30,7 @@ By analyzing core business data from FLUX CMS, the system provides:
 mcl-cms_dashboard/
 ├── frontend/                # 前端应用（React + Vite + TypeScript）
 ├── backend/                 # 后端服务（Node.js + Express + Oracle）
-├── docs/                    # 技术文档与接口说明
+├── docs/                    # 文档
 ├── start.sh / start.bat     # 一键启动脚本
 └── README.md
 ```
@@ -46,17 +46,17 @@ mcl-cms_dashboard/
 ├── vite.config.ts                   # Vite 自动化构建配置 Vite build configuration
 │
 ├── src/
-│   ├── main.tsx                     # 应用程序启动渲染入口 Application bootstrap entry
+│   ├── main.tsx                     # 程序启动渲染入口 Application bootstrap entry
 │   ├── App.tsx                      # 根组件，定义全局路由分发与基础 UI 框架 Root component with routing & layout
 │   │
-│   ├── components/                  # UI 业务组件（图表、对话框、分析工具等） # Business UI components
-│   ├── contexts/                    # 全局状态管理（如身份认证、系统配置上下文）# Global state management
+│   ├── components/                  # UI 业务组件 # Business UI components
+│   ├── contexts/                    # 全局状态管理# Global state management
 │   ├── services/                    # 后端 API 请求封装层（基于 axios）  # API service layer (Axios)
-│   ├── hooks/                       # 自定义 React Hooks，封装通用逻辑│    # Custom React Hooks
-│   ├── utils/                       # 前端辅助工具类（数据转换、格式化等） # Frontend utilities
+│   ├── hooks/                       # 自定义 React Hooks   # Custom React Hooks
+│   ├── utils/                       # 前端辅助工具类 # Frontend utilities
 │   └── styles/                      # 全局与组件级样式定义 # Global & component styles
 │
-└── build/                           # 生产环境编译产物目录# Production build output
+└── build/                           # 生产环境编译产物# Production build output
 ```
 
 **设计特点：** Design Highlights**
@@ -78,24 +78,24 @@ src/backend/
 │   │   └── database-api.js   # Oracle 数据库连接池配置与生命周期管理# Oracle connection pool configuration
 │   │
 │   ├── routes/
-│   │   ├── auth.js                  # 身份认证路由（登录验证、令牌签发与管理 Authentication routes
-│   │   ├── brands.js                # 品牌与业务数据相关接口 Brand & business data APIs
-│   │   └── ...                      # 模块化业务路由 Modular business routes
+│   │   ├── auth.js                  # 身份认证路由 #Authentication routes
+│   │   ├── brands.js                # 品牌与业务数据相关接口 #Brand & business data APIs
+│   │   └── ...                      # 模块化业务路由 #Modular business routes
 │   │
 │   ├── middleware/
-│   │   ├── authMiddleware.js        # JWT 权限核验与访问控制安全中间件  JWT authentication & authorization
-│   │   └── rateLimitMiddleware.js   # API 限频保护，抵御自动化扫描  API rate limiting
+│   │   ├── authMiddleware.js        # JWT 权限核验与访问控制安全中间件  #JWT authentication & authorization
+│   │   └── rateLimitMiddleware.js   # API 限频保护  #API rate limiting
 │   │
 │   ├── utils/
-│   │   ├── passwordUtils.js         # 高强度密码哈希处理（基于 scrypt 算法）Strong password hashing (scrypt)
-│   │   ├── apiError.js              # 规范化异常处理，定义统一错误响应格式 Unified error response format
-│   │   ├── mfaOtpStore.js (To be implemented)   # 多因素认证（MFA）挑战存储逻辑 MFA challenge storage logic
-│   │   └── emailSender.js (To be implemented)   # 系统级邮件分发服务System email service
+│   │   ├── passwordUtils.js         # 高强度密码哈希处理 #Strong password hashing (scrypt)
+│   │   ├── apiError.js              # 规范化异常处理，定义统一错误响应格式 #Unified error response format
+│   │   ├── mfaOtpStore.js (To be implemented)   # 多因素认证 #MFA 
+│   │   └── emailSender.js (To be implemented)   # 系统级邮件分发服务 #System email service
 │   │
-│   └── services/                    # 业务逻辑服务层，负责与数据库连接交互Business logic & DB interaction layer
+│   └── services/                    # 业务逻辑服务层，负责与数据库连接交互#Business logic & DB interaction layer
 │
-├── .env                             # 系统配置与敏感环境变量  Environment variables (not committed)
-└── API_GUIDE.md                     # 后端 API 接口设计与开发规范  Backend API specification
+├── .env                             # 系统配置与环境变量#Environment variables (not committed)
+└── API_GUIDE.md                     # 后端API文档#Backend API specification
 ```
 
 **设计特点：**| Design Highlights**
@@ -112,8 +112,8 @@ src/backend/
 
 | 方法 Method   | 用途 Description                                       |
 | ------ | ------------------------------------------------------ |
-| `GET`  | 用于获取各类物流分析指标及系统资源 <br>Retrieve logistics metrics & system resources                     |
-| `POST` | 用于提交敏感数据及执行状态变更操作（如身份验证）<br>Submit sensitive data & perform state changes  |
+| `GET`  | 获取各类物流分析指标及系统资源 <br>Retrieve logistics metrics & system resources                     |
+| `POST` | 提交敏感数据及执行状态变更操作（如身份验证）<br>Submit sensitive data & perform state changes  |
 
 #### 统一响应格式| Unified Response Format
 
@@ -187,7 +187,7 @@ cd ../backend && npm install
 # 后端 (端口 3001)| Backend (port 3001)
 cd backend && npm start
 
-# 前端 (端口 5173)| Frontend (port 5173)
+# 前端 (端口 3000)| Frontend (port 3000)
 cd frontend && npm run dev
 ```
 
@@ -202,8 +202,8 @@ cd frontend && npm run dev
       Copied `backend/.env.example` to `backend/.env`
 - [ ] Oracle 数据库连接正常
       Oracle database connection verified
-- [ ] 端口 `3001`（后端）与 `5173`（前端）未被占用
-      Ports `3001` (backend) and `5173` (frontend) are free
+- [ ] 端口 `3001`（后端）与 `3000`（前端）未被占用
+      Ports `3001` (backend) and `3000` (frontend) are free
 - [ ] 前后端依赖已安装完成
       Frontend & backend dependencies installed
 - [ ] Oracle 用户具备 `SELECT` 权限（BAS_CODES / TSK_LIST_TASK / DOC_COMPLAINT）
@@ -242,7 +242,7 @@ NODE_ENV=development
   📈 **Overview Dashboard**: KPIs, order volume, order status
 - 📦 **重量分析**：重量分布、成本分析  
   📦 **Weight Analysis**: Weight distribution, cost analysis
-- 🚚 **物流监控**：全链路节点追踪、异常预警  
+- 🚚 **物流监控**：节点追踪、异常预警  
   🚚 **Logistics Monitoring**: End-to-end tracking, anomaly alerts
 - 📉 **趋势分析**：时间序列分析、预测建模  
   📉 **Trend Analysis**: Time-series analysis, forecasting
@@ -261,7 +261,7 @@ NODE_ENV=development
 
 | 服务         | 地址                              |
 | ------------ | --------------------------------- |
-| 前端应用     | http://localhost:5173             |
+| 前端应用     | http://localhost:3000             |
 | 后端 API     | http://localhost:3001             |
 | 健康检查     | http://localhost:3001/api/health  |
 | API 信息     | http://localhost:3001/api/info    |
@@ -302,7 +302,7 @@ node src/scripts/testConnection.js
 
 ```bat
 netstat -ano | findstr :3001
-netstat -ano | findstr :5173
+netstat -ano | findstr :3000
 taskkill /PID <PID> /F
 ```
 
@@ -310,7 +310,7 @@ taskkill /PID <PID> /F
 
 ```bash
 lsof -i :3001
-lsof -i :5173
+lsof -i :3000
 kill -9 <PID>
 ```
 
