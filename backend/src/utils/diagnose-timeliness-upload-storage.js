@@ -12,11 +12,11 @@ const path = require('path');
 console.log('\n🔍 时效表上传文件存储诊断工具\n');
 console.log('='.repeat(80));
 
-const TIMELINESS_DIR = path.join(__dirname, 'backend/uploads/timeliness');
-const UPLOADS_DIR = path.join(__dirname, 'backend/uploads');
-const UPLOAD_ROUTE_FILE = path.join(__dirname, 'backend/src/routes/upload-commonjs.js');
-const FILE_STORE_FILE = path.join(__dirname, 'backend/src/utils/timelinessFileStore.js');
-const API_SERVER_FILE = path.join(__dirname, 'backend/src/api-server.js');
+const TIMELINESS_DIR = path.join(__dirname, '../../uploads/timeliness');
+const UPLOADS_DIR = path.join(__dirname, '../../uploads');
+const UPLOAD_ROUTE_FILE = path.join(__dirname, '../routes/upload-commonjs.js');
+const FILE_STORE_FILE = path.join(__dirname, './timelinessFileStore.js');
+const API_SERVER_FILE = path.join(__dirname, '../api-server.js');
 
 /**
  * 1. 检查目录结构
