@@ -89,8 +89,8 @@ src/backend/
 │   ├── utils/
 │   │   ├── passwordUtils.js         # 高强度密码哈希处理（基于 scrypt 算法）Strong password hashing (scrypt)
 │   │   ├── apiError.js              # 规范化异常处理，定义统一错误响应格式 Unified error response format
-│   │   ├── mfaOtpStore.js           # 多因素认证（MFA）挑战存储逻辑 MFA challenge storage logic
-│   │   └── emailSender.js           # 系统级邮件分发服务System email service
+│   │   ├── mfaOtpStore.js(To be implemented)           # 多因素认证（MFA）挑战存储逻辑 MFA challenge storage logic
+│   │   └── emailSender.js(To be implemented)           # 系统级邮件分发服务System email service
 │   │
 │   └── services/                    # 业务逻辑服务层，负责与数据库连接交互Business logic & DB interaction layer
 │
