@@ -188,8 +188,8 @@ router.post('/login', loginRateLimit, async (req, res) => {
     }
 
     if (passwordCheck.needsUpgrade) {
-      // 🔥 安全修复：避免在日志中直接输出敏感信息
-      console.warn(`⚠️ [Auth] 该账号使用${passwordCheck.legacyFormat}密码格式登录，需执行密码升级`);
+      // 🔥 安全修复：避免在日志中输出任何密码格式/凭据相关细节
+      console.warn('⚠️ [Auth] 检测到密码需要升级，已触发升级流程');
     }
 
     // 邮箱MFA流程（默认启用）。
