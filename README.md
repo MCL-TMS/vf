@@ -89,8 +89,8 @@ src/backend/
 │   ├── utils/
 │   │   ├── passwordUtils.js         # 密码哈希处理 #Password hashing (scrypt)
 │   │   ├── apiError.js              # 规范化异常处理，定义统一错误响应格式 #Unified error response format
-│   │   ├── mfaOtpStore.js           # 多因素认证存储 (Redis/Memory) #MFA Setup
-│   │   ├── emailSender.js           # 系统级邮件分发服务 (SMTP) #System email service
+│   │   ├── mfaOtpStore.js(To be completed)           # 多因素认证存储 (Redis/Memory) #MFA Setup
+│   │   ├── emailSender.js(To be completed)           # 系统级邮件分发服务 (SMTP) #System email service
 │   │   └── redisStore.js            # Redis 客户端与连接管理 #Redis client management
 │   │
 │   └── services/                    # 业务逻辑服务层，负责与数据库连接交互#Business logic & DB interaction layer
