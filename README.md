@@ -3,8 +3,8 @@
 > 基于 **Courier Management System** 的物流数据分析平台
 > Logistics analytics platform based on **Courier Management System (provided by FLUX)**
 
-> 技术栈：**React + TypeScript + Node.js + Oracle Database**
-> Tech Stack: **React + TypeScript + Node.js + Oracle Database**
+> 技术栈：**React + TypeScript + Node.js + Oracle Database + Redis**
+> Tech Stack: **React + TypeScript + Node.js + Oracle Database + Redis**
 
 ---
 
@@ -67,7 +67,7 @@ mcl-cms_dashboard/
 
 ---
 
-### 后端架构
+### 后端架构 |Backend Architecture
 
 ```text
 src/backend/
@@ -87,10 +87,11 @@ src/backend/
 │   │   └── rateLimitMiddleware.js   # API 限频保护  #API rate limiting
 │   │
 │   ├── utils/
-│   │   ├── passwordUtils.js         # 高强度密码哈希处理 #Strong password hashing (scrypt)
+│   │   ├── passwordUtils.js         # 密码哈希处理 #Password hashing (scrypt)
 │   │   ├── apiError.js              # 规范化异常处理，定义统一错误响应格式 #Unified error response format
-│   │   ├── mfaOtpStore.js (To be implemented)   # 多因素认证 #MFA 
-│   │   └── emailSender.js (To be implemented)   # 系统级邮件分发服务 #System email service
+│   │   ├── mfaOtpStore.js           # 多因素认证存储 (Redis/Memory) #MFA Setup
+│   │   ├── emailSender.js           # 系统级邮件分发服务 (SMTP) #System email service
+│   │   └── redisStore.js            # Redis 客户端与连接管理 #Redis client management
 │   │
 │   └── services/                    # 业务逻辑服务层，负责与数据库连接交互#Business logic & DB interaction layer
 │
@@ -101,7 +102,7 @@ src/backend/
 **设计特点：**| Design Highlights**
 
 - 分层清晰（Route → Middleware → Service）| Clear layering (Route → Middleware → Service)
-- 安全策略内建（JWT + Rate Limit + 密码加固）| Built-in security (JWT + Rate Limit + Password hardening)
+- 安全策略内建（JWT + Rate Limit + 密码加固 + Redis 黑名单）| Built-in security (JWT + Rate Limit + Password hardening + Redis Revocation)
 - 可扩展的模块化路由体系| Scalable modular routing architecture
 
 ---
@@ -175,14 +176,26 @@ chmod +x start.sh
 
 ### 🔹 手动启动（开发环境）| Manual Start (Development)
 
-#### 1. 安装依赖 | Install Dependencies
+#### 1. 启动基础设施 | Start Infrastructure
+确保 Oracle 数据库可访问，并启动 Redis 服务：
+Ensuring Oracle Database is accessible and starting Redis service:
+```bash
+# Redis 默认端口 6379
+redis-server
+```
+
+#### 2. 安装依赖 | Install Dependencies
 ```bash
 # 根目录下执行| Run in project root
 cd frontend && npm install
 cd ../backend && npm install
 ```
 
-#### 2. 启动服务| Start Services
+#### 3. 配置环境 | Configure Environment
+在 `backend` 目录下，根据 `.env.production.example` 创建 `.env` 文件并填入相关凭据。
+In the `backend` directory, create a `.env` file based on `.env.production.example`.
+
+#### 4. 启动服务| Start Services
 ```bash
 # 后端 (端口 3001)| Backend (port 3001)
 cd backend && npm start
@@ -198,8 +211,10 @@ cd frontend && npm run dev
 - [ ] Node.js ≥ **16.0.0**
 - [ ] Oracle Instant Client 已安装并配置环境变量 
       Oracle Instant Client installed & environment variables configured
-- [ ] 已从 `backend/.env.example` 复制为 `backend/.env`
-      Copied `backend/.env.example` to `backend/.env`
+- [ ] Redis 服务已启动 (默认 6379)
+      Redis service is running (default 6379)
+- [ ] 已从 `backend/.env.production.example` 复制并配置为 `backend/.env`
+      Copied & configured `backend/.env` from example
 - [ ] Oracle 数据库连接正常
       Oracle database connection verified
 - [ ] 端口 `3001`（后端）与 `3000`（前端）未被占用
@@ -213,24 +228,51 @@ cd frontend && npm run dev
 
 ## ⚙️ 环境配置| Environment Configuration
 
-### Oracle 数据库（`backend/.env`）
+### 后端配置 (`backend/.env`)
 
 ```env
-DB_USER=your_username
-DB_PASSWORD=your_password
-DB_CONNECTION_STRING=localhost:1521/XE
-DB_SCHEMA=YOUR_CMS
-PORT=3001
+# ==================== 环境配置 ====================
 NODE_ENV=development
-```
+# ==================== 数据库配置 ====================
+ORACLE_CONNECT_STRING=yourdatabase:1521/severname
+ORACLE_USER=yourusername
+ORACLE_PASSWORD=yourpassword
+ORACLE_POOL_MIN=2
+ORACLE_POOL_MAX=10
+ORACLE_POOL_INCREMENT=2
+ORACLE_POOL_TIMEOUT=60
+# ==================== 服务器配置 ====================
+API_PORT=3001
+HOST=localhost
+CORS_ORIGIN=http://localhost:5173
+# ==================== JWT配置 ====================
+JWT_SECRET=xxxxxxxxxxxxx
+JWT_REFRESH_SECRET=xxxxxxxxxxxxxx
+JWT_EXPIRES_IN=15m
+JWT_REFRESH_EXPIRES_IN=7d
 
-### 数据库表结构| Database Schema
+# ==================== 防暴力破解配置 ====================
+MAX_LOGIN_ATTEMPTS=5
+LOGIN_LOCK_TIME=900000
+ATTEMPT_WINDOW=900000
 
-| 表名              | 说明             |
-| ----------------- | ---------------- |
-| `BAS_CODES`       | 基础代码表<br>Base code table        |
-| `TSK_LIST_TASK`   | 快递订单表<br>Courier task table      |
-| `DOC_COMPLAINT`   | 工单表<br>Complaint ticket table          |
+# ==================== HTTPS配置 ====================
+FORCE_HTTPS=false         # 开发环境不强制HTTPS
+HTTPS_REDIRECT=false
+# ==================== 日志级别 ====================
+LOG_LEVEL=debug
+
+# ==================== DIFY配置 ====================
+VITE_DIFY_API_KEY =your_key
+VITE_DIFY_API_URL=https://service-dify-devs.maersk-digital.net/v1
+
+# ==================== Redis配置 ====================
+REDIS_ENABLED=true
+REDIS_URL=redis://127.0.0.1:6379/0
+REDIS_KEY_PREFIX=dev:auth
+API_RATE_LIMIT_MAX=1000
+API_RATE_LIMIT_WINDOW_MS=900000
+
 
 ---
 
@@ -253,6 +295,7 @@ NODE_ENV=development
 - 📱 响应式布局 | Responsive layout
 - 🔍 多维度筛选 | Multi-dimensional filtering
 - 💾 Oracle 数据库集成 | Oracle database integration
+- 🗄️ Redis 高性能缓存/状态管理 | Redis integration
 - 🔐 TypeScript 类型安全 | TypeScript type safety
 
 ---
@@ -361,12 +404,6 @@ npm run build
 > This dashboard is the official analytics extension of FLUX CMS.
 ---
 
-## 📄 许可证|License
-
-MIT License
-© 2026 MCL Logistics Analytics Team
-
----
 
 ## ✨ 贡献指南| Contributing
 
