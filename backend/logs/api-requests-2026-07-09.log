@@ -1,0 +1,12 @@
+[2026-07-09T06:32:49.759Z] [c58bb072-2196-4f1e-8617-5ce427d8a867] GET /api/brands/mapping - 127.0.0.1
+[2026-07-09T06:32:49.824Z] [04350af5-4e93-482e-9b64-6525a2b2cffc] GET /api/platform/mappings - 127.0.0.1
+[2026-07-09T06:32:49.916Z] [500a46c7-c04d-4f9c-8077-619dc91264b7] GET /api/health - 127.0.0.1
+[2026-07-09T06:32:51.938Z] [a0aef2a3-4592-4a31-8f68-a12f0b3891c7] GET /api/health - 127.0.0.1
+[2026-07-09T06:32:51.954Z] [7c151fb2-27ad-4083-a4db-f69ae657b4ba] GET /api/overview/kpi - 127.0.0.1
+[2026-07-09T06:33:28.855Z] [b68ef95a-d7f9-4ef7-b2ca-0120ae136850] POST /api/auth/login - 127.0.0.1
+[2026-07-09T06:34:14.843Z] [5e1983e8-bbe2-4337-b54d-fb936bff065d] GET /api/logistics/brands - 127.0.0.1
+[2026-07-09T06:34:15.146Z] [76dac28c-1a3a-4bb8-a8fb-d70f67f15a74] GET /api/overview/flow-analysis - 127.0.0.1
+[2026-07-09T06:34:15.158Z] [efee9776-169d-4cd3-b08f-9dd3dd74ddd3] GET /api/health - 127.0.0.1
+[2026-07-09T06:34:18.799Z] [58bc66f1-ab3e-4300-8228-9cbfbdae206d] GET /api/overview/kpi - 127.0.0.1
+[2026-07-09T06:34:24.835Z] [bfb11fc7-7061-4f21-8296-9ae848e45a4c] GET /api/logistics/brands - 127.0.0.1
+[2026-07-09T06:34:32.053Z] [fc121cb0-5584-4431-a99d-8628ce6bc79c] GET /api/overview/flow-analysis - 127.0.0.1

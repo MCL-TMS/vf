@@ -243,8 +243,8 @@ ORACLE_POOL_INCREMENT=2
 ORACLE_POOL_TIMEOUT=60
 # ==================== 服务器配置 ====================
 API_PORT=3001
-HOST=localhost
-CORS_ORIGIN=http://localhost:5173
+HOST=0.0.0.0
+CORS_ORIGIN=http://localhost:3000
 # ==================== JWT配置 ====================
 JWT_SECRET=xxxxxxxxxxxxx
 JWT_REFRESH_SECRET=xxxxxxxxxxxxxx
@@ -394,6 +394,67 @@ kill -9 <PID>
 ```bash
 npm run build
 ```
+
+---
+
+## 🚀 生产部署 | Production Deployment
+
+### 前端（Vite Build + Nginx）
+
+```bash
+cd frontend
+npm install
+npm run build
+```
+
+构建产物在 `frontend/build`，由 Nginx 托管静态文件，并将 `/api` 反向代理到后端 3001。
+
+建议域名：
+- PROD: `cms.dashboard.ocf.fulfillment.maersk.com.cn`
+- DEV: `stage-cms.dashboard.ocf.fulfillment.maersk.com.cn`
+
+Nginx 示例配置文件：`docs/deploy/nginx/mcl-ct.conf`
+
+HTTPS(443) 完整配置文件：`docs/deploy/nginx/mcl-ct-https.conf`
+
+
+> 重要：后端程序默认读取 `backend/.env`。
+>
+> 部署时请将对应环境文件复制为 `.env`：
+>
+> - PROD: `cp backend/.env.prod.example backend/.env`
+> - STAGE: `cp backend/.env.stage.example backend/.env`
+
+
+### 后端守护（PM2）
+
+```bash
+cd backend
+npm install
+pm2 start ../docs/deploy/pm2/ecosystem.config.cjs --env production
+pm2 save
+pm2 startup
+```
+
+PM2 配置文件：`docs/deploy/pm2/ecosystem.config.cjs`
+
+后端生产环境变量建议：
+- `HOST=0.0.0.0`
+- `API_PORT=3001`
+- `CORS_ORIGIN=https://cms.dashboard.ocf.fulfillment.maersk.com.cn`
+- Stage 环境可设置：`CORS_ORIGIN=https://stage-cms.dashboard.ocf.fulfillment.maersk.com.cn`
+
+### 后端守护（systemd）
+
+```bash
+sudo cp docs/deploy/systemd/mcl-ct-backend.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now mcl-ct-backend
+sudo systemctl status mcl-ct-backend
+```
+
+systemd 配置文件：`docs/deploy/systemd/mcl-ct-backend.service`
+
 ---
 
 ## 📄 关于 Courier Management System

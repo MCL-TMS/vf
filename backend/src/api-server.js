@@ -6,6 +6,7 @@
  */
 
 const path = require('path');
+const fs = require('fs');
 const dotenv = require('dotenv');
 
 // 优先加载 backend 根目录 .env；随后兜底当前工作目录 .env。
@@ -48,6 +49,68 @@ if (authRoutes && authRoutes.stack) {
 
 const app = express();
 const PORT = process.env.API_PORT || 3001;
+const HOST = process.env.HOST || '0.0.0.0';
+let httpServer = null;
+
+const logsDir = path.resolve(__dirname, '../logs');
+const LOG_RETENTION_DAYS = Number.parseInt(process.env.LOG_RETENTION_DAYS || '30', 10);
+
+try {
+  fs.mkdirSync(logsDir, { recursive: true });
+} catch (error) {
+  console.error('初始化日志目录失败:', error.message);
+}
+
+function appendRequestLog(line) {
+  const requestLogFile = path.join(logsDir, `api-requests-${getDateString(new Date())}.log`);
+  fs.promises.appendFile(requestLogFile, `${line}\n`, 'utf8').catch((error) => {
+    console.error('写入请求日志失败:', error.message);
+  });
+}
+
+function getDateString(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function purgeExpiredRequestLogs() {
+  if (!Number.isFinite(LOG_RETENTION_DAYS) || LOG_RETENTION_DAYS <= 0) {
+    return;
+  }
+
+  const cutoff = Date.now() - LOG_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+
+  fs.promises.readdir(logsDir).then((files) => {
+    const dailyLogRegex = /^api-requests-(\d{4}-\d{2}-\d{2})\.log$/;
+
+    files.forEach((fileName) => {
+      const match = fileName.match(dailyLogRegex);
+      if (!match) {
+        return;
+      }
+
+      const fileDate = Date.parse(`${match[1]}T00:00:00Z`);
+      if (!Number.isFinite(fileDate) || fileDate >= cutoff) {
+        return;
+      }
+
+      const filePath = path.join(logsDir, fileName);
+      fs.promises.unlink(filePath).catch((error) => {
+        console.error(`清理过期日志失败: ${fileName}`, error.message);
+      });
+    });
+  }).catch((error) => {
+    console.error('扫描日志目录失败:', error.message);
+  });
+}
+
+purgeExpiredRequestLogs();
+const cleanupTimer = setInterval(purgeExpiredRequestLogs, 24 * 60 * 60 * 1000);
+if (typeof cleanupTimer.unref === 'function') {
+  cleanupTimer.unref();
+}
 
 app.use((req, res, next) => {
   const requestId = req.headers['x-request-id'] || randomUUID();
@@ -94,6 +157,20 @@ function parseTrustProxySetting(value) {
   }
 
   return value;
+}
+
+function parseCorsOrigins(rawOrigins) {
+  if (!rawOrigins) {
+    return [
+      'http://localhost:3000',
+      'http://127.0.0.1:3000'
+    ];
+  }
+
+  return String(rawOrigins)
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
 }
 
 function sanitizeRedisUrl(url) {
@@ -303,13 +380,9 @@ if (shouldEnforceHttps) {
 app.use(compression()); // 启用Gzip压缩
 
 // CORS配置 - 允许前端域名访问
+const allowedOrigins = parseCorsOrigins(process.env.CORS_ORIGIN);
 app.use(cors({
-  origin: [
-    'http://localhost:3000',
-    'http://localhost:5173',
-    'http://127.0.0.1:3000',
-    'http://127.0.0.1:5173'
-  ],
+  origin: allowedOrigins,
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
@@ -322,7 +395,9 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 // 请求日志中间件
 app.use((req, res, next) => {
   const timestamp = new Date().toISOString();
-  console.log(`[${timestamp}] [${req.requestId}] ${req.method} ${req.path} - ${req.ip}`);
+  const logLine = `[${timestamp}] [${req.requestId}] ${req.method} ${req.path} - ${req.ip}`;
+  console.log(logLine);
+  appendRequestLog(logLine);
   next();
 });
 
@@ -512,9 +587,14 @@ app.use((error, req, res, next) => {
  */
 process.on('SIGTERM', () => {
   console.log('收到SIGTERM信号，开始优雅关闭...');
-  
-  const server = app.listen(PORT);
-  server.close(() => {
+
+  if (!httpServer) {
+    console.log('HTTP服务器未运行，直接退出');
+    process.exit(0);
+    return;
+  }
+
+  httpServer.close(() => {
     console.log('HTTP服务器已关闭');
     process.exit(0);
   });
@@ -550,21 +630,22 @@ async function startServer() {
     }
     console.log('================================================================================');
     
-    const server = app.listen(PORT, () => {
+    httpServer = app.listen(PORT, HOST, () => {
       console.log('🚀 VF物流数据分析平台API服务器启动成功');
-      console.log(`📡 服务器地址: http://localhost:${PORT}`);
-      console.log(`📊 API文档: http://localhost:${PORT}/api/info`);
+      console.log(`📡 监听地址: http://${HOST}:${PORT}`);
+      console.log(`📊 API文档: http://${HOST}:${PORT}/api/info`);
       console.log(`🔒 HTTPS强制: ${shouldEnforceHttps ? 'enabled' : 'disabled'}`);
       console.log(`🔀 HTTPS重定向: ${shouldRedirectToHttps ? 'enabled' : 'disabled'}`);
       console.log(`🛡️ HSTS: max-age=${Number.isFinite(hstsMaxAge) && hstsMaxAge > 0 ? hstsMaxAge : 31536000}; includeSubDomains=${hstsIncludeSubDomains}; preload=${hstsPreload}`);
       console.log(`🌐 trust proxy: ${trustProxySetting === false ? 'disabled' : trustProxySetting}`);
-      console.log(`💓 健康检查: http://localhost:${PORT}/api/health`);
+      console.log(`🌍 CORS Origins: ${allowedOrigins.join(', ')}`);
+      console.log(`💓 健康检查: http://${HOST}:${PORT}/api/health`);
       console.log(`🔍 环境: ${process.env.NODE_ENV || 'development'}`);
       console.log(`📦 版本: 1.0.0`);
       console.log('================================================================================');
     });
-    
-    server.on('error', (error) => {
+
+    httpServer.on('error', (error) => {
       if (error.code === 'EADDRINUSE') {
         console.error(`❌ 端口 ${PORT} 已被占用，请检查是否有其他服务正在运行`);
       } else {

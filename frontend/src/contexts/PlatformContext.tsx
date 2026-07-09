@@ -5,6 +5,12 @@
 
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 
+const API_ORIGIN = (import.meta.env.VITE_API_ORIGIN || '').trim() || (import.meta.env.DEV ? 'http://localhost:3001' : '');
+
+function buildApiUrl(path: string): string {
+  return `${API_ORIGIN}${path}`;
+}
+
 const DEFAULT_PLATFORM_MAPPINGS: PlatformMapping[] = [
   { platformCode: 'tmall', platformName: '天猫', displayName: '天猫' },
   { platformCode: 'douyin', platformName: '抖音', displayName: '抖音' },
@@ -80,11 +86,7 @@ export const PlatformProvider: React.FC<PlatformProviderProps> = ({ children }) 
       setIsLoading(true);
       setError(null);
       
-      // 🔥 修复：安全访问 import.meta.env
-      const isDev = typeof import.meta !== 'undefined' && import.meta.env?.DEV;
-      const apiUrl = isDev 
-        ? 'http://localhost:3001/api/platform/mappings'
-        : '/api/platform/mappings';
+      const apiUrl = buildApiUrl('/api/platform/mappings');
       
       console.log('🏪 [PlatformContext] 请求平台映射:', apiUrl);
       

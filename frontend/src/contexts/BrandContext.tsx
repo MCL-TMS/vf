@@ -5,6 +5,12 @@
 
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 
+const API_ORIGIN = (import.meta.env.VITE_API_ORIGIN || '').trim() || (import.meta.env.DEV ? 'http://localhost:3001' : '');
+
+function buildApiUrl(path: string): string {
+  return `${API_ORIGIN}${path}`;
+}
+
 // 品牌映射数据类型
 export interface BrandMapping {
   brandCode: string;    // CUSTOMERNO (如 '18405', '18405-1')
@@ -57,11 +63,7 @@ export const BrandProvider: React.FC<BrandProviderProps> = ({ children }) => {
       
       console.log('🏷️  正在获取品牌映射...');
       
-      // 🔥 修复：安全访问 import.meta.env
-      const isDev = typeof import.meta !== 'undefined' && import.meta.env?.DEV;
-      const apiUrl = isDev 
-        ? 'http://localhost:3001/api/brands/mapping'
-        : '/api/brands/mapping';
+      const apiUrl = buildApiUrl('/api/brands/mapping');
       
       const response = await fetch(apiUrl);
       
