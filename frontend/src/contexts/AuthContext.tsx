@@ -2,6 +2,12 @@ import React, { createContext, useContext, useState, useEffect, useCallback } fr
 import { createApiClientError, shouldLogoutForErrorCode } from '../services/apiError';
 import { ApiService } from '../services/apiService';
 
+const API_ORIGIN = (import.meta.env.VITE_API_ORIGIN || '').trim() || (import.meta.env.DEV ? 'http://localhost:3001' : '');
+
+function buildApiUrl(path: string): string {
+  return `${API_ORIGIN}${path}`;
+}
+
 // 用户信息接口
 export interface User {
   userId: string;          // 登录账号
@@ -114,13 +120,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const login = async (userId: string, password: string): Promise<LoginResult> => {
     try {
       // 所有账号统一走后端认证
-      // 开发环境下使用完整URL（绕过可能存在的Vite代理问题）
-      const isDevelopment = import.meta.env.DEV;
-      const apiBaseUrl = isDevelopment ? 'http://localhost:3001' : '';
-      
-      console.log('🔍 [AuthContext] 认证模式:', { isDevelopment, apiBaseUrl });
-      
-      const response = await fetch(`${apiBaseUrl}/api/auth/login`, {
+      console.log('🔍 [AuthContext] 认证模式:', { apiOrigin: API_ORIGIN || '(same-origin)' });
+
+      const response = await fetch(buildApiUrl('/api/auth/login'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -168,10 +170,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const verifyMfaCode = async (challengeId: string, otpCode: string): Promise<LoginResult> => {
     try {
-      const isDevelopment = import.meta.env.DEV;
-      const apiBaseUrl = isDevelopment ? 'http://localhost:3001' : '';
-
-      const response = await fetch(`${apiBaseUrl}/api/auth/login/verify-otp`, {
+      const response = await fetch(buildApiUrl('/api/auth/login/verify-otp'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -209,11 +208,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       const token = user?.token;
       const refreshToken = user?.refreshToken;
-      const isDevelopment = import.meta.env.DEV;
-      const apiBaseUrl = isDevelopment ? 'http://localhost:3001' : '';
 
       if (token) {
-        await fetch(`${apiBaseUrl}/api/auth/logout`, {
+        await fetch(buildApiUrl('/api/auth/logout'), {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -273,12 +270,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     try {
       console.log('🔄 [AuthContext] 开始刷新token...');
-      
-      // 开发环境下使用完整URL
-      const isDevelopment = import.meta.env.DEV;
-      const apiBaseUrl = isDevelopment ? 'http://localhost:3001' : '';
-      
-      const response = await fetch(`${apiBaseUrl}/api/auth/refresh`, {
+
+      const response = await fetch(buildApiUrl('/api/auth/refresh'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

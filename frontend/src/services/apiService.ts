@@ -2,6 +2,20 @@ import type { DateRange } from '../data/types';
 import { toast } from 'sonner';
 import { ApiClientError, BackendErrorPayload, createApiClientError, shouldLogoutForErrorCode } from './apiError';
 
+function normalizeApiBaseUrl(rawBaseUrl: string): string {
+  return rawBaseUrl.replace(/\/$/, '');
+}
+
+function resolveApiBaseUrl(): string {
+  const viteEnv = (import.meta as ImportMeta & { env?: Record<string, any> }).env || {};
+  const configuredBaseUrl = String(viteEnv.VITE_API_BASE_URL || '').trim();
+  if (configuredBaseUrl) {
+    return normalizeApiBaseUrl(configuredBaseUrl);
+  }
+
+  return Boolean(viteEnv.DEV) ? 'http://localhost:3001/api' : '/api';
+}
+
 interface APIRequestOptions {
   dateRange?: DateRange;
   brand?: string | string[] | null;
@@ -53,7 +67,7 @@ interface ApiPerformanceMetrics {
 }
 
 class ApiServiceClass {
-  private baseURL = 'http://localhost:3001/api';
+  private baseURL = resolveApiBaseUrl();
   private healthCheckCache: HealthCheckCache | null = null;
   private readonly HEALTH_CHECK_CACHE_DURATION = 30000; // 30秒缓存
   private readonly FAILED_HEALTH_CHECK_CACHE_DURATION = 1000; // 失败结果仅短暂缓存，避免阻塞后续真实查询
@@ -1820,9 +1834,7 @@ class ApiServiceClass {
         params.append('interceptLocation', interceptLocation);
       }
       
-      const apiUrl = import.meta.env.DEV 
-        ? `http://localhost:3001/api/logistics/interception?${params.toString()}`
-        : `/api/logistics/interception?${params.toString()}`;
+      const apiUrl = `${this.baseURL}/logistics/interception?${params.toString()}`;
       
       console.log('🛑 [ApiService] 拦截分析请求URL:', apiUrl);
       console.log('🛑 [ApiService] 拦截分析请求参数:', {
