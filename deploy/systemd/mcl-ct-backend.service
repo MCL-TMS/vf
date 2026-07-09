@@ -1,0 +1,17 @@
+[Unit]
+Description=MCL-CT Backend API Service
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/mcl-ct/backend
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node /opt/mcl-ct/backend/src/api-server.js
+Restart=always
+RestartSec=5
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
