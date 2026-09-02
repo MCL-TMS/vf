@@ -25,6 +25,26 @@ function getJwtRefreshSecret() {
   return secret;
 }
 
+// Helper: try verifying token with primary secret, then fallback to an old secret if present.
+function verifyTokenWithFallback(token, primarySecretEnv, oldSecretEnv) {
+  const primary = process.env[primarySecretEnv];
+  const old = process.env[oldSecretEnv];
+
+  if (!primary && !old) {
+    throw new Error(primarySecretEnv + ' is required but not configured');
+  }
+
+  try {
+    return jwt.verify(token, primary || old);
+  } catch (err) {
+    // If primary exists and failed, and an old secret exists, try old secret before failing
+    if (old && primary) {
+      return jwt.verify(token, old);
+    }
+    throw err;
+  }
+}
+
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '24h'; // Token有效期
 const JWT_REFRESH_EXPIRES_IN = process.env.JWT_REFRESH_EXPIRES_IN || '7d';
 const tokenBlacklist = new Map();
@@ -53,6 +73,34 @@ function getTokenRemainingSeconds(token) {
 
   const remainingSeconds = decoded.exp - Math.floor(Date.now() / 1000);
   return remainingSeconds > 0 ? remainingSeconds : 0;
+}
+
+// SSO: set user -> session mapping in Redis
+async function setUserSession(userId, sessionId, ttlSeconds) {
+  try {
+    const redisClient = await getRedisClient();
+    if (redisClient && sessionId && ttlSeconds && ttlSeconds > 0) {
+      await redisClient.set(buildRedisKey('session', userId), sessionId, { EX: ttlSeconds });
+    }
+  } catch (e) {
+    // best-effort
+  }
+}
+
+// SSO: check whether decoded token's session matches the current session for user
+async function isSessionValidForToken(decoded) {
+  if (!decoded || !decoded.userId) return true;
+  try {
+    const redisClient = await getRedisClient();
+    if (!redisClient) return true;
+    const current = await redisClient.get(buildRedisKey('session', decoded.userId));
+    if (!current) return true; // no mapping -> allow
+    // Require token to have sessionId and match
+    if (!decoded.sessionId) return false;
+    return decoded.sessionId === current;
+  } catch (e) {
+    return true; // on error, be permissive (avoid denial of service)
+  }
 }
 
 function cleanupExpiredEntries(store) {
@@ -128,6 +176,17 @@ async function deleteRefreshTokenRecord(jti) {
   refreshTokenStore.delete(jti);
 }
 
+async function clearUserSession(userId) {
+  try {
+    const redisClient = await getRedisClient();
+    if (redisClient) {
+      await redisClient.del(buildRedisKey('session', userId));
+    }
+  } catch (e) {
+    // best-effort
+  }
+}
+
 /**
  * 生成JWT Token
  * @param {Object} payload - Token载荷（用户信息）
@@ -143,6 +202,7 @@ async function generateRefreshToken(payload) {
     type: 'refresh',
     jti: randomUUID()
   };
+  if (payload.sessionId) refreshPayload.sessionId = payload.sessionId;
 
   const token = jwt.sign(refreshPayload, getJwtRefreshSecret(), { expiresIn: JWT_REFRESH_EXPIRES_IN });
   await persistRefreshTokenRecord(token, payload);
@@ -150,7 +210,7 @@ async function generateRefreshToken(payload) {
 }
 
 async function verifyRefreshToken(token) {
-  const decoded = jwt.verify(token, getJwtRefreshSecret());
+  const decoded = verifyTokenWithFallback(token, 'JWT_REFRESH_SECRET', 'JWT_REFRESH_SECRET_OLD');
 
   if (decoded?.type !== 'refresh' || !decoded?.jti) {
     const error = new Error('Refresh token payload is invalid');
@@ -192,6 +252,7 @@ async function rotateRefreshToken(currentRefreshToken, payload) {
     type: 'refresh',
     jti: randomUUID()
   };
+  if (payload.sessionId) newRefreshPayload.sessionId = payload.sessionId;
   const newRefreshToken = jwt.sign(newRefreshPayload, getJwtRefreshSecret(), { expiresIn: JWT_REFRESH_EXPIRES_IN });
   const newRemainingSeconds = getTokenRemainingSeconds(newRefreshToken);
 
@@ -308,8 +369,17 @@ async function verifyToken(req, res, next) {
       });
     }
 
-    // 验证token
-    const decoded = jwt.verify(token, getJwtSecret());
+    // 验证token（支持平滑轮换：优先用 JWT_SECRET，再尝试 JWT_SECRET_OLD）
+    const decoded = verifyTokenWithFallback(token, 'JWT_SECRET', 'JWT_SECRET_OLD');
+
+    // SSO校验：确保token的sessionId与Redis中的当前会话一致
+    if (!(await isSessionValidForToken(decoded))) {
+      return sendError(res, req, {
+        status: 401,
+        code: ERROR_CODES.AUTH_SESSION_INVALID,
+        error: '会话已在其他设备登录，被挤下线'
+      });
+    }
     
     // 将解码后的用户信息附加到请求对象上
     req.user = {
@@ -383,6 +453,8 @@ module.exports = {
   isTokenRevoked,
   verifyToken,
   optionalVerifyToken,
+  setUserSession,
+  clearUserSession,
   getJwtSecret,
   getJwtRefreshSecret,
   JWT_EXPIRES_IN,

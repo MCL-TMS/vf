@@ -1138,7 +1138,7 @@ export function transformAPIDataToFilteredData(
   const rawCourierData = data.courierDistribution || data.couriers || data.courierStats;
   
   // 🔥 快递公司ID到名称的映射配置
-  const COURIER_NAME_MAPPING = {
+  const COURIER_NAME_MAPPING: Record<string, string> = {
     'SF': '顺丰速运',
     'ZTO': '中通快递',
     'YTO': '圆通速递',
@@ -1168,10 +1168,9 @@ export function transformAPIDataToFilteredData(
       // 智能字段映射 - 支持多种可能的字段名称
       const carrierId = courier.carrierId || courier.courier_id || courier.name || `COURIER_${index + 1}`;
       
-      // 🔥 修复：智能快递公司名称映射 - 优先使用映射表，其次使用原始名称
-      const rawName = courier.courierName || courier.name || carrierId;
-      const mappedName = COURIER_NAME_MAPPING[carrierId] || rawName;
-      const name = mappedName;
+      // 优先使用后端从 BAS_COMPANY 返回的名称；没有时才回退本地兼容映射。
+      const rawName = courier.carrierName || courier.courierName || courier.name || carrierId;
+      const name = rawName || COURIER_NAME_MAPPING[carrierId] || carrierId;
       
       const orderCount = courier.orderCount || courier.totalOrders || 0;
       const deliveredOrders = courier.deliveredOrders || courier.deliveredCount || 0;
@@ -1204,6 +1203,8 @@ export function transformAPIDataToFilteredData(
 
       return {
         name: name,
+        carrierId,
+        courierName: name,
         deliveryRate: deliveryRate,
         pickupRate: pickupRate,
         shippingRate: shippingRate,

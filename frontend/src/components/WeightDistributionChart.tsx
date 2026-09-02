@@ -789,16 +789,6 @@ const regionAnalysis = useMemo(() => {
                                   <span className="text-gray-600">轻量包裹:</span>
                                   <span className="font-medium">{region.lightOrders.toLocaleString()}</span>
                                 </div>
-                                <div className="flex justify-between">
-                                  <span className="text-gray-600">平均运费:</span>
-                                  <span className="font-medium text-green-600">¥{region.avgCost.toFixed(1)}</span>
-                                </div>
-                                <div className="flex justify-between">
-                                  <span className="text-gray-600">优化潜力:</span>
-                                  <span className="font-medium text-purple-600">
-                                    ¥{Math.round(region.lightOrders * region.avgCost * 0.15 / 10000)}万
-                                  </span>
-                                </div>
                               </div>
                             </div>
                           </div>

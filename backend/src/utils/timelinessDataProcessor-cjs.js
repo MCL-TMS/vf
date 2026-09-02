@@ -12,6 +12,45 @@
 
 const { getLatestTimelinessData } = require('./timelinessFileStore.js');
 
+const DEBUG_SNAPSHOT_LIMIT = 5;
+
+function pruneDebugSnapshots(debugDir, prefix) {
+  const fs = require('fs');
+  const path = require('path');
+
+  const snapshotFiles = fs.readdirSync(debugDir)
+    .filter((name) => name.startsWith(prefix) && name.endsWith('.json'))
+    .map((name) => ({
+      name,
+      filePath: path.join(debugDir, name),
+      mtimeMs: fs.statSync(path.join(debugDir, name)).mtimeMs
+    }))
+    .sort((a, b) => b.mtimeMs - a.mtimeMs);
+
+  snapshotFiles.slice(DEBUG_SNAPSHOT_LIMIT).forEach((file) => {
+    try {
+      fs.unlinkSync(file.filePath);
+    } catch (error) {
+      console.warn(`⚠️ 删除旧调试文件失败: ${file.filePath}`, error.message);
+    }
+  });
+}
+
+function saveDebugSnapshot(debugDir, prefix, debugData) {
+  const fs = require('fs');
+  const path = require('path');
+
+  if (!fs.existsSync(debugDir)) {
+    fs.mkdirSync(debugDir, { recursive: true });
+  }
+
+  const timestamp = new Date().toISOString().replace(/:/g, '-').split('.')[0];
+  const debugFilePath = path.join(debugDir, `${prefix}-${timestamp}.json`);
+  fs.writeFileSync(debugFilePath, JSON.stringify(debugData, null, 2), 'utf-8');
+  pruneDebugSnapshots(debugDir, `${prefix}-`);
+  return debugFilePath;
+}
+
 /**
  * S2D时效分析（Ship to Delivery）
  * 对比Plan时效目标 vs Actual实际表现
@@ -74,6 +113,7 @@ async function analyzeS2DPerformance(options = {}) {
     const { 
       dateRange,
       selectedBrand = null,
+      selectedPlatform = null,
       selectedSelfFlag = 'Y',
       selectedCarrier = null,
       analysisType = 'S2D',
@@ -83,6 +123,7 @@ async function analyzeS2DPerformance(options = {}) {
     console.log('🔍 执行S2D时效分析（文件存储模式）:', {
       dateRange,
       selectedBrand,
+      selectedPlatform,
       selectedSelfFlag,
       selectedCarrier,
       userBrands  // ✅ 打印userBrands
@@ -209,6 +250,99 @@ async function analyzeS2DPerformance(options = {}) {
       params.selectedCarrier = selectedCarrier;
     }
 
+    // 平台筛选（按VIEW平台分类字段，兼容代码/中文名/同义词）
+    if (selectedPlatform && selectedPlatform !== 'all') {
+      const PLATFORM_MAPPING = {
+        tmall: '天猫',
+        douyin: '抖音',
+        jd: '京东',
+        pdd: '拼多多',
+        official: '官网/小程序',
+        o2o: 'O2O',
+        xiaohongshu: '小红书',
+        wechat: '微信'
+      };
+
+      const aliasToCanonical = {
+        tmall: '天猫',
+        douyin: '抖音',
+        jd: '京东',
+        pdd: '拼多多',
+        official: '官网/小程序',
+        wechat: '微信',
+        '微信小程序': '微信',
+        '抖音电商': '抖音',
+        '官网': '官网/小程序',
+        '小程序': '官网/小程序'
+      };
+
+      const canonicalVariants = {
+        '官网/小程序': ['官网/小程序', '官网／小程序', '官网', '小程序'],
+        '微信': ['微信', '微信小程序'],
+        '抖音': ['抖音', '抖音电商']
+      };
+
+      const normalizePlatforms = (value) => {
+        if (Array.isArray(value)) return value.map(v => String(v).trim()).filter(Boolean).filter(v => v !== 'all');
+        if (typeof value === 'string') {
+          const trimmed = value.trim();
+          if (!trimmed || trimmed === 'all') return [];
+          return trimmed.includes(',')
+            ? trimmed.split(',').map(v => v.trim()).filter(Boolean).filter(v => v !== 'all')
+            : [trimmed];
+        }
+        return [];
+      };
+
+      const normalizeToken = (value) => String(value || '')
+        .trim()
+        .replace(/／/g, '/')
+        .replace(/\s+/g, '')
+        .toLowerCase();
+
+      const expandSet = new Set();
+      const addPlatformVariant = (value) => {
+        const text = String(value || '').trim();
+        if (!text) return;
+        expandSet.add(text);
+        expandSet.add(text.replace(/\//g, '／'));
+        expandSet.add(text.replace(/／/g, '/'));
+
+        const normalizedToken = normalizeToken(text);
+        const canonical = aliasToCanonical[normalizedToken] || aliasToCanonical[text] || text;
+        expandSet.add(String(canonical).trim());
+
+        const variants = canonicalVariants[canonical] || [];
+        variants.forEach((item) => {
+          const candidate = String(item || '').trim();
+          if (!candidate) return;
+          expandSet.add(candidate);
+          expandSet.add(candidate.replace(/／/g, '/'));
+        });
+      };
+
+      const requestedPlatforms = normalizePlatforms(selectedPlatform);
+      requestedPlatforms.forEach((p) => {
+        addPlatformVariant(p);
+        addPlatformVariant(PLATFORM_MAPPING[p] || p);
+      });
+
+      const normalizedValues = Array.from(expandSet)
+        .map((value) => String(value).trim().replace(/／/g, '/'))
+        .filter(Boolean);
+
+      if (normalizedValues.length === 1) {
+        whereClauses.push(`REPLACE(TRIM(v.PLATFORM_CLASS), '／', '/') = :selectedPlatform0`);
+        params.selectedPlatform0 = normalizedValues[0];
+      } else if (normalizedValues.length > 1) {
+        const placeholders = normalizedValues.map((_, index) => `:selectedPlatform${index}`).join(', ');
+        whereClauses.push(`REPLACE(TRIM(v.PLATFORM_CLASS), '／', '/') IN (${placeholders})`);
+        normalizedValues.forEach((value, index) => {
+          params[`selectedPlatform${index}`] = value;
+        });
+      }
+    }
+
     // ✅ 排除EMS承运订单
     whereClauses.push(`t.CARRIERID != 'EMS'`);
     
@@ -242,6 +376,7 @@ async function analyzeS2DPerformance(options = {}) {
       SELECT 
         bc.COMPANY_ABNAME as BRAND_CODE,
         t.CARRIERID,
+        bc_carrier.COMPANY_ABNAME as CARRIER_NAME,
         ba.AREA_NAME as CITY_NAME,
         t.DEST_CITY as AREA_ID,
         
@@ -277,10 +412,12 @@ async function analyzeS2DPerformance(options = {}) {
       LEFT JOIN APP_CMS.VIEW_TSK_LIST_TASK v ON t.TSK_MERGE_NO = v.TSK_MERGE_NO
       LEFT JOIN APP_CMS.BAS_AREA ba ON t.DEST_CITY = ba.AREA_ID
       LEFT JOIN APP_CMS.BAS_COMPANY bc ON t.CUSTOMERNO = bc.COMPANY_SYSID
+      LEFT JOIN APP_CMS.BAS_COMPANY bc_carrier ON t.CARRIERID = bc_carrier.COMPANY_SYSID
       ${whereClause}
       GROUP BY 
         bc.COMPANY_ABNAME,
-        t.CARRIERID, 
+        t.CARRIERID,
+        bc_carrier.COMPANY_ABNAME,
         ba.AREA_NAME, 
         t.DEST_CITY
       ORDER BY TOTAL_S2D_ORDERS DESC
@@ -337,6 +474,7 @@ async function analyzeS2DPerformance(options = {}) {
     statsResult.rows.forEach(row => {
       const brandCode = row.BRAND_CODE;
       const carrierId = row.CARRIERID;
+      const carrierName = row.CARRIER_NAME || carrierId;
       const cityName = row.CITY_NAME;
       const areaId = row.AREA_ID;
       
@@ -491,6 +629,7 @@ async function analyzeS2DPerformance(options = {}) {
       if (!byCourierMap.has(carrierId)) {
         byCourierMap.set(carrierId, {
           carrierId,
+          carrierName,
           planTotal: 0,
           plan24h: 0,
           plan48h: 0,
@@ -541,6 +680,7 @@ async function analyzeS2DPerformance(options = {}) {
         byBrandCourierMap.set(brandCourierKey, {
           brandCode,
           carrierId,
+          carrierName,
           planTotal: 0,
           plan24h: 0,
           plan48h: 0,
@@ -630,16 +770,9 @@ async function analyzeS2DPerformance(options = {}) {
     console.log('');
 
     // 🔍 保存匹配详情到文件，供调试分析
-    const fs = require('fs');
     const path = require('path');
-    
-    const debugDir = path.join(__dirname, '../../debug');
-    if (!fs.existsSync(debugDir)) {
-      fs.mkdirSync(debugDir, { recursive: true });
-    }
 
-    const timestamp = new Date().toISOString().replace(/:/g, '-').split('.')[0];
-    const debugFilePath = path.join(debugDir, `matching-details-${timestamp}.json`);
+    const debugDir = path.join(__dirname, '../../debug');
     
     const debugData = {
       summary: {
@@ -660,7 +793,7 @@ async function analyzeS2DPerformance(options = {}) {
       unmatchedRecords: unmatchedRecords.sort((a, b) => b.totalOrders - a.totalOrders)
     };
 
-    fs.writeFileSync(debugFilePath, JSON.stringify(debugData, null, 2), 'utf-8');
+    const debugFilePath = saveDebugSnapshot(debugDir, 'matching-details', debugData);
     console.log(`📁 匹配详情已保存到: ${debugFilePath}`);
     console.log(`   - 已匹配记录: ${matchedRecords.length}条`);
     console.log(`   - 未匹配记录: ${unmatchedRecords.length}条`);
@@ -745,6 +878,7 @@ async function analyzeC2DPerformance(options = {}) {
     const { 
       dateRange,
       selectedBrand = null,
+      selectedPlatform = null,
       selectedSelfFlag = 'Y',
       selectedCarrier = null,
       analysisType = 'C2D',
@@ -754,6 +888,7 @@ async function analyzeC2DPerformance(options = {}) {
     console.log('🔍 执行C2D时效分析（文件存储模式）:', {
       dateRange,
       selectedBrand,
+      selectedPlatform,
       selectedSelfFlag,
       selectedCarrier,
       userBrands  // ✅ 打印userBrands
@@ -880,6 +1015,99 @@ async function analyzeC2DPerformance(options = {}) {
       params.selectedCarrier = selectedCarrier;
     }
 
+    // 平台筛选（按VIEW平台分类字段，兼容代码/中文名/同义词）
+    if (selectedPlatform && selectedPlatform !== 'all') {
+      const PLATFORM_MAPPING = {
+        tmall: '天猫',
+        douyin: '抖音',
+        jd: '京东',
+        pdd: '拼多多',
+        official: '官网/小程序',
+        o2o: 'O2O',
+        xiaohongshu: '小红书',
+        wechat: '微信'
+      };
+
+      const aliasToCanonical = {
+        tmall: '天猫',
+        douyin: '抖音',
+        jd: '京东',
+        pdd: '拼多多',
+        official: '官网/小程序',
+        wechat: '微信',
+        '微信小程序': '微信',
+        '抖音电商': '抖音',
+        '官网': '官网/小程序',
+        '小程序': '官网/小程序'
+      };
+
+      const canonicalVariants = {
+        '官网/小程序': ['官网/小程序', '官网／小程序', '官网', '小程序'],
+        '微信': ['微信', '微信小程序'],
+        '抖音': ['抖音', '抖音电商']
+      };
+
+      const normalizePlatforms = (value) => {
+        if (Array.isArray(value)) return value.map(v => String(v).trim()).filter(Boolean).filter(v => v !== 'all');
+        if (typeof value === 'string') {
+          const trimmed = value.trim();
+          if (!trimmed || trimmed === 'all') return [];
+          return trimmed.includes(',')
+            ? trimmed.split(',').map(v => v.trim()).filter(Boolean).filter(v => v !== 'all')
+            : [trimmed];
+        }
+        return [];
+      };
+
+      const normalizeToken = (value) => String(value || '')
+        .trim()
+        .replace(/／/g, '/')
+        .replace(/\s+/g, '')
+        .toLowerCase();
+
+      const expandSet = new Set();
+      const addPlatformVariant = (value) => {
+        const text = String(value || '').trim();
+        if (!text) return;
+        expandSet.add(text);
+        expandSet.add(text.replace(/\//g, '／'));
+        expandSet.add(text.replace(/／/g, '/'));
+
+        const normalizedToken = normalizeToken(text);
+        const canonical = aliasToCanonical[normalizedToken] || aliasToCanonical[text] || text;
+        expandSet.add(String(canonical).trim());
+
+        const variants = canonicalVariants[canonical] || [];
+        variants.forEach((item) => {
+          const candidate = String(item || '').trim();
+          if (!candidate) return;
+          expandSet.add(candidate);
+          expandSet.add(candidate.replace(/／/g, '/'));
+        });
+      };
+
+      const requestedPlatforms = normalizePlatforms(selectedPlatform);
+      requestedPlatforms.forEach((p) => {
+        addPlatformVariant(p);
+        addPlatformVariant(PLATFORM_MAPPING[p] || p);
+      });
+
+      const normalizedValues = Array.from(expandSet)
+        .map((value) => String(value).trim().replace(/／/g, '/'))
+        .filter(Boolean);
+
+      if (normalizedValues.length === 1) {
+        whereClauses.push(`REPLACE(TRIM(v.PLATFORM_CLASS), '／', '/') = :selectedPlatform0`);
+        params.selectedPlatform0 = normalizedValues[0];
+      } else if (normalizedValues.length > 1) {
+        const placeholders = normalizedValues.map((_, index) => `:selectedPlatform${index}`).join(', ');
+        whereClauses.push(`REPLACE(TRIM(v.PLATFORM_CLASS), '／', '/') IN (${placeholders})`);
+        normalizedValues.forEach((value, index) => {
+          params[`selectedPlatform${index}`] = value;
+        });
+      }
+    }
+
     // ✅ 排除EMS承运订单
     whereClauses.push(`t.CARRIERID != 'EMS'`);
     
@@ -906,6 +1134,7 @@ async function analyzeC2DPerformance(options = {}) {
       SELECT 
         bc.COMPANY_ABNAME as BRAND_CODE,
         t.CARRIERID,
+        bc_carrier.COMPANY_ABNAME as CARRIER_NAME,
         ba.AREA_NAME as CITY_NAME,
         t.DEST_CITY as AREA_ID,
         
@@ -948,10 +1177,12 @@ async function analyzeC2DPerformance(options = {}) {
       LEFT JOIN APP_CMS.VIEW_TSK_LIST_TASK v ON t.TSK_MERGE_NO = v.TSK_MERGE_NO
       LEFT JOIN APP_CMS.BAS_AREA ba ON t.DEST_CITY = ba.AREA_ID
       LEFT JOIN APP_CMS.BAS_COMPANY bc ON t.CUSTOMERNO = bc.COMPANY_SYSID
+      LEFT JOIN APP_CMS.BAS_COMPANY bc_carrier ON t.CARRIERID = bc_carrier.COMPANY_SYSID
       ${whereClause}
       GROUP BY 
         bc.COMPANY_ABNAME,
-        t.CARRIERID, 
+        t.CARRIERID,
+        bc_carrier.COMPANY_ABNAME,
         ba.AREA_NAME, 
         t.DEST_CITY
       ORDER BY TOTAL_C2D_ORDERS DESC
@@ -1008,6 +1239,7 @@ async function analyzeC2DPerformance(options = {}) {
     statsResult.rows.forEach(row => {
       const brandCode = row.BRAND_CODE;
       const carrierId = row.CARRIERID;
+      const carrierName = row.CARRIER_NAME || carrierId;
       const cityName = row.CITY_NAME;
       const areaId = row.AREA_ID;
       
@@ -1151,6 +1383,7 @@ async function analyzeC2DPerformance(options = {}) {
       if (!byCourierMap.has(carrierId)) {
         byCourierMap.set(carrierId, {
           carrierId,
+          carrierName,
           planTotal: 0,
           plan24h: 0,
           plan48h: 0,
@@ -1198,6 +1431,7 @@ async function analyzeC2DPerformance(options = {}) {
         byBrandCourierMap.set(brandCourierKey, {
           brandCode,
           carrierId,
+          carrierName,
           planTotal: 0,
           plan24h: 0,
           plan48h: 0,
@@ -1281,16 +1515,9 @@ async function analyzeC2DPerformance(options = {}) {
     console.log('');
 
     // 🔍 保存匹配详情到文件
-    const fs = require('fs');
     const path = require('path');
-    
-    const debugDir = path.join(__dirname, '../../debug');
-    if (!fs.existsSync(debugDir)) {
-      fs.mkdirSync(debugDir, { recursive: true });
-    }
 
-    const timestamp = new Date().toISOString().replace(/:/g, '-').split('.')[0];
-    const debugFilePath = path.join(debugDir, `c2d-matching-details-${timestamp}.json`);
+    const debugDir = path.join(__dirname, '../../debug');
     
     const debugData = {
       summary: {
@@ -1312,7 +1539,7 @@ async function analyzeC2DPerformance(options = {}) {
       unmatchedRecords: unmatchedRecords.sort((a, b) => b.actualTotalOrders - a.actualTotalOrders)
     };
 
-    fs.writeFileSync(debugFilePath, JSON.stringify(debugData, null, 2), 'utf-8');
+    const debugFilePath = saveDebugSnapshot(debugDir, 'c2d-matching-details', debugData);
     console.log(`📁 C2D匹配详情已保存到: ${debugFilePath}`);
     console.log(`   - 已匹配记录: ${matchedRecords.length}条`);
     console.log(`   - 未匹配记录: ${unmatchedRecords.length}条`);

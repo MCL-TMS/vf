@@ -92,13 +92,7 @@ export function useFlowAnalysisData(options: UseFlowAnalysisDataOptions = {}) {
       const isHealthy = await ApiService.quickHealthCheck();
       
       if (!isHealthy) {
-        setState({
-          data: null,
-          loading: false,
-          error: null
-        });
-        lastFetchParamsRef.current = currentParams;
-        return;
+        console.warn('⚠️ [useFlowAnalysisData] 健康检查未通过，但继续尝试真实数据请求');
       }
 
       // 获取订单流向与异常分析数据
@@ -127,8 +121,12 @@ export function useFlowAnalysisData(options: UseFlowAnalysisDataOptions = {}) {
       lastFetchParamsRef.current = currentParams;
       
     } catch (error: any) {
-      // 如果请求被取消，不更新状态
+      // 请求被取消时也要结束loading，避免界面持续转圈
       if (error.name === 'AbortError') {
+        setState(prev => ({
+          ...prev,
+          loading: false
+        }));
         return;
       }
       
@@ -151,11 +149,11 @@ export function useFlowAnalysisData(options: UseFlowAnalysisDataOptions = {}) {
         errorMessage = error.message || '未知错误';
       }
       
-      setState({
-        data: null,
+      setState(prev => ({
+        data: prev.data,
         loading: false,
         error: errorMessage
-      });
+      }));
     }
   }, [enabled, dateRange?.from, dateRange?.to, selectedBrand, selectedPlatform]);
 

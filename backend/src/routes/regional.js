@@ -11,6 +11,12 @@ const { getBrandMapping } = require('../utils/brandMapping');
 const { buildScopedBrandFilter, getAuthorizedCustomerNos } = require('../utils/brandScope');
 const { ERROR_CODES, sendError, sendRouteError } = require('../utils/apiError');
 
+const NO_UPDATE_48H_EXCLUDED_STATUSES = "('40','90','93','94','95','99','100','105','110')";
+
+function buildNoUpdate48hCondition(flagExpr, statusExpr) {
+  return `(${flagExpr} = 'Y' AND ${statusExpr} NOT IN ${NO_UPDATE_48H_EXCLUDED_STATUSES})`;
+}
+
 /**
  * 获取省份分布统计
  * GET /api/regional/provinces
@@ -84,7 +90,7 @@ router.get('/provinces', async (req, res) => {
          COUNT(DISTINCT CASE WHEN t.DIS_STATUS = '55' AND t.WMS_OUTBOUND_TIME IS NOT NULL 
                              AND (SYSDATE - t.WMS_OUTBOUND_TIME) * 24 > 12 THEN t.TSK_MERGE_NO END) +
          COUNT(DISTINCT CASE WHEN v.IF_DELAY = 'Y' THEN t.TSK_MERGE_NO END) +
-         COUNT(DISTINCT CASE WHEN t.IS48H_FLAG = 'Y' THEN t.TSK_MERGE_NO END)) as exception_count,
+         COUNT(DISTINCT CASE WHEN ${buildNoUpdate48hCondition('v.IS_48H', 'v.DIS_STATUS')} THEN t.TSK_MERGE_NO END)) as exception_count,
         ROUND(AVG(CASE WHEN t.SUM_SEND_TIME2 IS NOT NULL AND t.SUM_SEND_TIME2 > 0 THEN t.SUM_SEND_TIME2 END), 2) as avg_delivery_time,
         ROUND(COUNT(CASE WHEN t.DIS_STATUS = '95' THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0), 2) as delivery_rate,
         -- 异常率（基于四种核心异常条件）
@@ -94,7 +100,7 @@ router.get('/provinces', async (req, res) => {
            COUNT(CASE WHEN t.DIS_STATUS = '55' AND t.WMS_OUTBOUND_TIME IS NOT NULL 
                       AND (SYSDATE - t.WMS_OUTBOUND_TIME) * 24 > 12 THEN 1 END) +
            COUNT(CASE WHEN v.IF_DELAY = 'Y' THEN 1 END) +
-           COUNT(CASE WHEN t.IS48H_FLAG = 'Y' THEN 1 END)) * 100.0 / NULLIF(COUNT(*), 0),
+           COUNT(CASE WHEN ${buildNoUpdate48hCondition('v.IS_48H', 'v.DIS_STATUS')} THEN 1 END)) * 100.0 / NULLIF(COUNT(*), 0),
           2
         ) as exception_rate
       FROM APP_CMS.TSK_LIST_TASK t
@@ -227,7 +233,7 @@ router.get('/cities', async (req, res) => {
          COUNT(DISTINCT CASE WHEN t.DIS_STATUS = '55' AND t.WMS_OUTBOUND_TIME IS NOT NULL 
                              AND (SYSDATE - t.WMS_OUTBOUND_TIME) * 24 > 12 THEN t.TSK_MERGE_NO END) +
          COUNT(DISTINCT CASE WHEN v.IF_DELAY = 'Y' THEN t.TSK_MERGE_NO END) +
-         COUNT(DISTINCT CASE WHEN t.IS48H_FLAG = 'Y' THEN t.TSK_MERGE_NO END)) as exception_count,
+         COUNT(DISTINCT CASE WHEN ${buildNoUpdate48hCondition('v.IS_48H', 'v.DIS_STATUS')} THEN t.TSK_MERGE_NO END)) as exception_count,
         ROUND(AVG(CASE WHEN t.SUM_SEND_TIME2 IS NOT NULL AND t.SUM_SEND_TIME2 > 0 THEN t.SUM_SEND_TIME2 END), 2) as avg_delivery_time,
         ROUND(COUNT(CASE WHEN t.DIS_STATUS = '95' THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0), 2) as delivery_rate,
         -- 异常率（基于四种核心异常条件）
@@ -237,7 +243,7 @@ router.get('/cities', async (req, res) => {
            COUNT(CASE WHEN t.DIS_STATUS = '55' AND t.WMS_OUTBOUND_TIME IS NOT NULL 
                       AND (SYSDATE - t.WMS_OUTBOUND_TIME) * 24 > 12 THEN 1 END) +
            COUNT(CASE WHEN v.IF_DELAY = 'Y' THEN 1 END) +
-           COUNT(CASE WHEN t.IS48H_FLAG = 'Y' THEN 1 END)) * 100.0 / NULLIF(COUNT(*), 0),
+           COUNT(CASE WHEN ${buildNoUpdate48hCondition('v.IS_48H', 'v.DIS_STATUS')} THEN 1 END)) * 100.0 / NULLIF(COUNT(*), 0),
           2
         ) as exception_rate
       FROM APP_CMS.TSK_LIST_TASK t

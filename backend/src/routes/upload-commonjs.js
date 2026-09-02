@@ -841,6 +841,7 @@ router.post('/analyze-timeliness', async (req, res) => {
     const { 
       dateRange, 
       selectedBrand, 
+      selectedPlatform,
       selectedSelfFlag,  // ✅ 新增：支持selfFlag参数
       selectedCarrier, 
       analysisType = 'S2D',  // ✅ 默认只执行S2D分析
@@ -859,6 +860,7 @@ router.post('/analyze-timeliness', async (req, res) => {
     console.log('🔍 开始时效分析计算（调用timelinessDataProcessor-file-based.js）:', {
       dateRange,
       selectedBrand,
+      selectedPlatform,
       selectedSelfFlag,
       selectedCarrier,
       analysisType,
@@ -874,6 +876,7 @@ router.post('/analyze-timeliness', async (req, res) => {
       const analysisResult = await analyzeTimelinessPerformance({
         dateRange,
         selectedBrand,
+        selectedPlatform,
         selectedSelfFlag,  // ✅ 传递selfFlag参数
         selectedCarrier,
         analysisType,
@@ -1437,6 +1440,7 @@ router.post('/export-timeliness-rawdata', async (req, res) => {
     const { 
       dateRange, 
       selectedBrand, 
+      selectedPlatform,
       selectedSelfFlag = 'Y',
       selectedCarrier = null,
       analysisType = 'S2D',
@@ -1446,6 +1450,7 @@ router.post('/export-timeliness-rawdata', async (req, res) => {
     console.log('📊 导出参数:', {
       dateRange,
       selectedBrand,
+      selectedPlatform,
       selectedSelfFlag,
       selectedCarrier,
       analysisType,
@@ -1493,7 +1498,6 @@ router.post('/export-timeliness-rawdata', async (req, res) => {
         WHERE (v.WMS_OUTBOUND_TIME IS NOT NULL 
                AND TRUNC(v.WMS_OUTBOUND_TIME) >= TO_DATE(:dateFrom, 'YYYY-MM-DD')
                AND TRUNC(v.WMS_OUTBOUND_TIME) <= TO_DATE(:dateTo, 'YYYY-MM-DD'))
-          AND v.CUSTOMERNO IN ('18405', '18405-1', '18405-2', '18405-3', '18405-4', '18405-5')
           AND v.TSK_MERGE_NO IS NOT NULL`,
       
       async buildFiltersAsync(queryParams, brand, platform, selfFlag, userBrands, carrierid) {
@@ -1501,31 +1505,146 @@ router.post('/export-timeliness-rawdata', async (req, res) => {
         let platformFilter = '';
         let selfFlagFilter = '';
         let carrierFilter = '';
+
+        const normalizeStringOrArray = (value) => {
+          if (value == null) return undefined;
+          if (Array.isArray(value)) {
+            const normalized = value
+              .map(v => String(v).trim())
+              .filter(Boolean)
+              .filter(v => v !== 'all');
+            return normalized.length > 0 ? normalized : undefined;
+          }
+          if (typeof value === 'string') {
+            const trimmed = value.trim();
+            if (!trimmed || trimmed === 'all') return undefined;
+            if (trimmed.includes(',')) {
+              const normalized = trimmed.split(',').map(v => v.trim()).filter(Boolean).filter(v => v !== 'all');
+              return normalized.length > 0 ? normalized : undefined;
+            }
+            return trimmed;
+          }
+          return undefined;
+        };
         
         // 获取动态品牌映射
         const BRAND_MAPPING = await getBrandMapping();
         
-        // 品牌筛选
-        if (brand && brand !== 'all') {
-          const customerNo = BRAND_MAPPING[brand] || brand;
-          queryParams.brand0 = customerNo;
-          brandFilter = 'AND v.CUSTOMERNO = :brand0';
+        // 品牌筛选（支持单选/多选）
+        const normalizedBrand = normalizeStringOrArray(brand);
+        if (normalizedBrand) {
+          const requested = Array.isArray(normalizedBrand) ? normalizedBrand : [normalizedBrand];
+          const mappedBrands = requested
+            .map(item => BRAND_MAPPING[item] || item)
+            .map(item => String(item).trim())
+            .filter(Boolean);
+
+          if (mappedBrands.length === 1) {
+            queryParams.brand0 = mappedBrands[0];
+            brandFilter = 'AND v.CUSTOMERNO = :brand0';
+          } else if (mappedBrands.length > 1) {
+            mappedBrands.forEach((code, index) => {
+              queryParams[`brand${index}`] = code;
+            });
+            const placeholders = mappedBrands.map((_, index) => `:brand${index}`).join(', ');
+            brandFilter = `AND v.CUSTOMERNO IN (${placeholders})`;
+          }
         } else if (userBrands && userBrands !== 'all') {
-          const brandList = Array.isArray(userBrands) ? userBrands : userBrands.split(',').map(b => b.trim()).filter(Boolean);
+          const brandList = normalizeStringOrArray(userBrands) || [];
+          const normalizedBrandList = Array.isArray(brandList) ? brandList : [brandList];
           
-          if (brandList.length > 0) {
-            brandList.forEach((brandCode, index) => {
+          if (normalizedBrandList.length > 0) {
+            normalizedBrandList.forEach((brandCode, index) => {
               queryParams[`userbrand${index}`] = brandCode;
             });
-            const userBrandPlaceholders = brandList.map((_, index) => `:userbrand${index}`).join(', ');
+            const userBrandPlaceholders = normalizedBrandList.map((_, index) => `:userbrand${index}`).join(', ');
             brandFilter = `AND v.CUSTOMERNO IN (${userBrandPlaceholders})`;
           }
         }
         
-        // 平台筛选（如果需要的话）
+        // 平台筛选（支持单值或数组）
         if (platform && platform !== 'all') {
-          queryParams.platform = platform;
-          platformFilter = 'AND v.PLATFORM_CLASS = :platform';
+          const normalize = (v) => {
+            if (v == null) return undefined;
+            if (typeof v === 'string') {
+              const t = v.trim();
+              if (t === '') return undefined;
+              if (t.includes(',')) return t.split(',').map(s => s.trim()).filter(Boolean);
+              return t;
+            }
+            if (Array.isArray(v)) return v.map(i => String(i).trim()).filter(Boolean);
+            return undefined;
+          };
+
+          const normalizedPlatform = normalize(platform);
+          if (normalizedPlatform) {
+            const PLATFORM_MAPPING = {
+              'tmall': '天猫',
+              'douyin': '抖音',
+              'jd': '京东',
+              'pdd': '拼多多',
+              'official': '官网/小程序',
+              'o2o': 'O2O',
+              'xiaohongshu': '小红书',
+              'wechat': '微信'
+            };
+            const aliasToCanonical = {
+              'tmall': '天猫',
+              'douyin': '抖音',
+              'jd': '京东',
+              'pdd': '拼多多',
+              'official': '官网/小程序',
+              'wechat': '微信',
+              '微信小程序': '微信',
+              '抖音电商': '抖音',
+              '官网': '官网/小程序',
+              '小程序': '官网/小程序'
+            };
+            const canonicalVariants = {
+              '官网/小程序': ['官网/小程序', '官网／小程序', '官网', '小程序'],
+              '微信': ['微信', '微信小程序'],
+              '抖音': ['抖音', '抖音电商']
+            };
+
+            const normalizeToken = (value) => String(value || '')
+              .trim()
+              .replace(/／/g, '/')
+              .replace(/\s+/g, '')
+              .toLowerCase();
+
+            const addPlatformVariant = (expandSet, value) => {
+              const text = String(value || '').trim();
+              if (!text) return;
+              expandSet.add(text);
+              expandSet.add(text.replace(/\//g, '／'));
+              expandSet.add(text.replace(/／/g, '/'));
+
+              const normalizedToken = normalizeToken(text);
+              const canonical = aliasToCanonical[normalizedToken] || aliasToCanonical[text] || text;
+              expandSet.add(String(canonical).trim());
+
+              const variants = canonicalVariants[canonical] || [];
+              variants.forEach((item) => {
+                const candidate = String(item || '').trim();
+                if (!candidate) return;
+                expandSet.add(candidate);
+                expandSet.add(candidate.replace(/／/g, '/'));
+              });
+            };
+
+            const requested = Array.isArray(normalizedPlatform) ? normalizedPlatform : [normalizedPlatform];
+            const expandSet = new Set();
+            requested.forEach((p) => {
+              addPlatformVariant(expandSet, p);
+              addPlatformVariant(expandSet, PLATFORM_MAPPING[p] || p);
+            });
+            const expanded = Array.from(expandSet)
+              .map((value) => String(value).trim().replace(/／/g, '/'))
+              .filter(Boolean);
+            expanded.forEach((p, idx) => { queryParams[`platform_${idx}`] = p; });
+            const placeholders = expanded.map((_, idx) => `:platform_${idx}`).join(', ');
+            platformFilter = `AND REPLACE(TRIM(v.PLATFORM_CLASS), '／', '/') IN (${placeholders})`;
+          }
         }
         
         // 自管筛选
@@ -1554,11 +1673,17 @@ router.post('/export-timeliness-rawdata', async (req, res) => {
     const { brandFilter, platformFilter, selfFlagFilter, carrierFilter } = await QueryUtils.buildFiltersAsync(
       queryParams, 
       selectedBrand,
-      null,  // platform
+      selectedPlatform,
       selectedSelfFlag, 
       userBrands,
       selectedCarrier
     );
+
+    // Oracle普通SQL不允许直接数组绑定，执行前强校验防止 ORA-01484。
+    const arrayBindKeys = Object.keys(queryParams).filter((k) => Array.isArray(queryParams[k]));
+    if (arrayBindKeys.length > 0) {
+      throw new Error(`Invalid array bind params for raw export: ${arrayBindKeys.join(', ')}`);
+    }
     
     console.log('🔍 SQL参数:', queryParams);
     
@@ -1567,6 +1692,7 @@ router.post('/export-timeliness-rawdata', async (req, res) => {
       SELECT 
         -- 快递商信息
         v.CARRIERID as carrier_id,
+        bc_carrier.COMPANY_ABNAME as carrier_name,
         v.COMPANY_NAME as company_name,
         
         -- 订单基本信息
@@ -1608,7 +1734,7 @@ router.post('/export-timeliness-rawdata', async (req, res) => {
         v.TR_DESCR as tr_descr,
         v.SELF_FLAG as self_flag,
         v.IS_24H as is_24h,
-        v.IS48H_FLAG as is48h_flag,
+        v.IS_48H as is_48h,
         
         -- 类型信息
         v.ORDER_TYPE_NAME as order_type_name,
@@ -1625,6 +1751,7 @@ router.post('/export-timeliness-rawdata', async (req, res) => {
         
       FROM APP_CMS.VIEW_TSK_LIST_TASK v
       ${QueryUtils.getBrandJoin('v')}
+      LEFT JOIN APP_CMS.BAS_COMPANY bc_carrier ON v.CARRIERID = bc_carrier.COMPANY_SYSID
       ${QueryUtils.BASE_WHERE_CONDITIONS_VIEW}
         ${brandFilter}
         ${platformFilter}
@@ -1645,25 +1772,57 @@ router.post('/export-timeliness-rawdata', async (req, res) => {
     const endTime = Date.now();
     console.log(`✅ 查询完成，耗时: ${endTime - startTime}ms，查询到 ${rawData.length} 条数据`);
     
+    const normalizedAnalysisType = String(analysisType || 'S2D').toUpperCase();
+    const isC2DAnalysis = normalizedAnalysisType === 'C2D';
+
+    const parseDateTimeToMillis = (value) => {
+      if (!value) return null;
+      if (value instanceof Date && !Number.isNaN(value.getTime())) {
+        return value.getTime();
+      }
+
+      const text = String(value).trim();
+      if (!text) return null;
+
+      // 兼容 Oracle 常见输出：YYYY-MM-DD HH:mm:ss
+      const normalized = text.replace(' ', 'T');
+      const ms = Date.parse(normalized);
+      return Number.isNaN(ms) ? null : ms;
+    };
+
+    const calcC2DHours = (paymentDate, deliveryTime) => {
+      const paymentMs = parseDateTimeToMillis(paymentDate);
+      const deliveryMs = parseDateTimeToMillis(deliveryTime);
+      if (paymentMs == null || deliveryMs == null || deliveryMs < paymentMs) {
+        return null;
+      }
+
+      return Math.round((((deliveryMs - paymentMs) / (1000 * 60 * 60)) * 100)) / 100;
+    };
+
     // 为每条订单计算实际时效区间和计划时效区间
     let processedCount = 0;  // ✅ 修复：使用独立的计数器，避免在map内部访问enrichedData
     const enrichedData = rawData.map(order => {
-      // 计算实际时效区间（基于 s2d_actual_hours 字段）
+      // 根据分析类型计算实际时效小时：
+      // - S2D: 使用视图字段 DELIVERY_TIMES
+      // - C2D: 使用 DELIVERY_TIME - PAYMENTDATE_D
+      const actualHours = isC2DAnalysis
+        ? calcC2DHours(order.PAYMENT_DATE, order.DELIVERY_TIME)
+        : (order.S2D_ACTUAL_HOURS !== null && order.S2D_ACTUAL_HOURS !== undefined
+            ? Number(order.S2D_ACTUAL_HOURS)
+            : null);
+
+      // 计算实际时效区间
       let actualTimeZone = '';
-      const actualHours = order.S2D_ACTUAL_HOURS;
-      
-      if (order.DIS_STATUS === '93' || order.DIS_STATUS === '95') {
-        // 只有已签收的订单才有实际时效
-        if (actualHours !== null && actualHours !== undefined) {
-          if (actualHours <= 24) {
-            actualTimeZone = '24H';
-          } else if (actualHours <= 48) {
-            actualTimeZone = '48H';
-          } else if (actualHours <= 72) {
-            actualTimeZone = '72H';
-          } else {
-            actualTimeZone = '72H+';
-          }
+      if (actualHours !== null && actualHours !== undefined && Number.isFinite(actualHours)) {
+        if (actualHours <= 24) {
+          actualTimeZone = '24H';
+        } else if (actualHours <= 48) {
+          actualTimeZone = '48H';
+        } else if (actualHours <= 72) {
+          actualTimeZone = '72H';
+        } else {
+          actualTimeZone = '72H+';
         }
       }
       
@@ -1712,7 +1871,7 @@ router.post('/export-timeliness-rawdata', async (req, res) => {
       }
       
       return {
-        快递商: order.CARRIER_ID || '',
+        快递商: order.CARRIER_NAME || order.CARRIER_ID || '',
         项目名称: order.COMPANY_NAME || '',
         快递单号: order.TSK_MERGE_NO || '',
         消费者付款时间: order.PAYMENT_DATE || '',
@@ -1744,8 +1903,9 @@ router.post('/export-timeliness-rawdata', async (req, res) => {
         二级警告原因: order.PATCH_REASON2 || '',
         超时级别: order.DELAY_CLASS_NAME || '',
         超24H未揽收: order.IS_24H || '',
-        超48H未更新: order.IS48H_FLAG || '',
+        超48H未更新: order.IS_48H || order.is_48h || '',
         首派时间: order.DISP_TIME || '',
+        时效分析类型: normalizedAnalysisType,
         实际时效区间: actualTimeZone,
         计划时效区间: planTimeZone,
         实际时效小时: actualHours !== null ? actualHours : '',
@@ -1762,6 +1922,7 @@ router.post('/export-timeliness-rawdata', async (req, res) => {
         totalRecords: enrichedData.length,
         dateRange,
         selectedBrand,
+        selectedPlatform,
         analysisType
       }
     });

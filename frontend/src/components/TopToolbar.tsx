@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Calendar, Upload, Download, Filter, X } from "lucide-react";
+import { Calendar, Upload, Download } from "lucide-react";
 import { DatePickerWithRange } from "./ui/date-picker-with-range";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { MultiSelect } from "./ui/multi-select";
@@ -338,6 +338,13 @@ export function TopToolbar({
           setOrderBrandsStatus('loaded');
         }
       } catch (error) {
+        if ((error as any)?.name === 'AbortError') {
+          console.info('ℹ️ 获取有订单品牌请求被取消，继续使用当前品牌列表');
+          if (!cancelled) {
+            setOrderBrandsStatus('loaded');
+          }
+          return;
+        }
         console.warn('⚠️ 获取有订单品牌失败，保留上次成功的品牌列表', error);
         if (!cancelled) {
           setOrderBrandsStatus('error');
@@ -382,6 +389,13 @@ export function TopToolbar({
             setOrderPlatformsStatus('loaded');
           }
         } catch (error) {
+          if ((error as any)?.name === 'AbortError') {
+            console.info('ℹ️ 获取有订单平台请求被取消，继续使用当前平台列表');
+            if (!cancelled) {
+              setOrderPlatformsStatus('loaded');
+            }
+            return;
+          }
           console.warn('⚠️ 获取有订单平台失败，保留上次成功的平台列表', error);
           if (!cancelled) {
             setOrderPlatformsStatus('error');
@@ -443,6 +457,14 @@ export function TopToolbar({
     try {
       // 获取用户品牌权限
       const userBrands = user?.customerNos || [];
+      const currentTimelinessMetric = (() => {
+        try {
+          const value = String(sessionStorage.getItem('vf_timeliness_metric_type') || 'S2D').toUpperCase();
+          return value === 'C2D' ? 'C2D' : 'S2D';
+        } catch {
+          return 'S2D';
+        }
+      })();
       
       // 🔥 根据activeMenu判断导出哪种数据
       // ✅ 物流监控页面(overview-logistics)包含时效分析Tab，需要导出时效RawData
@@ -454,9 +476,10 @@ export function TopToolbar({
         const rawData = await exportTimelinessRawData({
           dateRange: currentDateRange,
           selectedBrand: selectedBrand || 'all',
+          selectedPlatform: selectedPlatform || 'all',
           selectedSelfFlag: selectedSelfFlag || 'Y',
           selectedCarrier: null,
-          analysisType: 'S2D', // 默认S2D，也可以根据当前Tab动态切换
+          analysisType: currentTimelinessMetric,
           userBrands: userBrands
         });
 
@@ -464,7 +487,7 @@ export function TopToolbar({
           // 导出到Excel
           exportTimelinessRawDataToExcel(rawData, {
             selectedBrand: selectedBrand || 'all',
-            analysisType: 'S2D',
+            analysisType: currentTimelinessMetric,
             dateRange: currentDateRange
           });
 
@@ -523,20 +546,6 @@ export function TopToolbar({
     };
     input.click();
   };
-
-  const clearAllFilters = () => {
-    onBrandChange('all');
-    if (onPlatformChange) {
-      onPlatformChange('all');
-    }
-    if (onSelfFlagChange) {
-      onSelfFlagChange('Y'); // 默认回到自管
-    }
-  };
-
-  const hasActiveFilters = (selectedBrand && selectedBrand !== 'all' && (!Array.isArray(selectedBrand) || selectedBrand.length > 0)) ||
-                          (selectedPlatform && selectedPlatform !== 'all' && (!Array.isArray(selectedPlatform) || selectedPlatform.length > 0)) ||
-                          (selectedSelfFlag && selectedSelfFlag !== 'Y');
 
   return (
     <div className="h-16 bg-white border-b border-functional-light-grey flex items-center justify-between px-6">
@@ -627,49 +636,6 @@ export function TopToolbar({
             </SelectContent>
           </Select>
         </div>
-
-        {/* Active Filters Indicator */}
-        {hasActiveFilters && (
-          <div className="flex items-center space-x-2">
-            <Filter className="h-3 w-3 text-functional-mid-grey" />
-            <div className="flex items-center space-x-1">
-              {selectedBrand && selectedBrand !== 'all' && (!Array.isArray(selectedBrand) || selectedBrand.length > 0) && (
-                <Badge variant="outline" className="maersk-badge-secondary text-xs truncate max-w-[200px]" title={Array.isArray(selectedBrand) ? selectedBrand.map(b => codeToNameMap[b] || b).join(', ') : (codeToNameMap[selectedBrand] || selectedBrand)}>
-                  品牌: {Array.isArray(selectedBrand) ? selectedBrand.map(b => codeToNameMap[b] || b).join(', ') : (codeToNameMap[selectedBrand] || selectedBrand)}
-                </Badge>
-              )}
-              {selectedPlatform && selectedPlatform !== 'all' && (
-                <Badge variant="outline" className="maersk-badge-secondary text-xs">
-                  平台: {Array.isArray(selectedPlatform) ? (
-                    selectedPlatform.length > 3 ? `已选 ${selectedPlatform.length} 个平台` : selectedPlatform.join(', ')
-                  ) : (
-                    selectedPlatform === 'tmall' ? '天猫' : 
-                    selectedPlatform === 'douyin' ? '抖音' : 
-                    selectedPlatform === 'jd' ? '京东' : 
-                    selectedPlatform === 'pdd' ? '拼多多' : 
-                    selectedPlatform === 'official' ? '官网/小程序' : 
-                    selectedPlatform === 'o2o' ? 'O2O' : 
-                    selectedPlatform === 'xiaohongshu' ? '小红书' : 
-                    selectedPlatform === 'wechat' ? '微信小程序' : selectedPlatform
-                  )}
-                </Badge>
-              )}
-              {selectedSelfFlag && selectedSelfFlag !== 'Y' && (
-                <Badge variant="outline" className="maersk-badge-secondary text-xs">
-                  自管: {selectedSelfFlag === 'N' ? '非自管' : selectedSelfFlag === 'all' ? '全部' : selectedSelfFlag}
-                </Badge>
-              )}
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={clearAllFilters}
-                className="h-6 w-6 p-0 text-functional-mid-grey hover:text-accent-mid-red"
-              >
-                <X className="h-3 w-3" />
-              </Button>
-            </div>
-          </div>
-        )}
 
         <Separator orientation="vertical" className="h-6" />
 

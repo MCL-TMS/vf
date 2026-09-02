@@ -257,20 +257,57 @@ async function loadActiveTimelinessData() {
     }
     
     // ✅ 优先使用JSON缓存（快速）
-    if (activeFile.jsonFilePath && fs.existsSync(activeFile.jsonFilePath)) {
+    if (activeFile.jsonFilePath) {
+      // 直接使用元数据中的路径（可能为绝对路径，也可能为Windows样式路径）
+      let jsonPath = activeFile.jsonFilePath;
+      if (fs.existsSync(jsonPath)) {
+        try {
+          console.log('📂 从JSON缓存加载时效数据（快速模式） - 使用 metadata.json 指定路径');
+          const fileContent = fs.readFileSync(jsonPath, 'utf-8');
+          const fileData = JSON.parse(fileContent);
+
+          cachedTimelinessData = fileData.data;
+          cachedMetadata = metadata;
+
+          console.log(`✅ JSON加载成功: ${activeFile.fileName} (${fileData.recordCount}条记录)`);
+          return cachedTimelinessData;
+
+        } catch (jsonError) {
+          console.warn('⚠️  JSON文件损坏，尝试其他加载方式:', jsonError.message);
+        }
+      }
+
+      // 如果 metadata 中的路径不可用（例如 Windows 绝对路径在 Linux 上不存在），尝试在本地目录中寻找同名或 fileId.json
       try {
-        console.log('📂 从JSON缓存加载时效数据（快速模式）');
-        const fileContent = fs.readFileSync(activeFile.jsonFilePath, 'utf-8');
-        const fileData = JSON.parse(fileContent);
-        
-        cachedTimelinessData = fileData.data;
-        cachedMetadata = metadata;
-        
-        console.log(`✅ JSON加载成功: ${activeFile.fileName} (${fileData.recordCount}条记录)`);
-        return cachedTimelinessData;
-        
-      } catch (jsonError) {
-        console.warn('⚠️  JSON文件损坏，尝试从Excel解析:', jsonError.message);
+        const basename = path.basename(activeFile.jsonFilePath || '');
+        const fallback1 = path.join(TIMELINESS_DATA_DIR, basename);
+        const fallback2 = path.join(TIMELINESS_DATA_DIR, `${activeFile.fileId}.json`);
+
+        if (fs.existsSync(fallback1)) {
+          console.log(`🔁 metadata.json 指向的 JSON 不可读，尝试本地文件 ${fallback1}`);
+          const fileContent = fs.readFileSync(fallback1, 'utf-8');
+          const fileData = JSON.parse(fileContent);
+
+          cachedTimelinessData = fileData.data;
+          cachedMetadata = metadata;
+
+          console.log(`✅ JSON加载成功（本地备选）: ${fallback1} (${fileData.recordCount}条记录)`);
+          return cachedTimelinessData;
+        }
+
+        if (fs.existsSync(fallback2)) {
+          console.log(`🔁 metadata.json 指向的 JSON 不可读，尝试本地文件 ${fallback2}`);
+          const fileContent = fs.readFileSync(fallback2, 'utf-8');
+          const fileData = JSON.parse(fileContent);
+
+          cachedTimelinessData = fileData.data;
+          cachedMetadata = metadata;
+
+          console.log(`✅ JSON加载成功（本地 fileId 备选）: ${fallback2} (${fileData.recordCount}条记录)`);
+          return cachedTimelinessData;
+        }
+      } catch (fallbackError) {
+        console.warn('⚠️ 本地备选 JSON 加载失败:', fallbackError.message);
       }
     }
     
@@ -503,14 +540,49 @@ function getLatestTimelinessData() {
     if (!activeFile) {
       return null;
     }
-    
-    // 优先使用JSON
+
+    // 优先使用JSON，并兼容手工修改 metadata 后的相对路径/跨平台路径
     let data = null;
-    if (activeFile.jsonFilePath && fs.existsSync(activeFile.jsonFilePath)) {
-      const fileContent = fs.readFileSync(activeFile.jsonFilePath, 'utf-8');
-      const fileData = JSON.parse(fileContent);
-      data = fileData.data;
-    } else if (activeFile.filePath && fs.existsSync(activeFile.filePath)) {
+    let resolvedJsonPath = null;
+
+    if (activeFile.jsonFilePath) {
+      const candidatePaths = [];
+      const rawJsonPath = String(activeFile.jsonFilePath || '').trim();
+      const backendRoot = path.join(__dirname, '../../');
+
+      candidatePaths.push(rawJsonPath);
+
+      if (rawJsonPath) {
+        candidatePaths.push(path.resolve(process.cwd(), rawJsonPath));
+        candidatePaths.push(path.resolve(backendRoot, rawJsonPath));
+
+        const normalizedRaw = rawJsonPath.replace(/^\.?[\\/]+/, '');
+        candidatePaths.push(path.resolve(backendRoot, normalizedRaw));
+
+        const normalizedWithoutBackendPrefix = normalizedRaw.replace(/^backend[\\/]/i, '');
+        candidatePaths.push(path.resolve(backendRoot, normalizedWithoutBackendPrefix));
+
+        const basename = path.basename(rawJsonPath);
+        if (basename) {
+          candidatePaths.push(path.join(TIMELINESS_DATA_DIR, basename));
+        }
+      }
+
+      if (activeFile.fileId) {
+        candidatePaths.push(path.join(TIMELINESS_DATA_DIR, `${activeFile.fileId}.json`));
+      }
+
+      const dedupedCandidates = [...new Set(candidatePaths.filter(Boolean))];
+      resolvedJsonPath = dedupedCandidates.find((p) => fs.existsSync(p)) || null;
+
+      if (resolvedJsonPath) {
+        const fileContent = fs.readFileSync(resolvedJsonPath, 'utf-8');
+        const fileData = JSON.parse(fileContent);
+        data = fileData.data;
+      }
+    }
+
+    if (!data && activeFile.filePath && fs.existsSync(activeFile.filePath)) {
       // 兼容旧格式
       const fileContent = fs.readFileSync(activeFile.filePath, 'utf-8');
       const fileData = JSON.parse(fileContent);
@@ -535,7 +607,8 @@ function getLatestTimelinessData() {
       metadata: {
         fileName: activeFile.fileName,
         uploadTime: activeFile.uploadTime,
-        recordCount: normalizedData.length
+        recordCount: normalizedData.length,
+        jsonFilePath: resolvedJsonPath || activeFile.jsonFilePath || null
       }
     };
     

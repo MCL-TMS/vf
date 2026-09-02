@@ -18,8 +18,8 @@ import type { DateRange, FilteredOrderData, LogisticsExceptionFilter } from '../
 interface PageRouterProps {
   activeMenu: string;
   filteredData: FilteredOrderData;
-  selectedBrand: string | null;
-  selectedPlatform: string | null;
+  selectedBrand: string | string[] | null;
+  selectedPlatform: string | string[] | null;
   selectedSelfFlag?: string | null;
   regionalDateRange: DateRange;
   onRegionalDateRangeChange: (from: string, to: string) => void;
@@ -93,7 +93,9 @@ export function PageRouter({
     case "overview-weight":
       return (
         <WeightAnalysisPage
-          {...commonProps}
+          selectedBrand={selectedBrand}
+          selectedPlatform={selectedPlatform}
+          selectedSelfFlag={selectedSelfFlag}
           dateRange={dateRange}
           onDateRangeChange={onDateRangeChange}
         />
@@ -122,9 +124,11 @@ export function PageRouter({
     case "overview-trends":
       return (
         <TrendsPage
-          {...commonProps}
+          data={filteredData}
+          selectedBrand={selectedBrand}
+          selectedPlatform={selectedPlatform}
+          selectedSelfFlag={selectedSelfFlag}
           dateRange={dateRange}
-          onDateRangeChange={onDateRangeChange}
         />
       );
       

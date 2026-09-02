@@ -12,6 +12,7 @@ import { getUnifiedExceptionData } from "../../utils/exceptionDataCalculator";
 import { DataLoadingState } from "../DataLoadingState";
 import { ApiService } from "../../services/apiService";
 import { ShippedTransferDialog, type TransferCarrierSummary } from "../ShippedTransferDialog";
+import { PageLoadingState } from "../PageLoadingState";
 
 interface OverviewDashboardProps {
   filteredData: FilteredData;
@@ -94,11 +95,14 @@ export function OverviewDashboard({
   // 添加安全检查，防止 filteredData 为 undefined
   if (!filteredData) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-center">
-          <div className="text-lg font-medium text-muted-foreground">加载中...</div>
-        </div>
-      </div>
+      <PageLoadingState
+        title="总览页面加载中"
+        subtitle="正在准备KPI与异常监控数据"
+        loading={true}
+        dataType="总览页面"
+        loadingMessage="正在加载总览页面..."
+        minHeight="360px"
+      />
     );
   }
 
@@ -263,30 +267,30 @@ export function OverviewDashboard({
     { 
       name: '超时未揽收', 
       value: totalPickupExceptions, 
-      threshold: '48小时', 
+      threshold: '2小时', 
       color: '#f3870c',
-      description: 'WMS出库后48小时仍未揽收'
+      description: 'WMS出库后2小时仍未揽收'
     }, // accent-mid-orange: 橙色
     { 
       name: '超时未发运', 
       value: totalShippingExceptions, 
-      threshold: '72小时', 
+      threshold: '12小时', 
       color: '#ea5d4b',
-      description: 'WMS出库后72小时仍未发运'
+      description: 'WMS出库后12小时仍未发运'
     }, // accent-mid-red: 红色
     { 
       name: '超时未签收', 
       value: totalDeliveryExceptions, 
       threshold: '72小时', 
       color: '#6ca926',
-      description: '首次派送后72小时仍未签收'
+      description: '超过理论时效仍未签收'
     }, // accent-mid-green: 绿色
     { 
       name: '超48H未更新', 
       value: totalUpdateExceptions, 
       threshold: '48小时', 
       color: '#42b0d5',
-      description: '订单状态超过48小时未更新'
+      description: '轨迹节点超48H未更新'
     }, // maersk-blue: 蓝色
   ];
 

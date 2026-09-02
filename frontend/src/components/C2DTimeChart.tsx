@@ -90,7 +90,7 @@ export function C2DTimeChart({ selectedBrand, apiData, isLoading = false, access
         });
         
         courierData.push({
-          courier: carrierId,
+          courier: carrierStat.carrierName || carrierId,
           "1d": time1d,
           "2d": time2d,
           "3d": time3d,
@@ -210,7 +210,7 @@ export function C2DTimeChart({ selectedBrand, apiData, isLoading = false, access
         }
       }
 
-      const courierName = CARRIER_NAME_MAP[carrierId] || carrierId;
+      const courierName = stat.carrierName || CARRIER_NAME_MAP[carrierId] || carrierId;
       const actualCats = stat.actualCategories || {};
       const totalOrders = stat.total || 0;
 

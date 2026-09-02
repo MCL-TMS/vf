@@ -81,17 +81,57 @@ router.get('/overview', globalRateLimiter, async (req, res) => {
       paramPrefix: 'brand'
     });
     
-    // 🔥 构建平台筛选条件
+    // 🔥 构建平台筛选条件（支持单值或数组）
     let platformFilter = '';
-    if (platform && platform !== 'all') {
-      platformFilter = ` AND EXISTS (
-        SELECT 1 FROM APP_CMS.BAS_CODES bc 
-        WHERE t.PLATFORM = bc.CODE 
-          AND bc.CODEID = 'PLATFORM_CLASS' 
-          AND bc.UDF1 = :platform
-      )`;
-      queryParams.platform = platform;
-      console.log(`🏪 [Exception-Analysis] 平台筛选: ${platform}`);
+    const normalizeStringOrArray = (v) => {
+      if (v == null) return undefined;
+      if (typeof v === 'string') {
+        const trimmed = v.trim();
+        if (trimmed === '') return undefined;
+        // 支持逗号分隔的多值字符串
+        if (trimmed.includes(',')) {
+          return trimmed.split(',').map(s => s.trim()).filter(Boolean);
+        }
+        return trimmed;
+      }
+      if (Array.isArray(v)) return v.map(i => String(i).trim()).filter(Boolean);
+      return undefined;
+    };
+
+    const PLATFORM_MAPPING = {
+      'tmall': '天猫',
+      'douyin': '抖音',
+      'jd': '京东',
+      'pdd': '拼多多',
+      'official': '官网/小程序',
+      'o2o': 'O2O',
+      'xiaohongshu': '小红书',
+      'wechat': '微信'
+    };
+
+    const normalizedPlatform = normalizeStringOrArray(platform);
+    if (normalizedPlatform && normalizedPlatform !== 'all') {
+      // 直接使用视图字段 PLATFORM_CLASS 过滤，避免依赖不存在的 t.PLATFORM 字段
+      const requested = Array.isArray(normalizedPlatform) ? normalizedPlatform : [normalizedPlatform];
+      const expandSet = new Set();
+      requested.forEach((p) => {
+        const token = String(p || '').trim();
+        if (!token) return;
+        expandSet.add(token);
+        const mapped = PLATFORM_MAPPING[token.toLowerCase()] || PLATFORM_MAPPING[token] || token;
+        expandSet.add(mapped);
+      });
+
+      const expanded = Array.from(expandSet)
+        .map((v) => String(v).trim().replace(/／/g, '/'))
+        .filter(Boolean);
+
+      if (expanded.length > 0) {
+        const placeholders = expanded.map((_, i) => `:platform_${i}`).join(', ');
+        platformFilter = ` AND REPLACE(TRIM(t.PLATFORM_CLASS), '／', '/') IN (${placeholders})`;
+        expanded.forEach((val, i) => { queryParams[`platform_${i}`] = val; });
+        console.log(`🏪 [Exception-Analysis] 平台多选/单选展开匹配: [${expanded.join(', ')}]`);
+      }
     }
     
     // 🔥 构建自管筛选条件
@@ -106,7 +146,7 @@ router.get('/overview', globalRateLimiter, async (req, res) => {
     const summarySQL = `
       SELECT 
         COUNT(*) as TOTAL_EXCEPTIONS,
-        COUNT(DISTINCT t.CARRIERID_NAME) as TOTAL_CARRIERS,
+        COUNT(DISTINCT t.CARRIERID) as TOTAL_CARRIERS,
         COUNT(DISTINCT t.PATCH_REASON_GS) as TOTAL_RESPONSIBILITY_TYPES,
         COUNT(DISTINCT t.patch_reason2_name) as TOTAL_REASON_TYPES,
         SUM(CASE WHEN t.PATCH_REASON_GS = '快递责任' THEN 1 ELSE 0 END) as CARRIER_RESPONSIBILITY_COUNT,
@@ -156,7 +196,7 @@ router.get('/overview', globalRateLimiter, async (req, res) => {
         NVL(t.PATCH_REASON_GS, '未分类') as RESPONSIBILITY,
         COUNT(*) as EXCEPTION_COUNT,
         ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER(), 2) as PERCENTAGE,
-        COUNT(DISTINCT t.CARRIERID_NAME) as AFFECTED_CARRIERS,
+        COUNT(DISTINCT t.CARRIERID) as AFFECTED_CARRIERS,
         COUNT(DISTINCT t.patch_reason2_name) as REASON_TYPES
       FROM APP_CMS.view_TSK_LIST_TASK t
       WHERE (
@@ -181,7 +221,8 @@ router.get('/overview', globalRateLimiter, async (req, res) => {
     // ==================== 查询3: 按快递商分组 ====================
     const byCarrierSQL = `
       SELECT 
-        NVL(t.CARRIERID_NAME, '未知快递商') as CARRIER_NAME,
+        t.CARRIERID as CARRIER_ID,
+        NVL(bc_carrier.COMPANY_ABNAME, t.CARRIERID) as CARRIER_NAME,
         COUNT(*) as EXCEPTION_COUNT,
         ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER(), 2) as PERCENTAGE,
         COUNT(DISTINCT t.PATCH_REASON_GS) as RESPONSIBILITY_TYPES,
@@ -189,6 +230,7 @@ router.get('/overview', globalRateLimiter, async (req, res) => {
         SUM(CASE WHEN t.PATCH_REASON_GS = '快递责任' THEN 1 ELSE 0 END) as CARRIER_FAULT_COUNT,
         SUM(CASE WHEN t.PATCH_REASON_GS != '快递责任' THEN 1 ELSE 0 END) as OTHER_FAULT_COUNT
       FROM APP_CMS.view_TSK_LIST_TASK t
+      LEFT JOIN APP_CMS.BAS_COMPANY bc_carrier ON t.CARRIERID = bc_carrier.COMPANY_SYSID
       WHERE (
         (t.WMS_OUTBOUND_TIME IS NOT NULL 
          AND to_char(t.WMS_OUTBOUND_TIME,'yyyy-mm-dd') >= :dateFrom 
@@ -196,10 +238,11 @@ router.get('/overview', globalRateLimiter, async (req, res) => {
       )
         AND t.TSK_MERGE_NO IS NOT NULL
         AND t.PATCH_REASON_GS IS NOT NULL
+        AND t.PATCH_REASON_GS = '快递责任'
         ${brandFilter}
         ${platformFilter}
         ${selfFlagFilter}
-      GROUP BY t.CARRIERID_NAME
+      GROUP BY t.CARRIERID, bc_carrier.COMPANY_ABNAME
       ORDER BY EXCEPTION_COUNT DESC
     `;
     
@@ -215,7 +258,7 @@ router.get('/overview', globalRateLimiter, async (req, res) => {
         NVL(t.PATCH_REASON_GS, '未分类') as RESPONSIBILITY,
         COUNT(*) as EXCEPTION_COUNT,
         ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER(), 2) as PERCENTAGE,
-        COUNT(DISTINCT t.CARRIERID_NAME) as AFFECTED_CARRIERS
+        COUNT(DISTINCT t.CARRIERID) as AFFECTED_CARRIERS
       FROM APP_CMS.view_TSK_LIST_TASK t
       WHERE (
         (t.WMS_OUTBOUND_TIME IS NOT NULL 
@@ -240,12 +283,14 @@ router.get('/overview', globalRateLimiter, async (req, res) => {
     // ==================== 查询5: 快递商×责任方×异常原因交叉分析 ====================
     const crossAnalysisSQL = `
       SELECT 
-        NVL(t.CARRIERID_NAME, '未知快递商') as CARRIER_NAME,
+        t.CARRIERID as CARRIER_ID,
+        NVL(bc_carrier.COMPANY_ABNAME, t.CARRIERID) as CARRIER_NAME,
         NVL(t.PATCH_REASON_GS, '未分类') as RESPONSIBILITY,
         NVL(t.patch_reason2_name, '未分类') as REASON_NAME,
         COUNT(*) as EXCEPTION_COUNT,
-        ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER(PARTITION BY t.CARRIERID_NAME), 2) as CARRIER_PERCENTAGE
+        ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER(PARTITION BY t.CARRIERID), 2) as CARRIER_PERCENTAGE
       FROM APP_CMS.view_TSK_LIST_TASK t
+      LEFT JOIN APP_CMS.BAS_COMPANY bc_carrier ON t.CARRIERID = bc_carrier.COMPANY_SYSID
       WHERE (
         (t.WMS_OUTBOUND_TIME IS NOT NULL 
          AND to_char(t.WMS_OUTBOUND_TIME,'yyyy-mm-dd') >= :dateFrom 
@@ -256,7 +301,7 @@ router.get('/overview', globalRateLimiter, async (req, res) => {
         ${brandFilter}
         ${platformFilter}
         ${selfFlagFilter}
-      GROUP BY t.CARRIERID_NAME, t.PATCH_REASON_GS, t.patch_reason2_name
+      GROUP BY t.CARRIERID, bc_carrier.COMPANY_ABNAME, t.PATCH_REASON_GS, t.patch_reason2_name
       ORDER BY CARRIER_NAME, EXCEPTION_COUNT DESC
       FETCH FIRST 100 ROWS ONLY
     `;
@@ -396,14 +441,46 @@ router.get('/carrier/:carrierName', async (req, res) => {
     });
     
     let platformFilter = '';
-    if (platform && platform !== 'all') {
-      platformFilter = ` AND EXISTS (
-        SELECT 1 FROM APP_CMS.BAS_CODES bc 
-        WHERE t.PLATFORM = bc.CODE 
-          AND bc.CODEID = 'PLATFORM_CLASS' 
-          AND bc.UDF1 = :platform
-      )`;
-      queryParams.platform = platform;
+    const normalize = (v) => {
+      if (v == null) return undefined;
+      if (typeof v === 'string') {
+        const trimmed = v.trim();
+        if (trimmed === '') return undefined;
+        if (trimmed.includes(',')) return trimmed.split(',').map(s => s.trim()).filter(Boolean);
+        return trimmed;
+      }
+      if (Array.isArray(v)) return v.map(i => String(i).trim()).filter(Boolean);
+      return undefined;
+    };
+
+    const normalizedPlatform = normalize(platform);
+    if (normalizedPlatform && normalizedPlatform !== 'all') {
+      const PLATFORM_MAPPING = {
+        'tmall': '天猫',
+        'douyin': '抖音',
+        'jd': '京东',
+        'pdd': '拼多多',
+        'official': '官网/小程序',
+        'o2o': 'O2O',
+        'xiaohongshu': '小红书',
+        'wechat': '微信'
+      };
+
+      const requested = Array.isArray(normalizedPlatform) ? normalizedPlatform : [normalizedPlatform];
+      const expanded = Array.from(new Set(
+        requested
+          .map((item) => {
+            const token = String(item || '').trim();
+            return [token, PLATFORM_MAPPING[token.toLowerCase()] || token];
+          })
+          .flat()
+          .map((item) => String(item || '').trim().replace(/／/g, '/'))
+          .filter(Boolean)
+      ));
+
+      const placeholders = expanded.map((_, i) => `:platform_${i}`).join(', ');
+      platformFilter = ` AND REPLACE(TRIM(t.PLATFORM_CLASS), '／', '/') IN (${placeholders})`;
+      expanded.forEach((val, i) => { queryParams[`platform_${i}`] = val; });
     }
     
     let selfFlagFilter = '';
@@ -420,13 +497,14 @@ router.get('/carrier/:carrierName', async (req, res) => {
         COUNT(*) as EXCEPTION_COUNT,
         ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER(), 2) as PERCENTAGE
       FROM APP_CMS.view_TSK_LIST_TASK t
+      LEFT JOIN APP_CMS.BAS_COMPANY bc_carrier ON t.CARRIERID = bc_carrier.COMPANY_SYSID
       WHERE (
         (t.WMS_OUTBOUND_TIME IS NOT NULL 
          AND to_char(t.WMS_OUTBOUND_TIME,'yyyy-mm-dd') >= :dateFrom 
          AND to_char(t.WMS_OUTBOUND_TIME,'yyyy-mm-dd') <= :dateTo)
       )
         AND t.TSK_MERGE_NO IS NOT NULL
-        AND t.CARRIERID_NAME = :carrierName
+        AND (t.CARRIERID = :carrierName OR bc_carrier.COMPANY_ABNAME = :carrierName)
         AND t.PATCH_REASON_GS IS NOT NULL
         ${brandFilter}
         ${platformFilter}
@@ -436,7 +514,9 @@ router.get('/carrier/:carrierName', async (req, res) => {
     `;
     
     console.log('📊 [Exception-Analysis] 执行快递商异常详情查询...');
-    const result = await connection.execute(detailSQL, queryParams);
+    const result = await connection.execute(detailSQL, queryParams, {
+      outFormat: oracledb.OUT_FORMAT_OBJECT
+    });
     
     // 🔧 数据转换
     const details = result.rows.map(row => ({

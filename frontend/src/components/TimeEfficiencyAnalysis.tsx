@@ -13,8 +13,9 @@ import { useAuth } from "../contexts/AuthContext"; // 🔥 导入useAuth获取�
 import { analyzeTimeliness } from "../services/apiService";
 
 interface TimeEfficiencyAnalysisProps {
-  selectedBrand?: string;
-  selectedSelfFlag?: string;
+  selectedBrand?: string | string[] | null;
+  selectedPlatform?: string | string[] | null;
+  selectedSelfFlag?: string | null;
   dateRange?: { from: string; to: string };
 }
 
@@ -22,12 +23,20 @@ interface TimeEfficiencyAnalysisProps {
 // 竞品数据从API获取，与当前品牌使用同一接口，只是 CUSTOMERNO 不同
 // 竞品数据不做前台展示，仅在AI助手回答时使用
 
-export function TimeEfficiencyAnalysis({ selectedBrand, selectedSelfFlag, dateRange }: TimeEfficiencyAnalysisProps) {
+export function TimeEfficiencyAnalysis({ selectedBrand, selectedPlatform, selectedSelfFlag, dateRange }: TimeEfficiencyAnalysisProps) {
   const { user, getAccessibleBrands } = useAuth(); // 🔥 获取当前用户信息和品牌访问方法
   const [analysisResult, setAnalysisResult] = useState<any>(null);
   const [competitorData, setCompetitorData] = useState<any>(null); // 🆕 竞品数据
   const [isLoading, setIsLoading] = useState(false);
   const [currentMetricType, setCurrentMetricType] = useState<'S2D' | 'C2D'>('S2D');
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem('vf_timeliness_metric_type', currentMetricType);
+    } catch {
+      // ignore storage access errors
+    }
+  }, [currentMetricType]);
   
   // 🔥 获取用户可访问的品牌代码列表
   const accessibleBrandCodes = useMemo(() => {
@@ -55,6 +64,7 @@ export function TimeEfficiencyAnalysis({ selectedBrand, selectedSelfFlag, dateRa
       const requestBody = {
         dateRange,
         selectedBrand,
+        selectedPlatform,
         selectedSelfFlag,
         selectedCarrier: null,
         analysisType,
@@ -65,7 +75,7 @@ export function TimeEfficiencyAnalysis({ selectedBrand, selectedSelfFlag, dateRa
 
       const result = await analyzeTimeliness(requestBody);
       console.log(`✅ ${analysisType}时效分析完成:`, result);
-      
+
       // 🔍 详细检查返回的数据结构
       console.log(`🔍 ${analysisType} 数据结构检查:`, {
         hasResult: !!result,
@@ -73,12 +83,90 @@ export function TimeEfficiencyAnalysis({ selectedBrand, selectedSelfFlag, dateRa
         dataKeys: result.data ? Object.keys(result.data) : [],
         hasS2DAnalysis: !!result.data?.s2dAnalysis,
         hasC2DAnalysis: !!result.data?.c2dAnalysis,
-        hasRawOrders: !!result.data?.rawOrders,  // 🔥 新增：检查rawOrders
-        rawOrdersCount: result.data?.rawOrders?.length || 0,  // 🔥 新增：订单数量
+        hasRawOrders: !!result.data?.rawOrders,
+        rawOrdersCount: result.data?.rawOrders?.length || 0,
         analysisType: analysisType
       });
 
-      setAnalysisResult(result.data);
+      // 如果后端返回了raw但缺少s2dAnalysis/c2dAnalysis，尝试在前端将raw转换为期望的结构
+      let apiData = result.data;
+      const needKey = analysisType === 'S2D' ? 's2dAnalysis' : 'c2dAnalysis';
+      if (apiData && !apiData[needKey] && apiData.raw) {
+        console.warn('⚠️ 后端返回raw但缺失分析字段，前端尝试将raw转换为期望格式');
+        const raw = apiData.raw;
+
+        const transformStats = (dataArray: any[], timeField: string) => {
+          const map: Record<string, any> = {};
+          (dataArray || []).forEach((item: any) => {
+            const key = item.brandCode || item.carrierId || `${item.brandCode}|${item.carrierId}`;
+            map[key] = {
+              ...item,
+              total: item.actualTotal || 0,
+              actualCategories: {
+                '24H': item.actual24h || 0,
+                '48H': item.actual48h || 0,
+                '72H': item.actual72h || 0,
+                '72H+': item.actualOver72h || 0
+              },
+              planCategories: {
+                '24H': item.plan24h || 0,
+                '48H': item.plan48h || 0,
+                '72H': item.plan72h || 0,
+                '72H+': item.planOver72h || 0
+              },
+              avgActualHours: item[timeField] || 0,
+              avgPlanHours: item.avgPlanTime || 0
+            };
+          });
+          return map;
+        };
+
+        const timeFieldKey = analysisType === 'S2D' ? 'avgS2DTime' : 'avgC2DTime';
+        const totalOrdersKey = analysisType === 'S2D' ? 'totalS2DOrders' : 'totalC2DOrders';
+
+        const formatted: any = {
+          [needKey]: {
+            brandStats: transformStats(raw.byBrand || [], timeFieldKey),
+            carrierStats: transformStats(raw.byCourier || [], timeFieldKey),
+            brandCarrierStats: (raw.byBrandCourier || []).reduce((acc: any, item: any) => {
+              const key = `${item.brandCode}|${item.carrierId}`;
+              acc[key] = {
+                ...item,
+                total: item.actualTotal || 0,
+                actualCategories: {
+                  '24H': item.actual24h || 0,
+                  '48H': item.actual48h || 0,
+                  '72H': item.actual72h || 0,
+                  '72H+': item.actualOver72h || 0
+                },
+                planCategories: {
+                  '24H': item.plan24h || 0,
+                  '48H': item.plan48h || 0,
+                  '72H': item.plan72h || 0,
+                  '72H+': item.planOver72h || 0
+                },
+                avgActualHours: item[timeFieldKey] || 0,
+                avgPlanHours: item.avgPlanTime || 0
+              };
+              return acc;
+            }, {}),
+            categories: {
+              '24H': { actualCount: raw.actualStats?.within24h || 0, planCount: raw.planStats?.within24h || 0 },
+              '48H': { actualCount: raw.actualStats?.within48h || 0, planCount: raw.planStats?.within48h || 0 },
+              '72H': { actualCount: raw.actualStats?.within72h || 0, planCount: raw.planStats?.within72h || 0 },
+              '72H+': { actualCount: raw.actualStats?.over72h || 0, planCount: raw.planStats?.over72h || 0 }
+            },
+            [totalOrdersKey]: raw.actualStats?.total || 0,
+            [timeFieldKey]: raw[timeFieldKey] || 0,
+            achievementRate: raw.achievementRate || 0
+          },
+          raw: raw
+        };
+
+        apiData = formatted;
+      }
+
+      setAnalysisResult(apiData);
 
     } catch (error) {
       console.error(`❌ ${analysisType}时效分析失败:`, error);
@@ -87,7 +175,7 @@ export function TimeEfficiencyAnalysis({ selectedBrand, selectedSelfFlag, dateRa
     } finally {
       setIsLoading(false);
     }
-  }, [dateRange, selectedBrand, selectedSelfFlag, accessibleBrandCodes]);
+  }, [dateRange, selectedBrand, selectedPlatform, selectedSelfFlag, accessibleBrandCodes]);
 
   // 🆕 加载竞品数据（从API获取）
   const loadCompetitorData = useCallback(async (analysisType: 'S2D' | 'C2D') => {

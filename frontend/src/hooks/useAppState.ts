@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useMemo } from 'react';
+import { useState, useRef, useCallback, useMemo, useEffect } from 'react';
 import { useAPIData } from './useAPIData';
 import { filterData } from '../utils/dataFilter';
 import type { FilteredData } from '../utils/dataFilterExtended';
@@ -29,9 +29,11 @@ function calculateGrowthRate(current: number, previous: number): number | null {
 export function useAppState() {
   // 🔐 获取用户权限
   const { user } = useAuth();
+  const lastUserIdRef = useRef<string | null>(null);
   
   // Navigation state
   const [activeMenu, setActiveMenu] = useState<string>("overview-dashboard");
+  const menuSwitchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   
   // Date range states - 总览界面默认为当月第一天到今天，其他页面保持原有逻辑
   const [dateRange, setDateRange] = useState<DateRange>(getCurrentMonthToDateRange());
@@ -59,6 +61,41 @@ export function useAppState() {
     brand: null,
     courier: null
   });
+
+  // 用户切换（含登出再登录）时重置筛选，避免上一会话条件泄漏到新会话
+  useEffect(() => {
+    const currentUserId = user?.userId || null;
+    const previousUserId = lastUserIdRef.current;
+
+    if (currentUserId !== previousUserId) {
+      setDateRange(getCurrentMonthToDateRange());
+      setRegionalDateRange(getTodayDateRange());
+      setSelectedBrand(null);
+      setSelectedPlatform(null);
+      setSelectedSelfFlag('Y');
+      setFilters({
+        brand: null,
+        platform: null,
+        status: 'all',
+        province: null,
+        courier: null
+      });
+      setSelectedKPI(null);
+      setActiveKPITab('brand');
+      setLogisticsExceptionFilter({ type: null, brand: null, courier: null });
+      setActiveMenu('overview-dashboard');
+    }
+
+    lastUserIdRef.current = currentUserId;
+  }, [user?.userId]);
+
+  useEffect(() => {
+    return () => {
+      if (menuSwitchTimerRef.current) {
+        clearTimeout(menuSwitchTimerRef.current);
+      }
+    };
+  }, []);
   
   // Refs
   const mainContentRef = useRef<HTMLDivElement>(null);
@@ -119,6 +156,7 @@ export function useAppState() {
   const {
     data: apiData,
     loading: apiLoading,
+    refreshing: apiRefreshing,
     error: apiError,
     refetch: refetchData,
     hasData,
@@ -407,14 +445,27 @@ export function useAppState() {
   }, [shouldUseRealData, apiData, brandData]);
 
   // 使用 useCallback 包装所有的 setter 函数，确保引用稳定
-  const stableSetActiveMenu = useCallback((menu: string) => setActiveMenu(menu), []);
+  const stableSetActiveMenu = useCallback((menu: string) => {
+    if (!menu || menu === activeMenu) {
+      return;
+    }
+
+    if (menuSwitchTimerRef.current) {
+      clearTimeout(menuSwitchTimerRef.current);
+    }
+
+    menuSwitchTimerRef.current = setTimeout(() => {
+      setActiveMenu(menu);
+      menuSwitchTimerRef.current = null;
+    }, 180);
+  }, [activeMenu]);
   const stableSetDateRange = useCallback((range: DateRange) => setDateRange(range), []);
   const stableSetRegionalDateRange = useCallback((range: DateRange) => setRegionalDateRange(range), []);
   const stableSetSelectedBrand = useCallback((brand: string | string[] | null) => {
     console.log('🏷️ [useAppState] stableSetSelectedBrand called with:', brand);
     setSelectedBrand(brand);
   }, []);
-  const stableSetSelectedPlatform = useCallback((platform: string | null) => {
+  const stableSetSelectedPlatform = useCallback((platform: string | string[] | null) => {
     console.log('🏪 [useAppState] stableSetSelectedPlatform called with:', platform);
     setSelectedPlatform(platform);
   }, []);
@@ -471,6 +522,7 @@ export function useAppState() {
     
     // API state - 只在总览页面有效
     apiLoading: shouldUseRealData ? apiLoading : false,
+    apiRefreshing: shouldUseRealData ? apiRefreshing : false,
     apiError: shouldUseRealData ? apiError : null,
     refetchData: stableRefetchData,
     hasData: shouldUseRealData ? hasData : true, // 非总览页面总是有数据（模拟数据）
@@ -494,8 +546,8 @@ export function useAppState() {
       logisticsData: logisticsData || null,
       data: {
         ...(apiData?.data || {}),
-        // 🔥 从filteredData中提取crossAnalysisData，确保CrossAnalysisChart能够访问
-        crossAnalysisData: filteredData?.crossAnalysisData || [],
+        // 优先保留API返回的真实交叉分析数据，缺失时再使用转换后的数据
+        crossAnalysisData: apiData?.data?.crossAnalysisData ?? filteredData?.crossAnalysisData ?? [],
         // 🔥 新增：物流数据（适用于物流页面）
         logistics: logisticsData || null,
         // 🔥 新增：品牌物流异常数据（专门用于品牌维度监控）
