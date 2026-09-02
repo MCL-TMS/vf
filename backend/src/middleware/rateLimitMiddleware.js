@@ -8,6 +8,7 @@
  */
 
 const rateLimit = require('express-rate-limit');
+const { MemoryStore } = require('express-rate-limit');
 const { ERROR_CODES, sendError } = require('../utils/apiError');
 const { getRedisClient, buildRedisKey } = require('../utils/redisStore');
 function normalizeRedisReply(value) {
@@ -70,131 +71,97 @@ function createRedisRateLimitStore(redisClient, prefix, windowMs) {
   };
 }
 
+function createResilientRateLimitStore(prefix, windowMs) {
+  const memoryStore = new MemoryStore();
+  let redisStore = null;
+  let fallbackWarningLogged = false;
+
+  async function getStore() {
+    try {
+      const redisClient = await getRedisClient();
+      if (redisClient) {
+        redisStore ||= createRedisRateLimitStore(redisClient, prefix, windowMs);
+        fallbackWarningLogged = false;
+        return redisStore;
+      }
+    } catch (error) {
+      if (!fallbackWarningLogged) {
+        console.warn('⚠️ [Rate Limit] Redis 不可用，使用内存store:', error?.message || error);
+        fallbackWarningLogged = true;
+      }
+    }
+
+    return memoryStore;
+  }
+
+  return {
+    init(options) {
+      memoryStore.init(options);
+    },
+    async increment(key) {
+      return (await getStore()).increment(key);
+    },
+    async decrement(key) {
+      return (await getStore()).decrement(key);
+    },
+    async resetKey(key) {
+      return (await getStore()).resetKey(key);
+    },
+    shutdown() {
+      memoryStore.shutdown();
+    }
+  };
+}
+
 /**
  * 使用 express-rate-limit 替代自定义逻辑，以便安全审计工具识别
  */
-// We'll lazily create rate-limit middlewares so we can attach a Redis-backed store
-// when Redis is available. The wrapper functions below initialise the real
-// limiter once and then forward requests to it.
-
-let _globalLimiter = null;
-let _globalInitPromise = null;
-
-async function _initGlobalLimiter() {
-  if (_globalLimiter) return _globalLimiter;
-
-  const opts = {
-    windowMs: Number.parseInt(process.env.API_RATE_LIMIT_WINDOW_MS || `${15 * 60 * 1000}`, 10),
-    max: Number.parseInt(process.env.API_RATE_LIMIT_MAX || '1000', 10),
-    // Use explicit client IP extraction to avoid depending solely on Express' trust proxy
-    keyGenerator: (req /*, res*/) => getClientIP(req),
-    standardHeaders: true,
-    legacyHeaders: false,
-    message: {
-      success: false,
-      code: ERROR_CODES.RATE_LIMITED,
-      error: 'API请求过于频繁，请稍后再试'
-    },
-    handler: (req, res, next, options) => {
-      return sendError(res, req, {
-        status: 429,
-        code: options.message.code,
-        error: options.message.error
-      });
-    }
-  };
-
-  try {
-    const redisClient = await getRedisClient();
-    if (redisClient) {
-      const store = createRedisRateLimitStore(redisClient, buildRedisKey('rate-limit'), opts.windowMs);
-      if (store) {
-        opts.store = store;
-        console.log('✅ [Rate Limit] 使用 Redis-backed store');
-      }
-    }
-  } catch (err) {
-    console.warn('⚠️ [Rate Limit] Redis store 初始化失败，回退到内存store', err?.message || err);
-  }
-
-  _globalLimiter = rateLimit(opts);
-  return _globalLimiter;
-}
-
-function globalRateLimiter(req, res, next) {
-  if (!_globalInitPromise) {
-    _globalInitPromise = _initGlobalLimiter();
-  }
-
-  _globalInitPromise.then((limiter) => limiter(req, res, next)).catch((err) => {
-    console.error('[Rate Limit] 初始化失败，忽略限流:', err?.message || err);
-    next();
-  });
-}
-
-let _loginLimiter = null;
-let _loginInitPromise = null;
-
-async function _initLoginLimiter() {
-  if (_loginLimiter) return _loginLimiter;
-
-  const opts = {
-    windowMs: 15 * 60 * 1000, // 15分钟
-    max: 5, // 5次尝试
-    // For login attempts we combine client IP and provided userId (if any)
-    keyGenerator: (req /*, res*/) => {
-      const ip = getClientIP(req);
-      const userId = (req.body && req.body.userId) ? String(req.body.userId).trim().toLowerCase() : '';
-      return userId ? `${ip}:${userId}` : ip;
-    },
-    // Do not count successful (e.g. 200) login requests toward the limit
-    skipSuccessfulRequests: true,
-    standardHeaders: true,
-    legacyHeaders: false,
-    message: {
-      success: false,
-      code: ERROR_CODES.LOGIN_RATE_LIMITED,
-      error: '登录尝试次数过多，请15分钟后再试'
-    },
-    handler: (req, res, next, options) => {
-      return sendError(res, req, {
-        status: 429,
-        code: options.message.code,
-        error: options.message.error
-      });
-    }
-  };
-
-  try {
-    const redisClient = await getRedisClient();
-    if (redisClient) {
-      const store = createRedisRateLimitStore(redisClient, buildRedisKey('login-rate'), opts.windowMs);
-      if (store) {
-        opts.store = store;
-        console.log('✅ [Rate Limit] 登录速率限制使用 Redis-backed store');
-      }
-    }
-  } catch (err) {
-    console.warn('⚠️ [Rate Limit] 登录 Redis store 初始化失败，回退到内存store', err?.message || err);
-  }
-
-  _loginLimiter = rateLimit(opts);
-  return _loginLimiter;
-}
-
-function loginRateLimit(req, res, next) {
-  if (!_loginInitPromise) {
-    _loginInitPromise = _initLoginLimiter();
-  }
-
-  _loginInitPromise.then((limiter) => limiter(req, res, next)).catch((err) => {
-    console.error('[Rate Limit] 登录限流初始化失败，忽略限流:', err?.message || err);
-    next();
-  });
-}
-
 const API_RATE_LIMIT_MAX = Number.parseInt(process.env.API_RATE_LIMIT_MAX || '1000', 10);
 const API_RATE_LIMIT_WINDOW_MS = Number.parseInt(process.env.API_RATE_LIMIT_WINDOW_MS || `${15 * 60 * 1000}`, 10);
+const LOGIN_RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
+
+const globalRateLimiter = rateLimit({
+  windowMs: API_RATE_LIMIT_WINDOW_MS,
+  max: API_RATE_LIMIT_MAX,
+  store: createResilientRateLimitStore(buildRedisKey('rate-limit'), API_RATE_LIMIT_WINDOW_MS),
+  keyGenerator: (req) => getClientIP(req),
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    code: ERROR_CODES.RATE_LIMITED,
+    error: 'API请求过于频繁，请稍后再试'
+  },
+  handler: (req, res, next, options) => sendError(res, req, {
+    status: 429,
+    code: options.message.code,
+    error: options.message.error
+  })
+});
+
+const loginRateLimit = rateLimit({
+  windowMs: LOGIN_RATE_LIMIT_WINDOW_MS,
+  max: 5,
+  store: createResilientRateLimitStore(buildRedisKey('login-rate'), LOGIN_RATE_LIMIT_WINDOW_MS),
+  keyGenerator: (req) => {
+    const ip = getClientIP(req);
+    const userId = req.body?.userId ? String(req.body.userId).trim().toLowerCase() : '';
+    return userId ? `${ip}:${userId}` : ip;
+  },
+  skipSuccessfulRequests: true,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    code: ERROR_CODES.LOGIN_RATE_LIMITED,
+    error: '登录尝试次数过多，请15分钟后再试'
+  },
+  handler: (req, res, next, options) => sendError(res, req, {
+    status: 429,
+    code: options.message.code,
+    error: options.message.error
+  })
+});
 
 /**
  * 获取客户端真实IP地址

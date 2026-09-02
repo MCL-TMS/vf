@@ -43,8 +43,10 @@ function isLegacyMd5Hash(password) {
   return typeof password === 'string' && /^[a-f0-9]{32}$/i.test(password);
 }
 
-function hashLegacyMd5(plainPassword) {
-  return crypto.createHash('md5').update(plainPassword, 'utf8').digest('hex');
+function verifyLegacyMd5Password(plainPassword, storedPassword) {
+  // The upstream user table contract stores lowercase MD5 hex values.
+  const computed = crypto.createHash('md5').update(plainPassword, 'utf8').digest('hex'); // lgtm[js/insufficient-password-hash]
+  return timingSafeEqualHex(computed, storedPassword.toLowerCase());
 }
 
 function verifyScryptPassword(plainPassword, storedPassword) {
@@ -121,8 +123,7 @@ async function verifyPassword(plainPassword, hashedPassword) {
 }
 
 /**
- * 验证密码并在命中旧格式时返回升级后的哈希
- * 旧格式兼容：明文、MD5
+ * 验证数据库密码。RWSYS_USER.PASSWORD使用32位小写MD5，登录时不得改写。
  */
 async function verifyAndUpgradePassword(plainPassword, storedPassword) {
   if (!storedPassword) {
@@ -139,18 +140,15 @@ async function verifyAndUpgradePassword(plainPassword, storedPassword) {
     };
   }
 
-  const plainMatch = storedPassword === plainPassword;
-  const md5Match = isLegacyMd5Hash(storedPassword) && timingSafeEqualHex(hashLegacyMd5(plainPassword), storedPassword.toLowerCase());
-
-  if (!plainMatch && !md5Match) {
+  if (!isLegacyMd5Hash(storedPassword)) {
     return { isValid: false, needsUpgrade: false, upgradedHash: null, legacyFormat: null };
   }
 
   return {
-    isValid: true,
-    needsUpgrade: true,
-    upgradedHash: await hashPassword(plainPassword),
-    legacyFormat: plainMatch ? 'plain' : 'md5'
+    isValid: verifyLegacyMd5Password(plainPassword, storedPassword),
+    needsUpgrade: false,
+    upgradedHash: null,
+    legacyFormat: 'md5'
   };
 }
 
@@ -298,6 +296,5 @@ module.exports = {
   verifyAndUpgradePassword,
   updateAllPasswords,
   validatePasswordStrength,
-  isScryptHash,
-  isLegacyMd5Hash
+  isScryptHash
 };
