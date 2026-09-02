@@ -16,3 +16,4 @@ waste/
 # 忽略部署文件
 node_modules.tar.gz
 backend-full.tar.gz
+cms-backend-.tar.gz
