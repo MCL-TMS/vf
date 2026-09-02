@@ -4,7 +4,7 @@ export const createEventHandlers = (
   setDateRange: (range: { from: string; to: string }) => void,
   setRegionalDateRange: (range: { from: string; to: string }) => void,
   setSelectedBrand: (brand: string | string[] | null) => void, // 🔥 修复：支持数组
-  setSelectedPlatform: (platform: string | null) => void,
+  setSelectedPlatform: (platform: string | string[] | null) => void,
   setSelectedSelfFlag: (selfFlag: string | null) => void,
   setFilters: (filters: any) => void,
   setActiveMenu: (menu: string) => void,
@@ -34,11 +34,17 @@ export const createEventHandlers = (
     });
   };
 
-  const handlePlatformChange = (platform: string) => {
-    // 修复平台筛选逻辑：如果选择"all"，则传递null给状态
-    const platformValue = platform === 'all' ? null : platform;
+  const handlePlatformChange = (platform: string | string[]) => {
+    // 平台筛选支持单选/多选：空数组或 all 视为不筛选
+    const platformValue = Array.isArray(platform)
+      ? (platform.length > 0 ? platform : null)
+      : (platform === 'all' ? null : platform);
     setSelectedPlatform(platformValue);
-    console.log("🏪 [EventHandlers] Platform filter changed:", { original: platform, resolved: platformValue });
+    console.log("🏪 [EventHandlers] Platform filter changed:", {
+      original: platform,
+      resolved: platformValue,
+      isArray: Array.isArray(platform)
+    });
   };
 
   const handleSelfFlagChange = (selfFlag: string) => {

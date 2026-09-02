@@ -2,9 +2,8 @@ import { Card, CardContent, CardHeader } from "./ui/card";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
-import { TrendingUp, TrendingDown, AlertTriangle, Info, Code, Search } from "lucide-react";
+import { TrendingUp, TrendingDown, AlertTriangle, Code, Search } from "lucide-react";
 import { OrderKPIData } from "../data/orderData";
-import { formatGrowthRate, analyzeGrowthTrend } from "../utils/apiDataTransformer";
 
 interface EnhancedKPICardProps {
   data: OrderKPIData;
@@ -12,6 +11,16 @@ interface EnhancedKPICardProps {
   onDigClick?: (data: OrderKPIData) => void;
   showDigButton?: boolean;
   digLabel?: string;
+}
+
+function formatKPIValue(value: string | number | null): string {
+  if (value === null || value === 'null') return 'null';
+
+  const text = String(value);
+  if (text.includes(',') || /[%小时天]/.test(text)) return text;
+
+  const numericValue = Number(text);
+  return Number.isFinite(numericValue) ? numericValue.toLocaleString() : text;
 }
 
 export function EnhancedKPICard({
@@ -88,7 +97,7 @@ export function EnhancedKPICard({
                     <AlertTriangle className="h-4 w-4 text-accent-mid-orange" />
                   </Button>
                 </PopoverTrigger>
-                <PopoverContent className="w-64" side="top">
+                <PopoverContent className="w-64 bg-white" side="top">
                   <div className="space-y-2">
                     <h4 className="font-medium text-sm">异常监控</h4>
                     {details?.exceptions?.map((exception, index) => (
@@ -150,77 +159,6 @@ export function EnhancedKPICard({
               </Popover>
             )}
             
-            {/* 详细信息 */}
-            {details && (
-              <Popover>
-                <PopoverTrigger asChild>
-                  <Button 
-                    variant="ghost" 
-                    size="sm" 
-                    className="h-6 w-6 p-0"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <Info className="h-4 w-4 text-maersk-blue" />
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-80" side="top">
-                  <div className="space-y-3">
-                    <h4 className="font-medium">详细信息</h4>
-                    
-                    {/* 增长分析 - 只为支持的指标显示 */}
-                    {hasGrowthData && shouldShowGrowthData(label) && (
-                      <div>
-                        <p className="text-sm font-medium mb-2">增长分析:</p>
-                        <div className="space-y-2">
-                          <div className="flex justify-between items-center text-xs">
-                            <span>环比增长:</span>
-                            <div className={`flex items-center space-x-1 ${change.mom !== null && change.mom >= 0 ? 'text-accent-mid-green' : 'text-accent-mid-red'}`}>
-                              {change.mom !== null && (change.mom >= 0 ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />)}
-                              <span>{formatGrowthRate(change.mom)}</span>
-                            </div>
-                          </div>
-                          <div className="flex justify-between items-center text-xs">
-                            <span>同比增长:</span>
-                            <div className={`flex items-center space-x-1 ${change.yoy !== null && change.yoy >= 0 ? 'text-accent-mid-green' : 'text-accent-mid-red'}`}>
-                              {change.yoy !== null && (change.yoy >= 0 ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />)}
-                              <span>{formatGrowthRate(change.yoy)}</span>
-                            </div>
-                          </div>
-
-                        </div>
-                      </div>
-                    )}
-                    
-                    {/* 🔥 修复：品牌分布 - 显示状态码对应的品牌分布信息 */}
-                    {details.brands && (
-                      <div>
-                        <p className="text-sm font-medium mb-2">{label}按品牌分布:</p>
-                        <div className="space-y-1">
-                          {details.brands.map((brand, index) => (
-                            <div key={index} className="flex justify-between text-xs">
-                              <span>{brand.name}</span>
-                              <div className="flex items-center space-x-2">
-                                <span>{typeof brand.value === 'number' ? brand.value.toLocaleString() : brand.value}</span>
-                                <Badge variant="outline" className="text-xs">
-                                  {typeof brand.percentage === 'number' ? `${brand.percentage}%` : brand.percentage}
-                                </Badge>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    
-                    {/* 状态信息 */}
-                    {details.status && (
-                      <div className="text-sm text-muted-foreground">
-                        {details.status}
-                      </div>
-                    )}
-                  </div>
-                </PopoverContent>
-              </Popover>
-            )}
           </div>
         </div>
       </CardHeader>
@@ -229,7 +167,7 @@ export function EnhancedKPICard({
         <div className="space-y-3">
           {/* 主要数值 */}
           <div className={`text-2xl font-semibold ${isNullValue ? 'text-functional-mid-grey' : ''}`}>
-            {value}
+            {formatKPIValue(value)}
           </div>
           
           {/* 统一的同比环比数据显示 - 只为支持的指标显示 */}
@@ -273,7 +211,7 @@ export function EnhancedKPICard({
             <Button
               variant="ghost"
               size="sm"
-              className="w-full h-6 text-xs opacity-0 group-hover:opacity-100 transition-opacity hover:bg-functional-bright-grey hover:text-functional-dark-grey focus-visible:ring-0 focus-visible:outline-none focus-visible:border-transparent !important"
+              className="w-full h-6 text-xs hover:bg-functional-bright-grey hover:text-functional-dark-grey focus-visible:ring-0 focus-visible:outline-none focus-visible:border-transparent !important"
               onClick={(e) => {
                 e.stopPropagation(); // 阻止事件冒泡，避免重复触发
                 onDetailClick(data);

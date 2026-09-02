@@ -11,23 +11,25 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { MultiSelect } from "./components/ui/multi-select";
 import { Label } from "./components/ui/label";
 import { Button } from "./components/ui/button";
-import { Info, AlertTriangle, Clock, Package, Truck, Activity, X, LogOut } from "lucide-react";
+import { Info, AlertTriangle, Clock, Package, Truck, Activity, X, LogOut, Loader2 } from "lucide-react";
 import { useAppState } from "./hooks/useAppState";
 import { createEventHandlers } from "./utils/eventHandlers";
 import { getPageTitle, getCurrentDateRange, scrollToTop } from "./utils/appUtils";
 import { useAuth, AuthProvider } from "./contexts/AuthContext";
-import { BrandProvider } from "./contexts/BrandContext";
+import { BrandProvider, useBrand } from "./contexts/BrandContext";
 import { PlatformProvider } from "./contexts/PlatformContext";
 import { chinaProvinceData } from "./data/chinaMapData";
 import { WEIGHT_RANGE_LABELS } from "./constants/weightRanges";
 
 import { ApiService } from "./services/apiService";
 import { Toaster } from "./components/ui/sonner";
+import { PageLoadingState } from "./components/PageLoadingState";
 
 // 主应用组件（需要认证）
 function AppContent() {
   // 认证相关
   const { user, isAuthenticated, logout, isLoading, getToken, getRefreshToken, refreshToken } = useAuth(); // 🔥 新增：getRefreshToken和refreshToken
+  const { codeToNameMap } = useBrand();
 
   const [apiConnectionStatus, setApiConnectionStatus] = React.useState<'checking' | 'connected' | 'disconnected' | 'error'>('disconnected');
   const [lastConnectionCheck, setLastConnectionCheck] = React.useState<Date>(new Date());
@@ -65,6 +67,7 @@ function AppContent() {
     setLogisticsExceptionFilter,
     mainContentRef,
     apiLoading,
+    apiRefreshing,
     apiError,
     refetchData,
     filteredData,
@@ -158,6 +161,20 @@ function AppContent() {
   const coveredProvinceCount = chinaProvinceData.filter((item) => Number(item.orders || 0) > 0).length;
   const weightRangeCount = WEIGHT_RANGE_LABELS.length;
 
+  const renderBrandLabel = (brandValue: string): string => {
+    const normalized = String(brandValue || '').trim();
+    if (!normalized) return normalized;
+    return codeToNameMap[normalized] || normalized;
+  };
+
+  const selectedBrandDisplay = (() => {
+    if (!selectedBrand) return '';
+    if (Array.isArray(selectedBrand)) {
+      return selectedBrand.map(renderBrandLabel).join(', ');
+    }
+    return renderBrandLabel(selectedBrand);
+  })();
+
   // 判断是否应该使用真实数据：
   // 物流页优先使用hook返回的数据状态，避免被短暂的健康检查状态误伤导致“有数据却显示空”
   const isDataDrivenMenu = (
@@ -167,6 +184,7 @@ function AppContent() {
   );
 
   const shouldUseRealDataInApp = isDataDrivenMenu;
+  const pageDataLoading = apiLoading || apiRefreshing;
 
   const refetchDataRef = React.useRef(refetchData);
   useEffect(() => {
@@ -203,11 +221,15 @@ function AppContent() {
   // 如果正在加载认证状态，显示加载界面
   if (isLoading) {
     return (
-      <div className="h-screen flex items-center justify-center bg-functional-bright-grey">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-maersk-blue mx-auto mb-4"></div>
-          <p className="text-functional-mid-grey">正在加载...</p>
-        </div>
+      <div className="h-screen p-6 bg-functional-bright-grey">
+        <PageLoadingState
+          title="正在初始化系统"
+          subtitle="正在校验登录状态并准备页面权限"
+          loading={true}
+          dataType="系统初始化"
+          loadingMessage="正在加载系统环境..."
+          minHeight="calc(100vh - 72px)"
+        />
       </div>
     );
   }
@@ -288,12 +310,32 @@ function AppContent() {
                   <div className="flex-1">
                     <div className="text-sm text-functional-dark-blue">
                       当前筛选条件: 
-                        {selectedBrand && <Badge variant="outline" className="ml-1 mr-1 maersk-badge-secondary truncate max-w-[200px]">品牌: {Array.isArray(selectedBrand) ? selectedBrand.join(', ') : selectedBrand}</Badge>}
+                        {selectedBrand && <Badge variant="outline" className="ml-1 mr-1 maersk-badge-secondary truncate max-w-[240px]">品牌: {selectedBrandDisplay}</Badge>}
                       {selectedPlatform && <Badge variant="outline" className="ml-1 mr-1 maersk-badge-secondary">平台: {Array.isArray(selectedPlatform) ? (selectedPlatform.length > 3 ? `已选 ${selectedPlatform.length} 项` : selectedPlatform.join(', ')) : (selectedPlatform === 'tmall' ? '天猫' : selectedPlatform === 'douyin' ? '抖音' : selectedPlatform === 'jd' ? '京东' : selectedPlatform === 'pdd' ? '拼多多' : selectedPlatform === 'official' ? '官网/小程序' : selectedPlatform === 'o2o' ? 'O2O' : selectedPlatform === 'xiaohongshu' ? '小红书' : selectedPlatform === 'wechat' ? '微信小程序' : selectedPlatform)}</Badge>}
                       {selectedSelfFlag && selectedSelfFlag !== 'Y' && <Badge variant="outline" className="ml-1 mr-1 maersk-badge-secondary">自管: {selectedSelfFlag === 'N' ? '非自管' : selectedSelfFlag === 'all' ? '全部' : selectedSelfFlag}</Badge>}
+                      {(apiLoading || apiRefreshing) && (
+                        <Badge variant="outline" className="ml-1 mr-1 bg-functional-bright-blue text-functional-dark-blue border-functional-light-blue">
+                          <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                          数据加载中
+                        </Badge>
+                      )}
                       {" "}所有图表和统计都已根据筛选条件进行过滤。
                     </div>
                   </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      eventHandlers.handleBrandChange('all');
+                      eventHandlers.handlePlatformChange('all');
+                      eventHandlers.handleSelfFlagChange('Y');
+                    }}
+                    className="h-6 w-6 p-0 text-functional-mid-grey hover:text-accent-mid-red"
+                    aria-label="清除筛选条件"
+                    title="清除筛选条件"
+                  >
+                    <X className="h-3 w-3" />
+                  </Button>
                 </div>
               </div>
             )}
@@ -322,7 +364,7 @@ function AppContent() {
               logisticsExceptionFilter={logisticsExceptionFilter}
               onClearExceptionFilter={eventHandlers.handleClearExceptionFilter}
               useRealData={shouldUseRealDataInApp}
-              apiLoading={apiLoading}
+              apiLoading={pageDataLoading}
               onRefetchData={refetchData}
               rawApiData={rawApiData}
               unifiedCourierData={unifiedCourierData}
@@ -335,7 +377,7 @@ function AppContent() {
                 <div className="flex items-center space-x-4">
                   <span>当前页面: {getPageTitle(activeMenu)}</span>
                   <span>时间范围: {currentDateRange.from} 至 {currentDateRange.to}</span>
-                    {selectedBrand && <span>品牌筛选: {Array.isArray(selectedBrand) ? selectedBrand.join(', ') : selectedBrand}</span>}
+                    {selectedBrand && <span>品牌筛选: {selectedBrandDisplay}</span>}
                   {selectedPlatform && <span>平台筛选: {selectedPlatform === 'tmall' ? '天猫' : selectedPlatform === 'douyin' ? '抖音' : selectedPlatform === 'jd' ? '京东' : selectedPlatform === 'pdd' ? '拼多多' : selectedPlatform === 'official' ? '官网/小程序' : selectedPlatform === 'o2o' ? 'O2O' : selectedPlatform === 'xiaohongshu' ? '小红书' : selectedPlatform === 'wechat' ? '微信小程序' : selectedPlatform}</span>}
                   {selectedSelfFlag && selectedSelfFlag !== 'Y' && <span>自管筛选: {selectedSelfFlag === 'N' ? '非自管' : selectedSelfFlag === 'all' ? '全部' : selectedSelfFlag}</span>}
                   {activeMenu === "overview-regional" && <span>🗺️ 地图交互已启用</span>}
@@ -348,6 +390,17 @@ function AppContent() {
                   )}
                 </div>
                 <div className="flex items-center space-x-6">
+                  <div className="flex items-center space-x-2">
+                    <span>数据状态:</span>
+                    {(apiLoading || apiRefreshing) ? (
+                      <span className="inline-flex items-center text-functional-dark-blue font-medium">
+                        <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                        刷新中
+                      </span>
+                    ) : (
+                      <span className="text-accent-dark-green font-medium">已更新</span>
+                    )}
+                  </div>
                   <div className="flex items-center space-x-2">
                     <span>监控:</span>
                     <span className="text-accent-mid-orange font-medium">已启用</span>

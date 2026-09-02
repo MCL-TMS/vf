@@ -8,7 +8,7 @@ import { Button } from "./ui/button";
 import { AlertTriangle, CheckCircle, Clock, Package, Truck, Users, TrendingUp, TrendingDown, Activity, Filter, Download } from "lucide-react";
 import { getUnifiedExceptionData, formatExceptionStatsForCourier } from "../utils/exceptionDataCalculator";
 import { useAuth } from "../contexts/AuthContext";
-import { exportLogisticsData } from "../utils/excelExport";
+import { exportBrandLogisticsData, exportLogisticsData } from "../utils/excelExport";
 import { DataLoadingState } from "./DataLoadingState"; // 🔥 新增：统一加载状态组件
 
 interface CourierMonitoringProps {
@@ -147,6 +147,7 @@ export function CourierMonitoring({
         const safeShippingRate = Number(unifiedCourier.shippingRate) || 0;
         const safeDeliveryRate = Number(unifiedCourier.deliveryRate) || 0;
         const safeTotalOrders = Number(unifiedCourier.total) || 0;
+        const safeAvgDeliveryTime = Number(unifiedCourier.avgDeliveryTime ?? unifiedCourier.avg_delivery_time) || 0;
         
         // 🔥 修复：统一异常数据结构
         const normalizedExceptions = {
@@ -185,6 +186,7 @@ export function CourierMonitoring({
           shippingRate: safeShippingRate,
           deliveryRate: safeDeliveryRate,
           percentage: unifiedCourier.percentage,
+          avgDeliveryTime: safeAvgDeliveryTime,
           exceptions: normalizedExceptions,
           dataSource: unifiedCourier.dataSource // 保留数据源信息
         };
@@ -265,6 +267,7 @@ export function CourierMonitoring({
       const pickupRate = totalOrders > 0 ? Math.round((pickedOrders / totalOrders) * 100 * 100) / 100 : 0;
       const shippingRate = totalOrders > 0 ? Math.round((shippedOrders / totalOrders) * 100 * 100) / 100 : 0;
       const deliveryRate = totalOrders > 0 ? Math.round((deliveredOrders / totalOrders) * 100 * 100) / 100 : 0;
+      const avgDeliveryTime = Number(courier.avgDeliveryTime ?? courier.avg_delivery_time) || 0;
       
       // 🔥 修复：统一异常数据结构映射
       const exceptions = {
@@ -293,6 +296,7 @@ export function CourierMonitoring({
         pickupRate: pickupRate,
         shippingRate: shippingRate,
         deliveryRate: deliveryRate,
+        avgDeliveryTime,
         exceptions: exceptions,
         dataSource: 'logistics' // 标记数据源
       };
@@ -490,10 +494,10 @@ export function CourierMonitoring({
         const brandName = brand.brandName || brand.brand_name || brand.brand;
         
         // 计算物流率
-        const totalOrders = brand.orderCount || brand.total_orders || 0;
-        const pickedOrders = brand.pickedCount || brand.picked_count || 0;
-        const shippedOrders = brand.shippedCount || brand.shipped_count || 0;
-        const deliveredOrders = brand.deliveredCount || brand.delivered_count || 0;
+        const totalOrders = brand.orderCount ?? brand.total_orders ?? 0;
+        const pickedOrders = brand.pickedCount ?? brand.picked_count ?? 0;
+        const shippedOrders = brand.shippedCount ?? brand.shipped_count ?? 0;
+        const deliveredOrders = brand.deliveredCount ?? brand.delivered_count ?? 0;
         
         const pickupRate = totalOrders > 0 ? Math.round((pickedOrders / totalOrders) * 100 * 100) / 100 : 0;
         const shippingRate = totalOrders > 0 ? Math.round((shippedOrders / totalOrders) * 100 * 100) / 100 : 0;
@@ -501,10 +505,10 @@ export function CourierMonitoring({
         
         // 🔥 关键：正确获取四种异常数据
         const exceptions = {
-          pickup: brand.pickupTimeout || brand.pickup_timeout || 0,
-          shipping: brand.shippingTimeout || brand.shipping_timeout || 0,
-          noUpdate48h: brand.noUpdate48h || brand.no_update_48h || 0,
-          delivery: brand.deliveryTimeout || brand.delivery_timeout || 0
+          pickup: brand.pickupTimeout ?? brand.pickup_timeout ?? 0,
+          shipping: brand.shippingTimeout ?? brand.shipping_timeout ?? 0,
+          noUpdate48h: brand.noUpdate48h ?? brand.no_update_48h ?? 0,
+          delivery: brand.deliveryTimeout ?? brand.delivery_timeout ?? 0
         };
         
         console.log(`🔧 [CourierMonitoring] 处理品牌物流异常数据 ${brandName}:`, {
@@ -532,6 +536,7 @@ export function CourierMonitoring({
             shippingRate: shippingRate,
             deliveryRate: deliveryRate
           },
+          exceptionRate: brand.exceptionRate ?? brand.exception_rate ?? 0,
           exceptions: exceptions,
           trend: 0, // API暂不提供趋势数据
           dataSource: 'brandLogisticsData' // 标记数据源为brandLogisticsData接口
@@ -893,7 +898,35 @@ export function CourierMonitoring({
           size="sm"
           className="maersk-button-secondary"
           onClick={() => {
-            // 准备导出数据 - 基于当前Tab
+            if (activeTab === 'brand') {
+              exportBrandLogisticsData({
+                brandData: filteredBrandData.map(brand => {
+                  const exceptionCount = (brand.exceptions?.pickup || 0) +
+                    (brand.exceptions?.shipping || 0) +
+                    (brand.exceptions?.delivery || 0) +
+                    (brand.exceptions?.noUpdate48h || 0);
+                  const orderCount = brand.orderVolume || 0;
+
+                  return {
+                    brandName: brand.brand,
+                    orderCount,
+                    pickupTimeout: brand.exceptions?.pickup || 0,
+                    shippingTimeout: brand.exceptions?.shipping || 0,
+                    deliveryTimeout: brand.exceptions?.delivery || 0,
+                    noUpdate48h: brand.exceptions?.noUpdate48h || 0,
+                    pickupRate: brand.logistics?.pickupRate || 0,
+                    shippingRate: brand.logistics?.shippingRate || 0,
+                    deliveryRate: brand.logistics?.deliveryRate || 0,
+                    exceptionRate: brand.exceptionRate ?? (orderCount > 0 ? (exceptionCount / orderCount) * 100 : 0)
+                  };
+                }),
+                selectedBrand,
+                selectedPlatform,
+                selectedSelfFlag
+              });
+              return;
+            }
+
             const exportData = {
               courierData: processedCouriers.map(courier => ({ 
                 courierName: courier.name,
@@ -921,7 +954,7 @@ export function CourierMonitoring({
                       (courier.exceptions?.deliveryTimeout || 0) + 
                       (courier.exceptions?.noUpdate48h || 0)) / courier.total) * 100
                   : 0,
-                avgDeliveryTime: 0 // TODO: 添加配送时长数据
+                avgDeliveryTime: courier.avgDeliveryTime || 0
               })),
               selectedBrand: selectedBrand,
               selectedPlatform: selectedPlatform,

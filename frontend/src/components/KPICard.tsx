@@ -6,6 +6,14 @@ interface KPICardProps {
   data: KPIData;
 }
 
+function formatKPIValue(value: string | number): string {
+  const text = String(value);
+  if (text.includes(',') || /[%小时天]/.test(text)) return text;
+
+  const numericValue = Number(text);
+  return Number.isFinite(numericValue) ? numericValue.toLocaleString() : text;
+}
+
 export function KPICard({ data }: KPICardProps) {
   const { label, value, change, trend } = data;
   const isPositive = trend === 'up';
@@ -15,7 +23,7 @@ export function KPICard({ data }: KPICardProps) {
       <div className="space-y-2">
         <p className="text-muted-foreground text-sm">{label}</p>
         <div className="flex items-center justify-between">
-          <h3 className="text-2xl font-semibold">{value}</h3>
+          <h3 className="text-2xl font-semibold">{formatKPIValue(value)}</h3>
           <div className={`flex items-center space-x-1 text-sm ${
             isPositive ? 'text-green-600' : 'text-red-600'
           }`}>

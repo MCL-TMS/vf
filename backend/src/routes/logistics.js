@@ -13,6 +13,62 @@ const { getBrandMapping } = require('../utils/brandMapping'); // ✅ 导入动�
 const { buildScopedBrandFilter, getAuthorizedCustomerNos } = require('../utils/brandScope');
 const { ERROR_CODES, sendError, sendRouteError } = require('../utils/apiError');
 
+const NO_UPDATE_48H_EXCLUDED_STATUSES = "('40','90','93','94','95','99','100','105','110')";
+const LOGISTICS_CACHE_TTL_MS = 30000;
+const LOGISTICS_CACHE_MAX_ENTRIES = 300;
+const logisticsResponseCache = new Map();
+
+function buildNoUpdate48hCondition(flagExpr, statusExpr) {
+  return `(${flagExpr} = 'Y' AND ${statusExpr} NOT IN ${NO_UPDATE_48H_EXCLUDED_STATUSES})`;
+}
+
+function stableStringify(value) {
+  if (value === null || value === undefined) return String(value);
+  if (typeof value !== 'object') return String(value);
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+
+  const keys = Object.keys(value).sort();
+  const pairs = keys.map((key) => `${key}:${stableStringify(value[key])}`);
+  return `{${pairs.join(',')}}`;
+}
+
+function buildLogisticsCacheKey(req, endpointName) {
+  const userScope = {
+    userId: req.user?.userId || 'anonymous',
+    isAdmin: Boolean(req.user?.isAdmin),
+    customerNo: req.user?.customerNo || '',
+    customerNos: req.user?.customerNos || []
+  };
+
+  return `${endpointName}|${stableStringify(userScope)}|${stableStringify(req.query || {})}`;
+}
+
+function getLogisticsCache(cacheKey, ttlMs = LOGISTICS_CACHE_TTL_MS) {
+  const cached = logisticsResponseCache.get(cacheKey);
+  if (!cached) return null;
+
+  if (Date.now() - cached.timestamp > ttlMs) {
+    logisticsResponseCache.delete(cacheKey);
+    return null;
+  }
+
+  return cached.payload;
+}
+
+function setLogisticsCache(cacheKey, payload) {
+  if (logisticsResponseCache.size >= LOGISTICS_CACHE_MAX_ENTRIES) {
+    const oldestKey = logisticsResponseCache.keys().next().value;
+    if (oldestKey) {
+      logisticsResponseCache.delete(oldestKey);
+    }
+  }
+
+  logisticsResponseCache.set(cacheKey, {
+    timestamp: Date.now(),
+    payload
+  });
+}
+
 // 🔧 共享工具函数 - 与overview.js保持一致
 const QueryUtils = {
   // ✅ 品牌映射配置 - 保留作为回退映射
@@ -28,7 +84,9 @@ const QueryUtils = {
   // 基础WHERE条件 - 与overview.js完全一致
   BASE_WHERE_CONDITIONS: `
     WHERE (
-      (t.WMS_OUTBOUND_TIME IS NOT NULL AND to_char(t.WMS_OUTBOUND_TIME,'yyyy-mm-dd') >= :dateFrom AND to_char(t.WMS_OUTBOUND_TIME,'yyyy-mm-dd') <= :dateTo)
+      t.WMS_OUTBOUND_TIME IS NOT NULL
+      AND t.WMS_OUTBOUND_TIME >= TO_DATE(:dateFrom, 'YYYY-MM-DD')
+      AND t.WMS_OUTBOUND_TIME < TO_DATE(:dateTo, 'YYYY-MM-DD') + INTERVAL '1' DAY
       AND t.TSK_MERGE_NO IS NOT NULL
     )`,
 
@@ -63,8 +121,8 @@ const QueryUtils = {
     // 超时未签收: IF_DELAY字段值存在且为'Y'的订单（从VIEW视图获取）
     DELIVERY_TIMEOUT: `(v.IF_DELAY = 'Y')`,
     
-    // 超48H未更新: IS48H_FLAG字段值存在且为'Y'的订单
-    NO_UPDATE_48H: `(t.IS48H_FLAG = 'Y')`
+    // 超48H未更新: 视图IS_48H='Y'且视图状态不属于已结束状态的订单
+    NO_UPDATE_48H: buildNoUpdate48hCondition('v.IS_48H', 'v.DIS_STATUS')
   },
 
   // 🔧 修复：构建筛选条件和参数 - 支持多品牌数组和用户权限
@@ -146,7 +204,12 @@ const QueryUtils = {
       // ✅ 修复：物流页面也直接通过 VIEW_TSK_LIST_TASK 视图过滤 PLATFORM_CLASS
       const normalizeStringOrStringArray = (v) => {
         if (v == null) return undefined;
-        if (typeof v === 'string') return v.trim() === '' ? undefined : v.trim();
+        if (typeof v === 'string') {
+          const trimmed = v.trim();
+          if (trimmed === '') return undefined;
+          if (trimmed.includes(',')) return trimmed.split(',').map(s => s.trim()).filter(Boolean);
+          return trimmed;
+        }
         if (Array.isArray(v)) {
           const res = v.filter(i => typeof i === 'string').map(i => i.trim()).filter(i => i);
           return res.length > 0 ? res : undefined;
@@ -155,19 +218,69 @@ const QueryUtils = {
       };
 
       const normalizedPlatform = normalizeStringOrStringArray(platform);
-      if (Array.isArray(normalizedPlatform)) {
-        const platformPlaceholders = normalizedPlatform.map((p, i) => {
-          const mappedValue = this.PLATFORM_MAPPING[p] || p;
-          queryParams[`platform_${i}`] = mappedValue;
-          return `:platform_${i}`;
-        }).join(', ');
+      if (normalizedPlatform) {
+        const requested = Array.isArray(normalizedPlatform) ? normalizedPlatform : [normalizedPlatform];
+        const expandSet = new Set();
+        const normalizePlatformToken = (value) => String(value || '')
+          .trim()
+          .replace(/／/g, '/')
+          .replace(/\s+/g, '')
+          .toLowerCase();
+
+        const aliasToCanonical = {
+          'tmall': '天猫',
+          'douyin': '抖音',
+          'jd': '京东',
+          'pdd': '拼多多',
+          'official': '官网/小程序',
+          'wechat': '微信',
+          'kuaishou': '快手',
+          'ks': '快手',
+          '微信小程序': '微信',
+          '抖音电商': '抖音',
+          '官网': '官网/小程序',
+          '小程序': '官网/小程序'
+        };
+
+        const canonicalVariants = {
+          '官网/小程序': ['官网/小程序', '官网／小程序', '官网', '小程序'],
+          '微信': ['微信', '微信小程序'],
+          '抖音': ['抖音', '抖音电商'],
+          '快手': ['快手', '快手电商']
+        };
+
+        const pushPlatformVariant = (value) => {
+          const text = String(value || '').trim();
+          if (!text) return;
+          // 兼容半角/全角斜杠，避免“官网/小程序”类平台被误过滤为空
+          expandSet.add(text);
+          expandSet.add(text.replace(/\//g, '／'));
+          expandSet.add(text.replace(/／/g, '/'));
+
+          const normalizedToken = normalizePlatformToken(text);
+          const canonical = aliasToCanonical[normalizedToken] || aliasToCanonical[text] || text;
+          expandSet.add(String(canonical).trim());
+
+          const aliasGroup = canonicalVariants[canonical] || [];
+          aliasGroup.forEach(item => {
+            expandSet.add(String(item).trim());
+            expandSet.add(String(item).trim().replace(/／/g, '/'));
+          });
+        };
+
+        requested.forEach(p => {
+          pushPlatformVariant(p);
+          const mapped = this.PLATFORM_MAPPING && this.PLATFORM_MAPPING[p];
+          pushPlatformVariant(mapped || p);
+        });
+        const expanded = Array.from(expandSet)
+          .map(v => String(v).trim().replace(/／/g, '/'))
+          .filter(Boolean);
+        const platformPlaceholders = expanded.map((_, i) => `:platform_${i}`).join(', ');
         // 物流统计查询通常 join 了 VIEW_TSK_LIST_TASK 别名为 v
-        platformFilter = ` AND v.PLATFORM_CLASS IN (${platformPlaceholders})`;
-        console.log(`🏪 [Logistics Platform Filter] 平台多选筛选: [${normalizedPlatform.join(', ')}]`);
-      } else if (normalizedPlatform) {
-        platformFilter = ` AND v.PLATFORM_CLASS = :platform`;
-        queryParams.platform = this.PLATFORM_MAPPING[normalizedPlatform] || normalizedPlatform;
-        console.log(`🏪 [Logistics Platform Filter] 平台单选筛选: ${normalizedPlatform} -> ${queryParams.platform}`);
+        platformFilter = ` AND REPLACE(TRIM(v.PLATFORM_CLASS), '／', '/') IN (${platformPlaceholders})`;
+        expanded.forEach((val, i) => { queryParams[`platform_${i}`] = val; });
+        console.log(`🏪 [Logistics Platform Filter] 平台展开匹配: [${expanded.join(', ')}]`);
       }
     }
     
@@ -198,6 +311,7 @@ const QueryUtils = {
  */
 router.get('/brands', async (req, res) => {
   let connection;
+  const cacheKey = buildLogisticsCacheKey(req, 'brands');
   
   try {
     const { dateFrom, dateTo, brand, platform, selfFlag } = req.query;
@@ -223,6 +337,11 @@ router.get('/brands', async (req, res) => {
       });
     }
 
+    const cached = getLogisticsCache(cacheKey);
+    if (cached) {
+      return res.json(cached);
+    }
+
     connection = await getConnection();
     
     // 🔧 使用统一的筛选条件构建逻辑（基于登录态品牌范围）
@@ -237,7 +356,7 @@ router.get('/brands', async (req, res) => {
         -- 基础统计
         COUNT(DISTINCT t.TSK_MERGE_NO) as order_count,
         COUNT(DISTINCT CASE WHEN t.DIS_STATUS = '55' THEN t.TSK_MERGE_NO END) as picked_count,
-        COUNT(DISTINCT CASE WHEN t.DIS_STATUS = '70' THEN t.TSK_MERGE_NO END) as shipped_count,
+        COUNT(DISTINCT CASE WHEN t.DIS_STATUS IN ('70','80','85','92') THEN t.TSK_MERGE_NO END) as shipped_count,
         COUNT(DISTINCT CASE WHEN t.DIS_STATUS in ('95','93') THEN t.TSK_MERGE_NO END) as delivered_count,
         -- 四种核心异常类型的详细统计
         COUNT(DISTINCT CASE WHEN ${QueryUtils.EXCEPTION_SQL_FRAGMENTS.PICKUP_TIMEOUT} THEN t.TSK_MERGE_NO END) as pickup_timeout,
@@ -253,7 +372,7 @@ router.get('/brands', async (req, res) => {
         ) as total_exceptions,
         -- 各阶段成功率计算
         ROUND(COUNT(DISTINCT CASE WHEN t.DIS_STATUS = '55' THEN t.TSK_MERGE_NO END) * 100.0 / NULLIF(COUNT(DISTINCT t.TSK_MERGE_NO), 0), 2) as pickup_rate,
-        ROUND(COUNT(DISTINCT CASE WHEN t.DIS_STATUS = '70' THEN t.TSK_MERGE_NO END) * 100.0 / NULLIF(COUNT(DISTINCT t.TSK_MERGE_NO), 0), 2) as shipping_rate,
+        ROUND(COUNT(DISTINCT CASE WHEN t.DIS_STATUS IN ('70','80','85','92') THEN t.TSK_MERGE_NO END) * 100.0 / NULLIF(COUNT(DISTINCT t.TSK_MERGE_NO), 0), 2) as shipping_rate,
         ROUND(COUNT(DISTINCT CASE WHEN t.DIS_STATUS in ('95','93') THEN t.TSK_MERGE_NO END) * 100.0 / NULLIF(COUNT(DISTINCT t.TSK_MERGE_NO), 0), 2) as delivery_rate,
         -- 异常率（基于四种核心异常条件）
         ROUND((
@@ -313,7 +432,7 @@ router.get('/brands', async (req, res) => {
       totalExceptions: brandExceptions.reduce((sum, brand) => sum + brand.totalExceptions, 0)
     });
 
-    res.json({
+    const payload = {
       success: true,
       data: {
         brandExceptions: brandExceptions,
@@ -334,7 +453,10 @@ router.get('/brands', async (req, res) => {
         platform: platform || 'all',
         selfFlag: selfFlag || 'Y'
       }
-    });
+    };
+
+    setLogisticsCache(cacheKey, payload);
+    res.json(payload);
 
   } catch (error) {
     console.error('品牌物流异常数据查询失败:', error);
@@ -356,6 +478,7 @@ router.get('/brands', async (req, res) => {
  */
 router.get('/couriers', async (req, res) => {
   let connection;
+  const cacheKey = buildLogisticsCacheKey(req, 'couriers');
   
   try {
     const { dateFrom, dateTo, brand, platform, selfFlag } = req.query;
@@ -381,6 +504,11 @@ router.get('/couriers', async (req, res) => {
       });
     }
 
+    const cached = getLogisticsCache(cacheKey);
+    if (cached) {
+      return res.json(cached);
+    }
+
     connection = await getConnection();
     
     // 🔧 使用统一的筛选条件构建逻辑
@@ -391,9 +519,10 @@ router.get('/couriers', async (req, res) => {
     const couriersQuery = `
       SELECT 
         t.CARRIERID as courier_id,
+        bc_carrier.COMPANY_ABNAME as courier_name,
         COUNT(DISTINCT t.TSK_MERGE_NO) as order_count,
         COUNT(DISTINCT CASE WHEN t.DIS_STATUS = '55' THEN t.TSK_MERGE_NO END) as picked_count,
-        COUNT(DISTINCT CASE WHEN t.DIS_STATUS = '70' THEN t.TSK_MERGE_NO END) as shipped_count,
+        COUNT(DISTINCT CASE WHEN t.DIS_STATUS IN ('70','80','85','92') THEN t.TSK_MERGE_NO END) as shipped_count,
         COUNT(DISTINCT CASE WHEN t.DIS_STATUS in ('95','93') THEN t.TSK_MERGE_NO END) as delivered_count,
         COUNT(DISTINCT CASE WHEN t.DIS_STATUS = '40' THEN t.TSK_MERGE_NO END) as forwarded_count,
         COUNT(DISTINCT CASE WHEN t.DIS_STATUS IN ('100', '105') THEN t.TSK_MERGE_NO END) as returned_count,
@@ -413,7 +542,7 @@ router.get('/couriers', async (req, res) => {
         ROUND(AVG(CASE WHEN t.SUM_SEND_TIME2 IS NOT NULL AND t.SUM_SEND_TIME2 > 0 THEN t.SUM_SEND_TIME2 END), 2) as avg_delivery_time,
         -- 各阶段成功率计算
         ROUND(COUNT(DISTINCT CASE WHEN t.DIS_STATUS = '55' THEN t.TSK_MERGE_NO END) * 100.0 / NULLIF(COUNT(DISTINCT t.TSK_MERGE_NO), 0), 2) as pickup_rate,
-        ROUND(COUNT(DISTINCT CASE WHEN t.DIS_STATUS = '70' THEN t.TSK_MERGE_NO END) * 100.0 / NULLIF(COUNT(DISTINCT t.TSK_MERGE_NO), 0), 2) as shipping_rate,
+        ROUND(COUNT(DISTINCT CASE WHEN t.DIS_STATUS IN ('70','80','85','92') THEN t.TSK_MERGE_NO END) * 100.0 / NULLIF(COUNT(DISTINCT t.TSK_MERGE_NO), 0), 2) as shipping_rate,
         ROUND(COUNT(DISTINCT CASE WHEN t.DIS_STATUS in ('95','93') THEN t.TSK_MERGE_NO END) * 100.0 / NULLIF(COUNT(DISTINCT t.TSK_MERGE_NO), 0), 2) as delivery_rate,
         -- 异常率（基于四种核心异常条件）
         ROUND((
@@ -424,12 +553,13 @@ router.get('/couriers', async (req, res) => {
         ) * 100.0 / NULLIF(COUNT(DISTINCT t.TSK_MERGE_NO), 0), 2) as exception_rate
       FROM APP_CMS.TSK_LIST_TASK t
       LEFT JOIN APP_CMS.VIEW_TSK_LIST_TASK v ON t.TSK_MERGE_NO = v.TSK_MERGE_NO
+      LEFT JOIN APP_CMS.BAS_COMPANY bc_carrier ON t.CARRIERID = bc_carrier.COMPANY_SYSID
       ${QueryUtils.BASE_WHERE_CONDITIONS}
         AND t.CARRIERID IS NOT NULL
         ${brandFilter}
         ${platformFilter}
         ${selfFlagFilter}
-      GROUP BY t.CARRIERID
+      GROUP BY t.CARRIERID, bc_carrier.COMPANY_ABNAME
       ORDER BY order_count DESC
     `;
     
@@ -449,46 +579,47 @@ router.get('/couriers', async (req, res) => {
     
     const couriersData = result.rows.map(row => ({
       carrierId: row[0] || 'UNKNOWN',
-      orderCount: row[1] || 0,
-      pickedCount: row[2] || 0,
-      shippedCount: row[3] || 0,
-      deliveredCount: row[4] || 0,
-      forwardedCount: row[5] || 0,
-      returnedCount: row[6] || 0,
-      cancelledCount: row[7] || 0,
+      carrierName: row[1] || row[0] || 'UNKNOWN',
+      orderCount: row[2] || 0,
+      pickedCount: row[3] || 0,
+      shippedCount: row[4] || 0,
+      deliveredCount: row[5] || 0,
+      forwardedCount: row[6] || 0,
+      returnedCount: row[7] || 0,
+      cancelledCount: row[8] || 0,
       // ✅ 修复：四种异常类型的正确映射
-      pickupTimeout: row[8] || 0,       // pickup_timeout
-      shippingTimeout: row[9] || 0,     // shipping_timeout  
-      deliveryTimeout: row[10] || 0,    // delivery_timeout
-      noUpdate48h: row[11] || 0,        // no_update_48h
+      pickupTimeout: row[9] || 0,       // pickup_timeout
+      shippingTimeout: row[10] || 0,    // shipping_timeout  
+      deliveryTimeout: row[11] || 0,    // delivery_timeout
+      noUpdate48h: row[12] || 0,        // no_update_48h
       // 总异常数和其他指标
-      exceptionCount: row[12] || 0,     // exception_count (四种异常之和)
-      avgDeliveryTime: row[13] || 0,    // avg_delivery_time
-      pickupRate: row[14] || 0,         // pickup_rate
-      shippingRate: row[15] || 0,       // shipping_rate
-      deliveryRate: row[16] || 0,       // delivery_rate
-      exceptionRate: row[17] || 0,      // exception_rate
+      exceptionCount: row[13] || 0,     // exception_count (四种异常之和)
+      avgDeliveryTime: row[14] || 0,    // avg_delivery_time
+      pickupRate: row[15] || 0,         // pickup_rate
+      shippingRate: row[16] || 0,       // shipping_rate
+      deliveryRate: row[17] || 0,       // delivery_rate
+      exceptionRate: row[18] || 0,      // exception_rate
       // 兼容旧字段名
-      totalOrders: row[1] || 0,
-      pickedOrders: row[2] || 0,
-      shippedOrders: row[3] || 0,
-      deliveredOrders: row[4] || 0,
-      exceptionOrders: row[12] || 0,
-      avgDeliveryHours: row[13] || 0,
+      totalOrders: row[2] || 0,
+      pickedOrders: row[3] || 0,
+      shippedOrders: row[4] || 0,
+      deliveredOrders: row[5] || 0,
+      exceptionOrders: row[13] || 0,
+      avgDeliveryHours: row[14] || 0,
       // ✅ 新增：前端需要的异常字段别名（支持多种命名格式）
-      pickup_timeout: row[8] || 0,
-      shipping_timeout: row[9] || 0,
-      delivery_timeout: row[10] || 0,
-      no_update_48h: row[11] || 0,
+      pickup_timeout: row[9] || 0,
+      shipping_timeout: row[10] || 0,
+      delivery_timeout: row[11] || 0,
+      no_update_48h: row[12] || 0,
       // ✅ 兼容CourierMonitoring组件中的旧字段名
-      timeout48hOrders: row[11] || 0,      // 超48h未更新
-      notPickedOver2h: row[8] || 0,        // 超时未揽收
-      notShippedOver12h: row[9] || 0,      // 超时未发运
-      notUpdatedOver48h: row[11] || 0,     // 超48h未更新（另一个别名）
-      notDeliveredOver3days: row[10] || 0  // 超时未签收
+      timeout48hOrders: row[12] || 0,      // 超48h未更新
+      notPickedOver2h: row[9] || 0,        // 超时未揽收
+      notShippedOver12h: row[10] || 0,     // 超时未发运
+      notUpdatedOver48h: row[12] || 0,     // 超48h未更新（另一个别名）
+      notDeliveredOver3days: row[11] || 0  // 超时未签收
     }));
 
-    res.json({
+    const payload = {
       success: true,
       data: couriersData,
       timestamp: new Date().toISOString(),
@@ -499,7 +630,10 @@ router.get('/couriers', async (req, res) => {
         platform: platform || 'all',
         selfFlag: selfFlag || 'Y'
       }
-    });
+    };
+
+    setLogisticsCache(cacheKey, payload);
+    res.json(payload);
 
   } catch (error) {
     console.error('快递商性能查询失败:', error);
@@ -521,6 +655,7 @@ router.get('/couriers', async (req, res) => {
  */
 router.get('/status-distribution', async (req, res) => {
   let connection;
+  const cacheKey = buildLogisticsCacheKey(req, 'status-distribution');
   
   try {
     const { dateFrom, dateTo, brand, platform, selfFlag } = req.query;
@@ -544,6 +679,11 @@ router.get('/status-distribution', async (req, res) => {
       });
     }
 
+    const cached = getLogisticsCache(cacheKey);
+    if (cached) {
+      return res.json(cached);
+    }
+
     connection = await getConnection();
     
     // 🔧 使用统一的筛选条件构建逻辑
@@ -553,6 +693,7 @@ router.get('/status-distribution', async (req, res) => {
     const statusDistributionQuery = `
       SELECT 
         t.CARRIERID,
+        bc_carrier.COMPANY_ABNAME as carrier_name,
         t.DIS_STATUS,
         bs.CODENAME_C as status_name,
         COUNT(DISTINCT t.TSK_MERGE_NO) as order_count,
@@ -563,23 +704,25 @@ router.get('/status-distribution', async (req, res) => {
         ) as status_percentage
       FROM APP_CMS.TSK_LIST_TASK t
       LEFT JOIN APP_CMS.BAS_CODES bs ON t.DIS_STATUS = bs.CODE AND bs.CODEID = 'BL_STATUS'
+      LEFT JOIN APP_CMS.BAS_COMPANY bc_carrier ON t.CARRIERID = bc_carrier.COMPANY_SYSID
       ${QueryUtils.BASE_WHERE_CONDITIONS}
         AND t.CARRIERID IS NOT NULL
         AND t.DIS_STATUS IS NOT NULL
         ${brandFilter}
         ${platformFilter}
         ${selfFlagFilter}
-      GROUP BY t.CARRIERID, t.DIS_STATUS, bs.CODENAME_C
+      GROUP BY t.CARRIERID, bc_carrier.COMPANY_ABNAME, t.DIS_STATUS, bs.CODENAME_C
       ORDER BY t.CARRIERID, t.DIS_STATUS
     `;
 
     const result = await connection.execute(statusDistributionQuery, params);
     const statusData = result.rows.map(row => ({
       carrierId: row[0],
-      statusCode: row[1],
-      statusName: row[2],
-      orderCount: row[3],
-      statusPercentage: row[4] || 0
+      carrierName: row[1] || row[0],
+      statusCode: row[2],
+      statusName: row[3],
+      orderCount: row[4],
+      statusPercentage: row[5] || 0
     }));
 
     // 按快递公司分组整理数据
@@ -588,6 +731,7 @@ router.get('/status-distribution', async (req, res) => {
       if (!courierStatusMap[item.carrierId]) {
         courierStatusMap[item.carrierId] = {
           carrierId: item.carrierId,
+          carrierName: item.carrierName,
           totalOrders: 0,
           statusDistribution: [],
           pickedOrders: 0,
@@ -608,7 +752,7 @@ router.get('/status-distribution', async (req, res) => {
       if (statusCode === '55') {
         courierStatusMap[item.carrierId].pickedOrders += item.orderCount;
       }
-      if (statusCode === '70') {
+      if (statusCode === '70' || statusCode === '80' || statusCode === '85' || statusCode === '92') {
         courierStatusMap[item.carrierId].shippedOrders += item.orderCount;
       }
     });
@@ -640,7 +784,7 @@ router.get('/status-distribution', async (req, res) => {
       };
     });
 
-    res.json({
+    const payload = {
       success: true,
       data: {
         courierStats,
@@ -654,7 +798,10 @@ router.get('/status-distribution', async (req, res) => {
         platform: platform || 'all',
         selfFlag: selfFlag || 'Y'
       }
-    });
+    };
+
+    setLogisticsCache(cacheKey, payload);
+    res.json(payload);
 
   } catch (error) {
     console.error('状态分布查询失败:', error);
@@ -676,6 +823,7 @@ router.get('/status-distribution', async (req, res) => {
  */
 router.get('/weight-distribution', async (req, res) => {
   let connection;
+  const cacheKey = buildLogisticsCacheKey(req, 'weight-distribution');
   
   try {
     const { dateFrom, dateTo, brand, platform, selfFlag } = req.query;
@@ -699,6 +847,11 @@ router.get('/weight-distribution', async (req, res) => {
       });
     }
 
+    const cached = getLogisticsCache(cacheKey);
+    if (cached) {
+      return res.json(cached);
+    }
+
     connection = await getConnection();
     
     // 🔧 使用统一的筛选条件构建逻辑
@@ -717,9 +870,10 @@ router.get('/weight-distribution', async (req, res) => {
           t.SUM_SEND_TIME2,
           t.CARRIERID,
           t.WMS_OUTBOUND_TIME,
-          t.IS48H_FLAG,
           t.DISP_TIME,
+          v.IS_48H,
           v.IF_DELAY,
+          v.DIS_STATUS as view_dis_status,
           -- 重量分类
           CASE 
             WHEN t.T_GROSSWEIGHT <= 0.5 THEN '0-0.5kg'
@@ -750,7 +904,7 @@ router.get('/weight-distribution', async (req, res) => {
          COUNT(CASE WHEN DIS_STATUS = '55' AND WMS_OUTBOUND_TIME IS NOT NULL 
                     AND (SYSDATE - WMS_OUTBOUND_TIME) * 24 > 12 THEN 1 END) +
          COUNT(CASE WHEN IF_DELAY = 'Y' THEN 1 END) +
-         COUNT(CASE WHEN IS48H_FLAG = 'Y' THEN 1 END)) as exception_count,
+         COUNT(CASE WHEN ${buildNoUpdate48hCondition('IS_48H', 'view_dis_status')} THEN 1 END)) as exception_count,
         ROUND(AVG(T_GROSSWEIGHT), 3) as avg_weight,
         ROUND(AVG(T_CUBIC), 6) as avg_volume,
         ROUND(AVG(CAL_TON_AR), 3) as avg_chargeable_weight_ar,
@@ -787,7 +941,7 @@ router.get('/weight-distribution', async (req, res) => {
       exceptionRate: row[1] > 0 ? Math.round((row[3] / row[1]) * 100 * 100) / 100 : 0
     }));
 
-    res.json({
+    const payload = {
       success: true,
       data: weightData,
       timestamp: new Date().toISOString(),
@@ -798,7 +952,10 @@ router.get('/weight-distribution', async (req, res) => {
         platform: platform || 'all',
         selfFlag: selfFlag || 'Y'
       }
-    });
+    };
+
+    setLogisticsCache(cacheKey, payload);
+    res.json(payload);
 
   } catch (error) {
     console.error('重量分布查询失败:', error);
@@ -857,24 +1014,6 @@ router.get('/forwarding', async (req, res) => {
     
     connection = await getConnection();
     
-    // 快递公司名称映射
-    const COURIER_NAME_MAPPING = {
-      'ZTO': '中通',
-      'SF': '顺丰',
-      'YTO': '圆通',
-      'STO': '申通',
-      'JD': '京东',
-      'EMS': '邮政EMS',
-      'YUNDA': '韵达',
-      'BEST': '百世',
-      'ZJS': '宅急送',
-      'HTKY': '百世汇通',
-      'POSTB': '邮政',
-      'UC': '优速',
-      'DEPPON': '德邦',
-      'DBKD': '德邦快递'
-    };
-    
     // ===== 1. 获取总订单数 (用于计算占比) =====
     const queryParams = { 
       startDate, 
@@ -892,8 +1031,9 @@ router.get('/forwarding', async (req, res) => {
     const totalOrdersSql = `
       SELECT COUNT(*) as TOTAL_COUNT
       FROM APP_CMS.TSK_LIST_TASK t
-      WHERE WMS_OUTBOUND_TIME >= TO_DATE(:startDate, 'YYYY-MM-DD')
-        AND WMS_OUTBOUND_TIME <= TO_DATE(:endDate, 'YYYY-MM-DD') + 1
+      LEFT JOIN APP_CMS.VIEW_TSK_LIST_TASK v ON t.TSK_MERGE_NO = v.TSK_MERGE_NO
+      WHERE t.WMS_OUTBOUND_TIME >= TO_DATE(:startDate, 'YYYY-MM-DD')
+        AND t.WMS_OUTBOUND_TIME < TO_DATE(:endDate, 'YYYY-MM-DD') + INTERVAL '1' DAY
         ${brandFilter}
         ${platformFilter}
         ${selfFlagFilter}
@@ -914,10 +1054,11 @@ router.get('/forwarding', async (req, res) => {
         COUNT(*) as COUNT
       FROM APP_CMS.TSK_LIST_TASK t
       LEFT JOIN APP_CMS.BAS_COMPANY bc ON t.CARRIERID = bc.COMPANY_SYSID
-      WHERE TR_FLAG = 'Y'
+      LEFT JOIN APP_CMS.VIEW_TSK_LIST_TASK v ON t.TSK_MERGE_NO = v.TSK_MERGE_NO
+      WHERE t.TR_FLAG = 'Y'
       
-        AND WMS_OUTBOUND_TIME >= TO_DATE(:startDate, 'YYYY-MM-DD')
-        AND WMS_OUTBOUND_TIME <= TO_DATE(:endDate, 'YYYY-MM-DD') + 1
+        AND t.WMS_OUTBOUND_TIME >= TO_DATE(:startDate, 'YYYY-MM-DD')
+        AND t.WMS_OUTBOUND_TIME < TO_DATE(:endDate, 'YYYY-MM-DD') + INTERVAL '1' DAY
         ${brandFilter}
         ${platformFilter}
         ${selfFlagFilter}
@@ -949,9 +1090,10 @@ router.get('/forwarding', async (req, res) => {
         COUNT(*) as COUNT
       FROM APP_CMS.TSK_LIST_TASK t
       LEFT JOIN APP_CMS.BAS_COMPANY bc ON t.CARRIERID = bc.COMPANY_SYSID
-      WHERE TR_FLAG2 = 'Y'
-        AND WMS_OUTBOUND_TIME >= TO_DATE(:startDate, 'YYYY-MM-DD')
-        AND WMS_OUTBOUND_TIME <= TO_DATE(:endDate, 'YYYY-MM-DD') + 1
+      LEFT JOIN APP_CMS.VIEW_TSK_LIST_TASK v ON t.TSK_MERGE_NO = v.TSK_MERGE_NO
+      WHERE t.TR_FLAG2 = 'Y'
+        AND t.WMS_OUTBOUND_TIME >= TO_DATE(:startDate, 'YYYY-MM-DD')
+        AND t.WMS_OUTBOUND_TIME < TO_DATE(:endDate, 'YYYY-MM-DD') + INTERVAL '1' DAY
         ${brandFilter}
         ${platformFilter}
         ${selfFlagFilter}
@@ -979,16 +1121,17 @@ router.get('/forwarding', async (req, res) => {
     const outOfRangeByProvinceSql = `
       WITH courier_totals AS (
         SELECT 
-          CARRIERID,
+          t.CARRIERID,
           COUNT(*) as COURIER_TOTAL
         FROM APP_CMS.TSK_LIST_TASK t
-        WHERE TR_FLAG2 = 'Y'
-          AND WMS_OUTBOUND_TIME >= TO_DATE(:startDate, 'YYYY-MM-DD')
-          AND WMS_OUTBOUND_TIME <= TO_DATE(:endDate, 'YYYY-MM-DD') + 1
+        LEFT JOIN APP_CMS.VIEW_TSK_LIST_TASK v ON t.TSK_MERGE_NO = v.TSK_MERGE_NO
+        WHERE t.TR_FLAG2 = 'Y'
+          AND t.WMS_OUTBOUND_TIME >= TO_DATE(:startDate, 'YYYY-MM-DD')
+          AND t.WMS_OUTBOUND_TIME < TO_DATE(:endDate, 'YYYY-MM-DD') + INTERVAL '1' DAY
           ${brandFilter}
           ${platformFilter}
           ${selfFlagFilter}
-        GROUP BY CARRIERID
+        GROUP BY t.CARRIERID
       )
       SELECT 
         t.CARRIERID,
@@ -1000,9 +1143,10 @@ router.get('/forwarding', async (req, res) => {
       JOIN courier_totals ct ON t.CARRIERID = ct.CARRIERID
       LEFT JOIN APP_CMS.BAS_AREA a ON t.DEST_PROVINCE = a.AREA_ID
       LEFT JOIN APP_CMS.BAS_COMPANY bc ON t.CARRIERID = bc.COMPANY_SYSID
+      LEFT JOIN APP_CMS.VIEW_TSK_LIST_TASK v ON t.TSK_MERGE_NO = v.TSK_MERGE_NO
       WHERE t.TR_FLAG2 = 'Y'
         AND t.WMS_OUTBOUND_TIME >= TO_DATE(:startDate, 'YYYY-MM-DD')
-        AND t.WMS_OUTBOUND_TIME <= TO_DATE(:endDate, 'YYYY-MM-DD') + 1
+        AND t.WMS_OUTBOUND_TIME < TO_DATE(:endDate, 'YYYY-MM-DD') + INTERVAL '1' DAY
         ${brandFilter}
         ${platformFilter}
         ${selfFlagFilter}
@@ -1142,7 +1286,7 @@ router.get('/interception', async (req, res) => {
     // 🔥 拦截分析特殊处理：将表别名从 t. 替换为 tsk.
     // 因为拦截分析使用 TSK_LIST_TASK 的别名是 tsk，而不是 t
     const tskBrandFilter = brandFilter.replace(/t\./g, 'tsk.');
-    const tskPlatformFilter = platformFilter.replace(/t\./g, 'tsk.');
+    const tskPlatformFilter = platformFilter.replace(/v\./g, 'tsk_view.').replace(/t\./g, 'tsk.');
     const tskSelfFlagFilter = selfFlagFilter.replace(/t\./g, 'tsk.');
     
     console.log('🔍 替换后的筛选条件:', {
@@ -1156,7 +1300,7 @@ router.get('/interception', async (req, res) => {
     if (interceptionStatus === 'success') {
       interceptionStatusFilter = ` AND dc.PROCESS_FLAG = 'Y'`;
     } else if (interceptionStatus === 'failed') {
-      interceptionStatusFilter = ` AND (dc.PROCESS_FLAG IS NULL OR dc.PROCESS_FLAG != 'Y')`;
+      interceptionStatusFilter = ` AND dc.PROCESS_FLAG = 'N'`;
     }
 
     // 拦截位置筛选
@@ -1170,6 +1314,7 @@ router.get('/interception', async (req, res) => {
     // 组合所有筛选条件
     const whereClause = `tsk.WMS_OUTBOUND_TIME >= TO_DATE(:startDate, 'YYYY-MM-DD')
       AND tsk.WMS_OUTBOUND_TIME < TO_DATE(:endDate, 'YYYY-MM-DD') + 1
+      AND dc.PROCESS_FLAG IN ('Y','N')
       ${tskBrandFilter}
       ${tskPlatformFilter}
       ${tskSelfFlagFilter}
@@ -1184,19 +1329,31 @@ router.get('/interception', async (req, res) => {
     // ==========================================
     const overviewQuery = `
       SELECT 
-        COUNT(*) as total_count,
-        SUM(CASE WHEN dc.PROCESS_FLAG = 'Y' THEN 1 ELSE 0 END) as success_count,
-        SUM(CASE WHEN dc.PROCESS_FLAG IS NULL OR dc.PROCESS_FLAG != 'Y' THEN 1 ELSE 0 END) as failed_count,
+        COUNT(DISTINCT dc.TSK_MERGE_NO) as total_count,
+        COUNT(DISTINCT CASE WHEN dc.PROCESS_FLAG = 'Y' THEN dc.TSK_MERGE_NO END) as success_count,
+        COUNT(DISTINCT CASE WHEN dc.PROCESS_FLAG = 'N' THEN dc.TSK_MERGE_NO END) as failed_count,
         ROUND(
-          SUM(CASE WHEN dc.PROCESS_FLAG = 'Y' THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0),
+          COUNT(DISTINCT CASE WHEN dc.PROCESS_FLAG = 'Y' THEN dc.TSK_MERGE_NO END) * 100.0 / NULLIF(COUNT(DISTINCT dc.TSK_MERGE_NO), 0),
           2
         ) as success_rate,
-        SUM(CASE WHEN tsk.DIS_STATUS = 90 THEN 1 ELSE 0 END) as warehouse_count,
-        SUM(CASE WHEN tsk.DIS_STATUS != 90 THEN 1 ELSE 0 END) as external_count,
+        COUNT(DISTINCT CASE WHEN tsk.DIS_STATUS = 90 THEN dc.TSK_MERGE_NO END) as warehouse_count,
+        COUNT(DISTINCT CASE WHEN tsk.DIS_STATUS != 90 THEN dc.TSK_MERGE_NO END) as external_count,
+        COUNT(DISTINCT CASE WHEN tsk.DIS_STATUS = 90 AND dc.PROCESS_FLAG = 'Y' THEN dc.TSK_MERGE_NO END) as warehouse_success_count,
+        COUNT(DISTINCT CASE WHEN tsk.DIS_STATUS != 90 AND dc.PROCESS_FLAG = 'Y' THEN dc.TSK_MERGE_NO END) as external_success_count,
         ROUND(
-          SUM(CASE WHEN tsk.DIS_STATUS = 90 THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0),
+          COUNT(DISTINCT CASE WHEN tsk.DIS_STATUS = 90 THEN dc.TSK_MERGE_NO END) * 100.0 / NULLIF(COUNT(DISTINCT dc.TSK_MERGE_NO), 0),
           2
         ) as warehouse_rate,
+        ROUND(
+          COUNT(DISTINCT CASE WHEN tsk.DIS_STATUS = 90 AND dc.PROCESS_FLAG = 'Y' THEN dc.TSK_MERGE_NO END) * 100.0 /
+          NULLIF(COUNT(DISTINCT CASE WHEN tsk.DIS_STATUS = 90 THEN dc.TSK_MERGE_NO END), 0),
+          2
+        ) as warehouse_success_rate,
+        ROUND(
+          COUNT(DISTINCT CASE WHEN tsk.DIS_STATUS != 90 AND dc.PROCESS_FLAG = 'Y' THEN dc.TSK_MERGE_NO END) * 100.0 /
+          NULLIF(COUNT(DISTINCT CASE WHEN tsk.DIS_STATUS != 90 THEN dc.TSK_MERGE_NO END), 0),
+          2
+        ) as external_success_rate,
         ROUND(
           AVG(
             CASE 
@@ -1234,7 +1391,10 @@ router.get('/interception', async (req, res) => {
       FROM APP_CMS.DOC_COMPLAINT dc
       INNER JOIN APP_CMS.TSK_LIST_TASK tsk 
         ON dc.TSK_MERGE_NO = tsk.TSK_MERGE_NO
+      LEFT JOIN APP_CMS.VIEW_TSK_LIST_TASK tsk_view
+        ON tsk.TSK_MERGE_NO = tsk_view.TSK_MERGE_NO
       WHERE ${whereClause}
+
     `;
 
     console.log('📊 执行拦截统计概览查询...');
@@ -1247,10 +1407,14 @@ router.get('/interception', async (req, res) => {
       successRate: overviewResult.rows[0][3] || 0,
       warehouseCount: overviewResult.rows[0][4] || 0,
       externalCount: overviewResult.rows[0][5] || 0,
-      warehouseRate: overviewResult.rows[0][6] || 0,
-      avgCompletionHours: overviewResult.rows[0][7] || 0,
-      warehouseAvgHours: overviewResult.rows[0][8] || 0,
-      externalAvgHours: overviewResult.rows[0][9] || 0
+      warehouseSuccessCount: overviewResult.rows[0][6] || 0,
+      externalSuccessCount: overviewResult.rows[0][7] || 0,
+      warehouseRate: overviewResult.rows[0][8] || 0,
+      warehouseSuccessRate: overviewResult.rows[0][9] || 0,
+      externalSuccessRate: overviewResult.rows[0][10] || 0,
+      avgCompletionHours: overviewResult.rows[0][11] || 0,
+      warehouseAvgHours: overviewResult.rows[0][12] || 0,
+      externalAvgHours: overviewResult.rows[0][13] || 0
     };
 
     console.log('✅ 拦截统计概览:', overview);
@@ -1259,32 +1423,65 @@ router.get('/interception', async (req, res) => {
     // 查询2: 按快递商统计
     // ==========================================
     const carrierStatsQuery = `
+      WITH interception_base AS (
+        SELECT DISTINCT
+          dc.TSK_MERGE_NO,
+          tsk.CARRIERID,
+          bc_carrier.COMPANY_ABNAME as CARRIER_NAME,
+          tsk.DIS_STATUS,
+          dc.PROCESS_FLAG,
+          CASE
+            WHEN dc.PROCESS_DATE2 IS NOT NULL AND dc.REQUEST_TIME IS NOT NULL
+            THEN (dc.PROCESS_DATE2 - dc.REQUEST_TIME) * 24
+            ELSE NULL
+          END as completion_hours
+        FROM APP_CMS.DOC_COMPLAINT dc
+        INNER JOIN APP_CMS.TSK_LIST_TASK tsk 
+          ON dc.TSK_MERGE_NO = tsk.TSK_MERGE_NO
+        LEFT JOIN APP_CMS.VIEW_TSK_LIST_TASK tsk_view
+          ON tsk.TSK_MERGE_NO = tsk_view.TSK_MERGE_NO
+        LEFT JOIN APP_CMS.BAS_COMPANY bc_carrier
+          ON tsk.CARRIERID = bc_carrier.COMPANY_SYSID
+        WHERE ${whereClause}
+      )
       SELECT 
-        tsk.CARRIERID as carrier_id,
-        COUNT(*) as total_count,
-        SUM(CASE WHEN dc.PROCESS_FLAG = 'Y' THEN 1 ELSE 0 END) as success_count,
-        SUM(CASE WHEN dc.PROCESS_FLAG IS NULL OR dc.PROCESS_FLAG != 'Y' THEN 1 ELSE 0 END) as failed_count,
+        CARRIERID as carrier_id,
+        CARRIER_NAME as carrier_name,
+        COUNT(DISTINCT TSK_MERGE_NO) as total_count,
+        COUNT(DISTINCT CASE WHEN PROCESS_FLAG = 'Y' THEN TSK_MERGE_NO END) as success_count,
+        COUNT(DISTINCT CASE WHEN PROCESS_FLAG = 'N' THEN TSK_MERGE_NO END) as failed_count,
         ROUND(
-          SUM(CASE WHEN dc.PROCESS_FLAG = 'Y' THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0),
+          COUNT(DISTINCT CASE WHEN PROCESS_FLAG = 'Y' THEN TSK_MERGE_NO END) * 100.0 / NULLIF(COUNT(DISTINCT TSK_MERGE_NO), 0),
           2
         ) as success_rate,
-        SUM(CASE WHEN tsk.DIS_STATUS = 90 THEN 1 ELSE 0 END) as warehouse_count,
-        SUM(CASE WHEN tsk.DIS_STATUS != 90 THEN 1 ELSE 0 END) as external_count,
+        COUNT(DISTINCT CASE WHEN DIS_STATUS = 90 THEN TSK_MERGE_NO END) as warehouse_count,
+        COUNT(DISTINCT CASE WHEN DIS_STATUS != 90 THEN TSK_MERGE_NO END) as external_count,
+        COUNT(DISTINCT CASE WHEN DIS_STATUS = 90 AND PROCESS_FLAG = 'Y' THEN TSK_MERGE_NO END) as warehouse_success_count,
+        COUNT(DISTINCT CASE WHEN DIS_STATUS != 90 AND PROCESS_FLAG = 'Y' THEN TSK_MERGE_NO END) as external_success_count,
         ROUND(
-          AVG(
-            CASE 
-              WHEN dc.PROCESS_DATE2 IS NOT NULL AND dc.REQUEST_TIME IS NOT NULL
-              THEN (dc.PROCESS_DATE2 - dc.REQUEST_TIME) * 24
-              ELSE NULL
-            END
-          ),
+          COUNT(DISTINCT CASE WHEN DIS_STATUS = 90 AND PROCESS_FLAG = 'Y' THEN TSK_MERGE_NO END) * 100.0 /
+          NULLIF(COUNT(DISTINCT CASE WHEN DIS_STATUS = 90 THEN TSK_MERGE_NO END), 0),
+          2
+        ) as warehouse_success_rate,
+        ROUND(
+          COUNT(DISTINCT CASE WHEN DIS_STATUS != 90 AND PROCESS_FLAG = 'Y' THEN TSK_MERGE_NO END) * 100.0 /
+          NULLIF(COUNT(DISTINCT CASE WHEN DIS_STATUS != 90 THEN TSK_MERGE_NO END), 0),
+          2
+        ) as external_success_rate,
+        ROUND(
+          AVG(CASE WHEN PROCESS_FLAG = 'Y' THEN completion_hours END),
           1
-        ) as avg_completion_hours
-      FROM APP_CMS.DOC_COMPLAINT dc
-      INNER JOIN APP_CMS.TSK_LIST_TASK tsk 
-        ON dc.TSK_MERGE_NO = tsk.TSK_MERGE_NO
-      WHERE ${whereClause}
-      GROUP BY tsk.CARRIERID
+        ) as avg_completion_hours,
+        ROUND(
+          AVG(CASE WHEN DIS_STATUS = 90 AND PROCESS_FLAG = 'Y' THEN completion_hours END),
+          1
+        ) as warehouse_avg_hours,
+        ROUND(
+          AVG(CASE WHEN DIS_STATUS != 90 AND PROCESS_FLAG = 'Y' THEN completion_hours END),
+          1
+        ) as external_avg_hours
+      FROM interception_base
+      GROUP BY CARRIERID, CARRIER_NAME
       ORDER BY total_count DESC
     `;
     
@@ -1297,13 +1494,20 @@ router.get('/interception', async (req, res) => {
 
     const carrierStats = carrierStatsResult.rows.map(row => ({
       carrierId: row[0],
-      totalCount: row[1] || 0,
-      successCount: row[2] || 0,
-      failedCount: row[3] || 0,
-      successRate: row[4] || 0,
-      warehouseCount: row[5] || 0,
-      externalCount: row[6] || 0,
-      avgCompletionHours: row[7] || 0
+      carrierName: row[1] || row[0],
+      totalCount: row[2] || 0,
+      successCount: row[3] || 0,
+      failedCount: row[4] || 0,
+      successRate: row[5] || 0,
+      warehouseCount: row[6] || 0,
+      externalCount: row[7] || 0,
+      warehouseSuccessCount: row[8] || 0,
+      externalSuccessCount: row[9] || 0,
+      warehouseSuccessRate: row[10] || 0,
+      externalSuccessRate: row[11] || 0,
+      avgCompletionHours: row[12] || 0,
+      warehouseAvgHours: row[13] || 0,
+      externalAvgHours: row[14] || 0
     }));
 
     console.log(`✅ 按快递商统计 (${carrierStats.length}条记录)`);
@@ -1315,18 +1519,20 @@ router.get('/interception', async (req, res) => {
       SELECT 
         tsk.CUSTOMERNO as brand_code,
         bc.COMPANY_ABNAME as brand_name,
-        COUNT(*) as total_count,
-        SUM(CASE WHEN dc.PROCESS_FLAG = 'Y' THEN 1 ELSE 0 END) as success_count,
-        SUM(CASE WHEN dc.PROCESS_FLAG IS NULL OR dc.PROCESS_FLAG != 'Y' THEN 1 ELSE 0 END) as failed_count,
+        COUNT(DISTINCT dc.TSK_MERGE_NO) as total_count,
+        COUNT(DISTINCT CASE WHEN dc.PROCESS_FLAG = 'Y' THEN dc.TSK_MERGE_NO END) as success_count,
+        COUNT(DISTINCT CASE WHEN dc.PROCESS_FLAG = 'N' THEN dc.TSK_MERGE_NO END) as failed_count,
         ROUND(
-          SUM(CASE WHEN dc.PROCESS_FLAG = 'Y' THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0),
+          COUNT(DISTINCT CASE WHEN dc.PROCESS_FLAG = 'Y' THEN dc.TSK_MERGE_NO END) * 100.0 / NULLIF(COUNT(DISTINCT dc.TSK_MERGE_NO), 0),
           2
         ) as success_rate,
-        SUM(CASE WHEN tsk.DIS_STATUS = 90 THEN 1 ELSE 0 END) as warehouse_count,
-        SUM(CASE WHEN tsk.DIS_STATUS != 90 THEN 1 ELSE 0 END) as external_count
+        COUNT(DISTINCT CASE WHEN tsk.DIS_STATUS = 90 THEN dc.TSK_MERGE_NO END) as warehouse_count,
+        COUNT(DISTINCT CASE WHEN tsk.DIS_STATUS != 90 THEN dc.TSK_MERGE_NO END) as external_count
       FROM APP_CMS.DOC_COMPLAINT dc
       INNER JOIN APP_CMS.TSK_LIST_TASK tsk 
         ON dc.TSK_MERGE_NO = tsk.TSK_MERGE_NO
+      LEFT JOIN APP_CMS.VIEW_TSK_LIST_TASK tsk_view
+        ON tsk.TSK_MERGE_NO = tsk_view.TSK_MERGE_NO
       LEFT JOIN APP_CMS.BAS_COMPANY bc
         ON tsk.CUSTOMERNO = bc.COMPANY_SYSID
       WHERE ${whereClause}
@@ -1356,14 +1562,16 @@ router.get('/interception', async (req, res) => {
     const dailyTrendQuery = `
       SELECT 
         TO_CHAR(dc.REQUEST_TIME, 'YYYY-MM-DD') as date_str,
-        COUNT(*) as total_count,
-        SUM(CASE WHEN dc.PROCESS_FLAG = 'Y' THEN 1 ELSE 0 END) as success_count,
-        SUM(CASE WHEN dc.PROCESS_FLAG IS NULL OR dc.PROCESS_FLAG != 'Y' THEN 1 ELSE 0 END) as failed_count,
-        SUM(CASE WHEN tsk.DIS_STATUS = 90 THEN 1 ELSE 0 END) as warehouse_count,
-        SUM(CASE WHEN tsk.DIS_STATUS != 90 THEN 1 ELSE 0 END) as external_count
+        COUNT(DISTINCT dc.TSK_MERGE_NO) as total_count,
+        COUNT(DISTINCT CASE WHEN dc.PROCESS_FLAG = 'Y' THEN dc.TSK_MERGE_NO END) as success_count,
+        COUNT(DISTINCT CASE WHEN dc.PROCESS_FLAG = 'N' THEN dc.TSK_MERGE_NO END) as failed_count,
+        COUNT(DISTINCT CASE WHEN tsk.DIS_STATUS = 90 THEN dc.TSK_MERGE_NO END) as warehouse_count,
+        COUNT(DISTINCT CASE WHEN tsk.DIS_STATUS != 90 THEN dc.TSK_MERGE_NO END) as external_count
       FROM APP_CMS.DOC_COMPLAINT dc
       INNER JOIN APP_CMS.TSK_LIST_TASK tsk 
         ON dc.TSK_MERGE_NO = tsk.TSK_MERGE_NO
+      LEFT JOIN APP_CMS.VIEW_TSK_LIST_TASK tsk_view
+        ON tsk.TSK_MERGE_NO = tsk_view.TSK_MERGE_NO
       WHERE ${whereClause}
       GROUP BY TO_CHAR(dc.REQUEST_TIME, 'YYYY-MM-DD')
       ORDER BY date_str
@@ -1388,11 +1596,12 @@ router.get('/interception', async (req, res) => {
     // ==========================================
     const detailQuery = `
       SELECT * FROM (
-        SELECT 
+        SELECT DISTINCT
           dc.TSK_MERGE_NO as tracking_no,
           tsk.CUSTOMERNO as brand_code,
           bc.COMPANY_ABNAME as brand_name,
           tsk.CARRIERID as carrier_id,
+          bc_carrier.COMPANY_ABNAME as carrier_name,
           dc.REQUEST_TIME as request_time,
           dc.PROCESS_DATE2 as complete_time,
           ROUND(
@@ -1410,8 +1619,12 @@ router.get('/interception', async (req, res) => {
         FROM APP_CMS.DOC_COMPLAINT dc
         INNER JOIN APP_CMS.TSK_LIST_TASK tsk 
           ON dc.TSK_MERGE_NO = tsk.TSK_MERGE_NO
+        LEFT JOIN APP_CMS.VIEW_TSK_LIST_TASK tsk_view
+          ON tsk.TSK_MERGE_NO = tsk_view.TSK_MERGE_NO
         LEFT JOIN APP_CMS.BAS_COMPANY bc
           ON tsk.CUSTOMERNO = bc.COMPANY_SYSID
+        LEFT JOIN APP_CMS.BAS_COMPANY bc_carrier
+          ON tsk.CARRIERID = bc_carrier.COMPANY_SYSID
         WHERE ${whereClause}
         ORDER BY dc.REQUEST_TIME DESC
       ) 
@@ -1425,13 +1638,14 @@ router.get('/interception', async (req, res) => {
       brandCode: row[1],
       brandName: row[2] || row[1],
       carrierId: row[3],
-      requestTime: row[4],
-      completeTime: row[5],
-      completionHours: row[6],
-      processFlag: row[7],
-      interceptionStatus: row[8],
-      disStatus: row[9],
-      interceptionLocation: row[10]
+      carrierName: row[4] || row[3],
+      requestTime: row[5],
+      completeTime: row[6],
+      completionHours: row[7],
+      processFlag: row[8],
+      interceptionStatus: row[9],
+      disStatus: row[10],
+      interceptionLocation: row[11]
     }));
 
     console.log(`✅ 拦截订单明细 (${orderDetails.length}条记录)`);

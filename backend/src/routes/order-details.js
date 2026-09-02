@@ -7,6 +7,11 @@ const { ERROR_CODES, sendError, sendRouteError } = require('../utils/apiError');
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const BRAND_CODE_PATTERN = /^[A-Za-z0-9_-]+$/;
 const SELF_FLAG_VALUES = new Set(['Y', 'N', 'all']);
+const NO_UPDATE_48H_EXCLUDED_STATUSES = "('40','90','93','94','95','99','100','105','110')";
+
+function buildNoUpdate48hCondition(flagExpr, statusExpr) {
+  return `(${flagExpr} = 'Y' AND ${statusExpr} NOT IN ${NO_UPDATE_48H_EXCLUDED_STATUSES})`;
+}
 
 function isValidDateValue(value) {
   if (!DATE_PATTERN.test(value)) {
@@ -105,8 +110,8 @@ const QueryUtils = {
     // 超时未签收: IF_DELAY字段值存在且为'Y'的订单（从VIEW视图获取）
     DELIVERY_TIMEOUT: `(v.IF_DELAY = 'Y')`,
     
-    // 超48H未更新: IS48H_FLAG字段值存在且为'Y'的订单
-    NO_UPDATE_48H: `(t.IS48H_FLAG = 'Y')`
+    // 超48H未更新: 视图IS_48H='Y'且视图状态不属于已结束状态的订单
+    NO_UPDATE_48H: buildNoUpdate48hCondition('v.IS_48H', 'v.DIS_STATUS')
   },
 
   // ✅ 异步构建筛选条件和参数（支持动态品牌映射） - 与overview.js保持一致
@@ -137,11 +142,83 @@ const QueryUtils = {
       paramPrefix: 'brand'
     }).trim();
     
-    // 🔧 平台筛选 - 使用PLATFORM_CLASS字段（VIEW视图已处理好）
+    // 🔧 平台筛选 - 支持单值或数组，使用PLATFORM_CLASS字段（VIEW视图已处理好）
     if (platform && platform !== 'all') {
-      const platformValue = this.PLATFORM_MAPPING[platform] || platform;
-      queryParams.platform = platformValue;
-      platformFilter = 'AND v.PLATFORM_CLASS = :platform';
+      const normalize = (v) => {
+        if (v == null) return undefined;
+        if (typeof v === 'string') {
+          const t = v.trim();
+          if (t === '') return undefined;
+          if (t.includes(',')) return t.split(',').map(s => s.trim()).filter(Boolean);
+          return t;
+        }
+        if (Array.isArray(v)) return v.map(i => String(i).trim()).filter(Boolean);
+        return undefined;
+      };
+
+      const normalizedPlatform = normalize(platform);
+      if (normalizedPlatform) {
+        const requested = Array.isArray(normalizedPlatform) ? normalizedPlatform : [normalizedPlatform];
+        const expandSet = new Set();
+        const normalizePlatformToken = (value) => String(value || '')
+          .trim()
+          .replace(/／/g, '/')
+          .replace(/\s+/g, '')
+          .toLowerCase();
+
+        const aliasToCanonical = {
+          'tmall': '天猫',
+          'douyin': '抖音',
+          'jd': '京东',
+          'pdd': '拼多多',
+          'official': '官网/小程序',
+          'wechat': '微信',
+          'kuaishou': '快手',
+          'ks': '快手',
+          '微信小程序': '微信',
+          '抖音电商': '抖音',
+          '官网': '官网/小程序',
+          '小程序': '官网/小程序'
+        };
+
+        const canonicalVariants = {
+          '官网/小程序': ['官网/小程序', '官网／小程序', '官网', '小程序'],
+          '微信': ['微信', '微信小程序'],
+          '抖音': ['抖音', '抖音电商'],
+          '快手': ['快手', '快手电商']
+        };
+
+        const pushPlatformVariant = (value) => {
+          const text = String(value || '').trim();
+          if (!text) return;
+          // 兼容半角/全角斜杠，避免“官网/小程序”类平台在不同数据源中匹配失败
+          expandSet.add(text);
+          expandSet.add(text.replace(/\//g, '／'));
+          expandSet.add(text.replace(/／/g, '/'));
+
+          const normalizedToken = normalizePlatformToken(text);
+          const canonical = aliasToCanonical[normalizedToken] || aliasToCanonical[text] || text;
+          expandSet.add(String(canonical).trim());
+
+          const aliasGroup = canonicalVariants[canonical] || [];
+          aliasGroup.forEach(item => {
+            expandSet.add(String(item).trim());
+            expandSet.add(String(item).trim().replace(/／/g, '/'));
+          });
+        };
+
+        requested.forEach(p => {
+          pushPlatformVariant(p);
+          const mapped = this.PLATFORM_MAPPING && this.PLATFORM_MAPPING[p];
+          pushPlatformVariant(mapped || p);
+        });
+        const expanded = Array.from(expandSet)
+          .map(v => String(v).trim().replace(/／/g, '/'))
+          .filter(Boolean);
+        const placeholders = expanded.map((_, i) => `:platform_${i}`).join(', ');
+        expanded.forEach((p, i) => { queryParams[`platform_${i}`] = p; });
+        platformFilter = `AND REPLACE(TRIM(v.PLATFORM_CLASS), '／', '/') IN (${placeholders})`;
+      }
     }
     
     // 🔧 自管筛选
@@ -342,7 +419,7 @@ router.get('/export', async (req, res) => {
           v.TR_DESCR as tr_descr,
           v.SELF_FLAG as self_flag,
           v.IS_24H as is_24h,
-          v.IS48H_FLAG as is48h_flag,
+          v.IS_48H as is_48h,
           
           -- 类型信息
           v.ORDER_TYPE_NAME as order_type_name,
@@ -420,7 +497,7 @@ router.get('/export', async (req, res) => {
       trDescr: row.TR_DESCR || row.tr_descr,
       selfFlag: row.SELF_FLAG || row.self_flag,
       is24h: row.IS_24H || row.is_24h,
-      is48hFlag: row.IS48H_FLAG || row.is48h_flag,
+      is48hFlag: row.IS_48H || row.is_48h,
       orderTypeName: row.ORDER_TYPE_NAME || row.order_type_name,
       disTypeName: row.DIS_TYPE_NAME || row.dis_type_name,
       trserviceTypeName: row.TRSERVICE_TYPE_NAME || row.trservice_type_name,

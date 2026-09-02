@@ -67,11 +67,12 @@ function buildRedisUrl() {
   const password = process.env.REDIS_PASSWORD;
   const database = process.env.REDIS_DB || '0';
 
+
   if (password) {
-    return `redis://:${encodeURIComponent(password)}@${host}:${port}/${database}`;
+    return `redis://:${encodeURIComponent(password)}@${host}:${port}/${database}${tlsParam}`;
   }
 
-  return `redis://${host}:${port}/${database}`;
+  return `redis://${host}:${port}/${database}${tlsParam}`;
 }
 
 function logRedisUnavailable(error) {
@@ -151,20 +152,45 @@ async function getRedisClient() {
   }
 
   if (!redisConnectPromise) {
-    redisConnectPromise = redisClient.connect()
-      .then(() => {
+    // Try connecting but do not block indefinitely — use a short timeout and
+    // fallback to in-memory store if Redis is unreachable. This prevents
+    // login or token generation requests from hanging when Redis/network is down.
+    const CONNECT_TIMEOUT_MS = Number.parseInt(process.env.REDIS_CONNECT_TIMEOUT_MS || '2000', 10);
+
+    const connectWithTimeout = async () => {
+      try {
+        const connectPromise = redisClient.connect();
+
+        // race between connect and timeout
+        await Promise.race([
+          connectPromise,
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Redis connect timeout')), CONNECT_TIMEOUT_MS))
+        ]);
+
+        // If connect succeeded
         redisAvailable = true;
         return redisClient;
-      })
-      .catch(error => {
+      } catch (error) {
+        // Ensure the client is cleaned up if partially initialized
+        try {
+          if (redisClient && typeof redisClient.disconnect === 'function') {
+            // best-effort disconnect
+            redisClient.disconnect().catch(() => {});
+          }
+        } catch (_) {
+          // ignore
+        }
+
         redisAvailable = false;
         markRedisFallback('connectFailed', error);
         logRedisUnavailable(error);
         return null;
-      })
-      .finally(() => {
+      } finally {
         redisConnectPromise = null;
-      });
+      }
+    };
+
+    redisConnectPromise = connectWithTimeout();
   }
 
   return redisConnectPromise;

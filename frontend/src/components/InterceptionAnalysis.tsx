@@ -50,6 +50,12 @@ const COURIER_COLORS: Record<string, {
   }
 };
 
+const formatNumber = (value: number | null | undefined) => Number(value || 0).toLocaleString();
+
+const calculateSuccessRate = (successCount: number, totalCount: number) => {
+  return totalCount > 0 ? (successCount / totalCount) * 100 : 0;
+};
+
 interface InterceptionAnalysisProps {
   dateRange: {
     from: string;
@@ -141,6 +147,12 @@ export function InterceptionAnalysis({
     return interceptionData.carrierStats.map((stat: any) => {
       const carrierId = stat.carrierId;
       const colors = COURIER_COLORS[carrierId] || COURIER_COLORS['default'];
+      const warehouseCount = stat.warehouseCount || 0;
+      const externalCount = stat.externalCount || 0;
+      const warehouseSuccessCount = stat.warehouseSuccessCount || stat.warehouse_success_count || 0;
+      const externalSuccessCount = stat.externalSuccessCount || stat.external_success_count || 0;
+      const warehouseAvgHours = stat.warehouseAvgHours || stat.warehouse_avg_hours || 0;
+      const externalAvgHours = stat.externalAvgHours || stat.external_avg_hours || 0;
 
       return {
         id: carrierId,
@@ -148,19 +160,17 @@ export function InterceptionAnalysis({
         logo: COURIER_LOGOS[carrierId] || '🚛',
         ...colors,
         internal: {
-          count: stat.warehouseCount || 0,
-          successRate: stat.warehouseCount > 0 
-            ? ((stat.successCount / stat.warehouseCount) * (stat.warehouseCount / stat.totalCount) * 100)
-            : 0,
-          avgTime: stat.avgCompletionHours || 0,
+          count: warehouseCount,
+          successCount: warehouseSuccessCount,
+          successRate: calculateSuccessRate(warehouseSuccessCount, warehouseCount),
+          avgTime: warehouseAvgHours,
           trend: 0 // 暂无趋势数据
         },
         external: {
-          count: stat.externalCount || 0,
-          successRate: stat.externalCount > 0
-            ? ((stat.successCount / stat.externalCount) * (stat.externalCount / stat.totalCount) * 100)
-            : 0,
-          avgTime: stat.avgCompletionHours || 0,
+          count: externalCount,
+          successCount: externalSuccessCount,
+          successRate: calculateSuccessRate(externalSuccessCount, externalCount),
+          avgTime: externalAvgHours,
           trend: 0 // 暂无趋势数据
         },
         totalCount: stat.totalCount,
@@ -286,7 +296,7 @@ export function InterceptionAnalysis({
                   <div>
                     <h5 className="font-medium text-maersk-black">{courier.name}</h5>
                     <div className="text-xs text-functional-mid-grey">
-                      总拦截: {(courier.totalCount || 0).toLocaleString()} 单
+                      总拦截: {formatNumber(courier.totalCount)} 单
                     </div>
                   </div>
                 </div>
@@ -311,7 +321,11 @@ export function InterceptionAnalysis({
                   <div className="space-y-1 text-xs">
                     <div className="flex justify-between">
                       <span className="text-functional-mid-grey">拦截数量:</span>
-                      <span className="text-maersk-black">{courier.internal.count.toLocaleString()}</span>
+                      <span className="text-maersk-black">{formatNumber(courier.internal.count)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-functional-mid-grey">成功数量:</span>
+                      <span className="text-maersk-black">{formatNumber(courier.internal.successCount)}</span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-functional-mid-grey">平均时长:</span>
@@ -336,7 +350,11 @@ export function InterceptionAnalysis({
                   <div className="space-y-1 text-xs">
                     <div className="flex justify-between">
                       <span className="text-functional-mid-grey">拦截数量:</span>
-                      <span className="text-maersk-black">{courier.external.count.toLocaleString()}</span>
+                      <span className="text-maersk-black">{formatNumber(courier.external.count)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-functional-mid-grey">成功数量:</span>
+                      <span className="text-maersk-black">{formatNumber(courier.external.successCount)}</span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-functional-mid-grey">平均时长:</span>
@@ -352,7 +370,7 @@ export function InterceptionAnalysis({
                 <div className="grid grid-cols-3 gap-4 text-center text-xs">
                   <div>
                     <div className="font-semibold text-maersk-black">
-                      {(courier.successCount || 0).toLocaleString()}
+                      {formatNumber(courier.successCount)}
                     </div>
                     <div className="text-functional-mid-grey">成功拦截</div>
                   </div>
@@ -383,36 +401,6 @@ export function InterceptionAnalysis({
             </div>
           ))}
 
-          {/* 快递商汇总统计 */}
-          <div className="border-t border-functional-light-grey pt-4">
-            <h4 className="text-sm font-medium mb-3 text-maersk-black">快递商拦截表现汇总</h4>
-            <div className="grid grid-cols-4 gap-4 text-center text-sm">
-              <div>
-                <div className="font-semibold text-functional-dark-blue">
-                  {overview.totalCount?.toLocaleString() || 0}
-                </div>
-                <div className="text-functional-mid-grey">总拦截数</div>
-              </div>
-              <div>
-                <div className="font-semibold text-accent-mid-green">
-                  {overview.successRate?.toFixed(1) || 0}%
-                </div>
-                <div className="text-functional-mid-grey">平均成功率</div>
-              </div>
-              <div>
-                <div className="font-semibold text-accent-mid-teal">
-                  {overview.successCount?.toLocaleString() || 0}
-                </div>
-                <div className="text-functional-mid-grey">成功拦截总数</div>
-              </div>
-              <div>
-                <div className="font-semibold text-accent-mid-orange">
-                  {((overview.externalCount / overview.totalCount) * 100).toFixed(1) || 0}%
-                </div>
-                <div className="text-functional-mid-grey">平均库外占比</div>
-              </div>
-            </div>
-          </div>
         </div>
       </CardContent>
     </Card>

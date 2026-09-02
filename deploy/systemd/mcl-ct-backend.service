@@ -1,16 +1,16 @@
 [Unit]
-Description=MCL-CT Backend API Service
+Description=CMS Dashboard Backend Service
 After=network.target
 
 [Service]
 Type=simple
-User=www-data
-Group=www-data
-WorkingDirectory=/opt/mcl-ct/backend
-Environment=NODE_ENV=production
-ExecStart=/usr/bin/node /opt/mcl-ct/backend/src/api-server.js
+User=root
+WorkingDirectory=/home/evelyn.zou/apps/cms-dashboard/backend
+ExecStart=/usr/local/bin/node src/api-server.js
 Restart=always
-RestartSec=5
+RestartSec=10
+Environment=NODE_ENV=development
+EnvironmentFile=/etc/cms-dashboard/backend.env
 LimitNOFILE=65535
 
 [Install]

@@ -11,9 +11,9 @@ import { DataLoadingState } from "../DataLoadingState";
 
 interface LogisticsPageProps {
   data: any;
-  selectedBrand?: string;
-  selectedPlatform?: string;  // ✅ 新增：平台筛选参数
-  selectedSelfFlag?: string;  // ✅ 新增：自管筛选参数
+  selectedBrand?: string | string[] | null;
+  selectedPlatform?: string | string[] | null;  // ✅ 新增：平台筛选参数
+  selectedSelfFlag?: string | null;  // ✅ 新增：自管筛选参数
   onRefetchData?: () => void;
   dateRange?: { from: string; to: string };
   exceptionFilter?: {
@@ -197,6 +197,7 @@ export function LogisticsPage({
           ) : (
             <TimeEfficiencyAnalysis 
               selectedBrand={selectedBrand}
+              selectedPlatform={selectedPlatform}
               selectedSelfFlag={selectedSelfFlag}  // ✅ 新增：传递selfFlag参数
               dateRange={dateRange}
             />

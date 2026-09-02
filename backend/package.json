@@ -50,6 +50,7 @@
     "nodemailer": "^9.0.1",
     "oracledb": "^6.0.3",
     "redis": "^5.11.0",
+    "rate-limit-redis": "^1.7.0",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "overrides": {

@@ -31,7 +31,9 @@ import {
 
 interface WeightAnalysisPageProps {
   data?: any;
-  selectedBrand?: string;
+  selectedBrand?: string | string[] | null;
+  selectedPlatform?: string | string[] | null;
+  selectedSelfFlag?: string | null;
   dateRange?: { from: string; to: string };
   onDateRangeChange?: (from: string, to: string) => void;
   onBack?: () => void;
@@ -107,7 +109,7 @@ function toNumber(value: any): number {
   return Number.isFinite(num) ? num : 0;
 }
 
-export function WeightAnalysisPage({ selectedBrand: globalSelectedBrand, dateRange, onBack }: WeightAnalysisPageProps) {
+export function WeightAnalysisPage({ selectedBrand: globalSelectedBrand, selectedPlatform: globalSelectedPlatform, selectedSelfFlag, dateRange, onBack }: WeightAnalysisPageProps) {
     // Tab切换：brand/region
     const [viewMode, setViewMode] = useState<'brand' | 'region'>('brand');
 
@@ -231,10 +233,11 @@ export function WeightAnalysisPage({ selectedBrand: globalSelectedBrand, dateRan
       } else if (globalSelectedBrand && globalSelectedBrand !== "all") {
         brandParam = globalSelectedBrand;
       }
-            const response = await getWeightAnalysis({
+      const response = await getWeightAnalysis({
         dateRange: effectiveDateRange,
         brand: brandParam,
-        selfFlag: "Y",
+        platform: globalSelectedPlatform,
+        selfFlag: selectedSelfFlag || "Y",
         weightType,
         userId: user.userId,
       });
@@ -254,7 +257,8 @@ export function WeightAnalysisPage({ selectedBrand: globalSelectedBrand, dateRan
       const response = await getWeightAnalysis({
         dateRange: effectiveDateRange,
         brand: brandParam,
-        selfFlag: "Y",
+        platform: globalSelectedPlatform,
+        selfFlag: selectedSelfFlag || "Y",
         weightType,
         userId: user.userId,
       });
@@ -300,7 +304,8 @@ export function WeightAnalysisPage({ selectedBrand: globalSelectedBrand, dateRan
       const response = await getWeightAnalysis({
         dateRange: effectiveDateRange,
         brand: brandParam,
-        selfFlag: "Y",
+        platform: globalSelectedPlatform,
+        selfFlag: selectedSelfFlag || "Y",
         weightType,
         userId: user.userId,
       });
@@ -337,7 +342,7 @@ export function WeightAnalysisPage({ selectedBrand: globalSelectedBrand, dateRan
   useEffect(() => {
     fetchAnalysisData();
     setRegionData(null); // 切换筛选条件时清空地区分析缓存
-  }, [user?.userId, effectiveDateRange.from, effectiveDateRange.to, weightType, globalSelectedBrand]);
+  }, [user?.userId, effectiveDateRange.from, effectiveDateRange.to, weightType, globalSelectedBrand, globalSelectedPlatform, selectedSelfFlag]);
 
   const handleWeightTypeChange = (newType: "payable" | "receivable") => {
     if (newType === "payable" && !userPermissions?.isInternalUser) {

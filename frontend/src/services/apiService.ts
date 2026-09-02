@@ -16,17 +16,30 @@ function resolveApiBaseUrl(): string {
   return Boolean(viteEnv.DEV) ? 'http://localhost:3001/api' : '/api';
 }
 
+function resolveOverviewTimeoutMs(): number {
+  const viteEnv = (import.meta as ImportMeta & { env?: Record<string, any> }).env || {};
+  const configured = Number(viteEnv.VITE_OVERVIEW_TIMEOUT_MS);
+  if (Number.isFinite(configured) && configured > 0) {
+    return Math.max(configured, 180000);
+  }
+  // 默认 300s，兼容大范围聚合查询
+  return 300000;
+}
+
 interface APIRequestOptions {
   dateRange?: DateRange;
   brand?: string | string[] | null;
-  platform?: string | null;
+  platform?: string | string[] | null;
   selfFlag?: string | null;
   userBrands?: string[]; // 🔥 新增：用户品牌权限
   signal?: AbortSignal;
+  preferLite?: boolean;
+  requireCrossAnalysis?: boolean;
 }
 
 interface TrendsOrdersOptions extends APIRequestOptions {
   granularity?: 'day' | 'week' | 'month';
+  lite?: boolean;
 }
 
 interface TrendsCarriersOptions extends APIRequestOptions {
@@ -68,6 +81,8 @@ interface ApiPerformanceMetrics {
 
 class ApiServiceClass {
   private baseURL = resolveApiBaseUrl();
+  private readonly OVERVIEW_LITE_MODE_KEY = 'vf_overview_prefer_lite';
+  private preferOverviewLiteMode = false;
   private healthCheckCache: HealthCheckCache | null = null;
   private readonly HEALTH_CHECK_CACHE_DURATION = 30000; // 30秒缓存
   private readonly FAILED_HEALTH_CHECK_CACHE_DURATION = 1000; // 失败结果仅短暂缓存，避免阻塞后续真实查询
@@ -122,6 +137,34 @@ class ApiServiceClass {
 
   clearHealthCheckCache(): void {
     this.healthCheckCache = null;
+  }
+
+  private shouldPreferOverviewLiteMode(): boolean {
+    if (this.preferOverviewLiteMode) {
+      return true;
+    }
+
+    try {
+      const stored = sessionStorage.getItem(this.OVERVIEW_LITE_MODE_KEY);
+      if (stored === '1') {
+        this.preferOverviewLiteMode = true;
+        return true;
+      }
+    } catch {
+      // ignore storage access errors
+    }
+
+    return false;
+  }
+
+  private enableOverviewLiteMode(reason: string): void {
+    this.preferOverviewLiteMode = true;
+    try {
+      sessionStorage.setItem(this.OVERVIEW_LITE_MODE_KEY, '1');
+    } catch {
+      // ignore storage write errors
+    }
+    console.warn(`⚠️ [ApiService] 已启用总览Lite模式（会话级）: ${reason}`);
   }
 
   // 🔥 新增：获取认证请求头
@@ -218,11 +261,31 @@ class ApiServiceClass {
     'douyin': '抖音',       // 抖音  
     'jd': '京东',           // 京东
     'pdd': '拼多多',         // 拼多多
-    'official': '官网',     // 官网/小程序
+    'official': '官网/小程序',     // 官网/小程序
     'o2o': 'O2O',          // O2O
     'xiaohongshu': '小红书', // 小红书
     'wechat': '微信'        // 微信小程序
   };
+
+  // 统一平台参数序列化：支持 string / string[]，并显式拼接成逗号分隔
+  private serializePlatformParam(
+    platform: string | string[] | null | undefined,
+    mapToDisplayName = false
+  ): string | null {
+    if (platform == null) return null;
+
+    const values = (Array.isArray(platform) ? platform : [platform])
+      .map(v => String(v).trim())
+      .filter(v => v && v !== 'all');
+
+    if (values.length === 0) return null;
+
+    const normalized = mapToDisplayName
+      ? values.map(v => this.PLATFORM_MAPPING[v as keyof typeof this.PLATFORM_MAPPING] || v)
+      : values;
+
+    return normalized.join(',');
+  }
 
   // 记录API性能指标
   private recordPerformance(
@@ -259,7 +322,7 @@ class ApiServiceClass {
     startDate: string;
     endDate: string;
     brand?: string | string[] | null;
-    platform?: string | null;
+    platform?: string | string[] | null;
     selfFlag?: string | null;
     batchSize?: number;  // 每批次数量（默认5000）
   }): Promise<any[]> {
@@ -336,7 +399,7 @@ class ApiServiceClass {
       startDate: string;
       endDate: string;
       brand?: string | string[] | null;
-      platform?: string | null;
+      platform?: string | string[] | null;
       selfFlag?: string | null;
       offset?: number;
     },
@@ -354,9 +417,8 @@ class ApiServiceClass {
         }
     }
     
-    if (filters.platform && filters.platform !== 'all') {
-      params.append('platform', filters.platform);
-    }
+    const serializedPlatform = this.serializePlatformParam(filters.platform, false);
+    if (serializedPlatform) params.append('platform', serializedPlatform);
     
     if (filters.selfFlag) {
       params.append('selfFlag', filters.selfFlag);
@@ -400,7 +462,8 @@ class ApiServiceClass {
    */
   async analyzeTimeliness(filters: {
     dateRange?: { from: string; to: string };
-    selectedBrand?: string | null;
+    selectedBrand?: string | string[] | null;
+    selectedPlatform?: string | string[] | null;
     selectedSelfFlag?: string | null;
     selectedCarrier?: string | null;
     analysisType?: string;
@@ -431,7 +494,8 @@ class ApiServiceClass {
    */
   async exportTimelinessRawData(filters: {
     dateRange: { from: string; to: string };
-    selectedBrand?: string;
+    selectedBrand?: string | string[];
+    selectedPlatform?: string | string[] | null;
     selectedSelfFlag?: string;
     selectedCarrier?: string;
     analysisType?: string;
@@ -778,7 +842,16 @@ class ApiServiceClass {
 
   // 🔥 修复版：获取包含真实同比环比数据的总览数据
   async getOverviewData(options: APIRequestOptions = {}): Promise<any> {
-    const { dateRange, brand, platform, selfFlag, userBrands, signal } = options;
+    const { dateRange, brand, platform, selfFlag, userBrands, signal, preferLite, requireCrossAnalysis } = options;
+
+    if (preferLite && !requireCrossAnalysis) {
+      return this.getOverviewDataLite(options);
+    }
+
+    // 如果本会话已判定full模式容易网关超时，直接走Lite，避免反复504
+    if (this.shouldPreferOverviewLiteMode() && !requireCrossAnalysis) {
+      return this.getOverviewDataLite(options);
+    }
     
     try {
       const params = new URLSearchParams();
@@ -823,10 +896,11 @@ class ApiServiceClass {
         console.log('🏷️ [ApiService] Brand parameter not added:', brand);
       }
       
-      if (platform && platform !== 'all') {
+      const serializedPlatform = this.serializePlatformParam(platform, false);
+      if (serializedPlatform) {
         // 直接发送平台代码给后端，由后端负责映射
-        console.log('🏪 [ApiService] Sending platform code to backend:', platform);
-        params.append('platform', platform);
+        console.log('🏪 [ApiService] Sending platform code(s) to backend:', serializedPlatform);
+        params.append('platform', serializedPlatform);
       } else {
         console.log('🏪 [ApiService] Platform parameter not added:', platform);
       }
@@ -854,8 +928,8 @@ class ApiServiceClass {
       console.log('📋 [ApiService] Query parameters:', params.toString());
       
       const controller = new AbortController();
-      const timeoutMs = 180000; // 管理员全量查询耗时较长，避免前端过早超时回落空态
-      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+      const timeoutMs = resolveOverviewTimeoutMs();
+      const timeoutId = signal ? null : setTimeout(() => controller.abort(), timeoutMs);
       
       const response = await this.performanceFetch(url, {
         method: 'GET',
@@ -865,7 +939,9 @@ class ApiServiceClass {
         },
       });
 
-      clearTimeout(timeoutId);
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
 
       const data = await this.parseApiResponse<any>(response, '总览数据获取（含同比环比）');
       
@@ -918,13 +994,30 @@ class ApiServiceClass {
       return data;
     } catch (error: any) {
       if (error.name === 'AbortError') {
-        throw error;
+        if (requireCrossAnalysis) {
+          throw error;
+        }
+
+        this.enableOverviewLiteMode('full请求超时');
+        console.warn('⚠️ [ApiService] 总览接口请求超时，尝试使用 Lite 模式重试');
+        return this.getOverviewDataLite(options);
       }
       
       // 如果新的API不存在，回退到原来的API
       if (error instanceof ApiClientError && error.status === 404) {
         console.warn('⚠️ [ApiService] 新API不存在，回退到原API');
         return this.getOverviewDataFallback(options);
+      }
+
+      // 网关超时/网关错误时，自动降级为Lite模式，避免整页无数据
+      if (error instanceof ApiClientError && [502, 503, 504, 524].includes(error.status)) {
+        if (requireCrossAnalysis) {
+          throw error;
+        }
+
+        this.enableOverviewLiteMode(`网关错误 ${error.status}`);
+        console.warn(`⚠️ [ApiService] 总览接口网关错误(${error.status})，尝试使用 Lite 模式重试`);
+        return this.getOverviewDataLite(options);
       }
 
       if (error instanceof ApiClientError) {
@@ -937,6 +1030,70 @@ class ApiServiceClass {
       
       console.error('❌ [ApiService] 获取总览数据失败:', error);
       throw new Error(`获取总览数据失败: ${error.message}`);
+    }
+  }
+
+  // 总览 Lite 模式：请求后端轻量聚合，降低504概率
+  private async getOverviewDataLite(options: APIRequestOptions = {}): Promise<any> {
+    const { dateRange, brand, platform, selfFlag, userBrands, signal } = options;
+
+    const params = new URLSearchParams();
+    if (dateRange?.from) params.append('dateFrom', dateRange.from);
+    if (dateRange?.to) params.append('dateTo', dateRange.to);
+
+    if (brand && brand !== 'all') {
+      if (Array.isArray(brand)) {
+        params.append('brand', brand.join(','));
+      } else {
+        const mappedBrand = this.BRAND_MAPPING[brand as keyof typeof this.BRAND_MAPPING] || brand;
+        params.append('brand', mappedBrand);
+      }
+    }
+
+    if (userBrands && Array.isArray(userBrands) && userBrands.length > 0) {
+      params.append('userBrands', userBrands.join(','));
+    }
+
+    const serializedPlatform = this.serializePlatformParam(platform, false);
+    if (serializedPlatform) {
+      params.append('platform', serializedPlatform);
+    }
+
+    if (selfFlag && selfFlag !== 'all') {
+      params.append('selfFlag', selfFlag);
+    } else if (!selfFlag) {
+      params.append('selfFlag', 'Y');
+    }
+
+    params.append('lite', '1');
+
+    const url = `${this.baseURL}/overview/kpi${params.toString() ? `?${params.toString()}` : ''}`;
+    console.log('🌐 [ApiService] Lite mode request:', url);
+
+    const controller = new AbortController();
+    const timeoutMs = resolveOverviewTimeoutMs();
+    const timeoutId = signal ? null : setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const response = await this.performanceFetch(url, {
+        method: 'GET',
+        signal: signal || controller.signal,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+
+      const data = await this.parseApiResponse<any>(response, '总览数据获取（Lite）');
+      return data;
+    } catch (error) {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+      throw error;
     }
   }
 
@@ -969,10 +1126,8 @@ class ApiServiceClass {
         }
       }
       
-      if (platform && platform !== 'all') {
-        const mappedPlatform = this.PLATFORM_MAPPING[platform as keyof typeof this.PLATFORM_MAPPING] || platform;
-        params.append('platform', mappedPlatform);
-      }
+      const serializedPlatform = this.serializePlatformParam(platform, true);
+      if (serializedPlatform) params.append('platform', serializedPlatform);
 
       // 🔥 修复：自管筛选参数 - 回退版本
       if (selfFlag && selfFlag !== 'all') {
@@ -990,8 +1145,8 @@ class ApiServiceClass {
       console.log('🔄 [ApiService] Fallback to original API:', url);
       
       const controller = new AbortController();
-      const timeoutMs = 180000; // 回退接口同样使用较长超时预算
-      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+      const timeoutMs = resolveOverviewTimeoutMs();
+      const timeoutId = signal ? null : setTimeout(() => controller.abort(), timeoutMs);
       
       const response = await this.performanceFetch(url, {
         method: 'GET',
@@ -1001,7 +1156,9 @@ class ApiServiceClass {
         },
       });
 
-      clearTimeout(timeoutId);
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
 
       const data = await this.parseApiResponse<any>(response, '总览数据获取（回退版）');
       
@@ -1058,10 +1215,8 @@ class ApiServiceClass {
         console.log('🔐 [ApiService.getLogisticsData] 传递用户品牌权限:', userBrands.join(','));
       }
 
-      if (platform && platform !== 'all') {
-        const mappedPlatform = this.PLATFORM_MAPPING[platform as keyof typeof this.PLATFORM_MAPPING] || platform;
-        params.append('platform', mappedPlatform);
-      }
+      const serializedPlatform = this.serializePlatformParam(platform, true);
+      if (serializedPlatform) params.append('platform', serializedPlatform);
       
       // 🔥 修复：自管筛选参数
       if (selfFlag && selfFlag !== 'all') {
@@ -1125,6 +1280,10 @@ class ApiServiceClass {
     const { dateRange, brand, platform, selfFlag, userBrands, signal } = options;
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
+    if (this.shouldPreferOverviewLiteMode()) {
+      return this.getOverviewFlowAnalysisLite(options);
+    }
+
     try {
       const params = new URLSearchParams();
 
@@ -1152,9 +1311,8 @@ class ApiServiceClass {
         console.log('🔐 [ApiService.getOverviewFlowAnalysis] 传递用户品牌权限:', userBrands.join(','));
       }
 
-      if (platform && platform !== 'all') {
-        params.append('platform', platform);
-      }
+      const serializedPlatform = this.serializePlatformParam(platform, false);
+      if (serializedPlatform) params.append('platform', serializedPlatform);
 
       if (selfFlag && selfFlag !== 'all') {
         params.append('selfFlag', selfFlag);
@@ -1164,8 +1322,10 @@ class ApiServiceClass {
       console.log('🌐 [ApiService.getOverviewFlowAnalysis] 请求URL:', url);
 
       const controller = new AbortController();
-      const timeoutMs = 180000; // 管理员全量流向分析查询较慢，避免前端过早超时
-      timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+      const timeoutMs = resolveOverviewTimeoutMs();
+      if (!signal) {
+        timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+      }
 
       const response = await this.performanceFetch(url, {
         method: 'GET',
@@ -1196,7 +1356,13 @@ class ApiServiceClass {
       }
 
       if (error.name === 'AbortError') {
-        throw new Error('订单流向分析请求超时，请稍后重试');
+        this.enableOverviewLiteMode('flow-analysis请求超时');
+        return this.getOverviewFlowAnalysisLite(options);
+      }
+
+      if (error instanceof ApiClientError && [502, 503, 504, 524].includes(error.status)) {
+        this.enableOverviewLiteMode(`flow-analysis网关错误 ${error.status}`);
+        return this.getOverviewFlowAnalysisLite(options);
       }
 
       if (error instanceof ApiClientError) {
@@ -1209,6 +1375,74 @@ class ApiServiceClass {
 
       console.error('❌ [ApiService.getOverviewFlowAnalysis] 获取订单流向分析失败:', error);
       throw new Error(`获取订单流向分析失败: ${error.message}`);
+    }
+  }
+
+  private async getOverviewFlowAnalysisLite(options: APIRequestOptions = {}): Promise<any> {
+    const { dateRange, brand, platform, selfFlag, userBrands, signal } = options;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+    try {
+      const params = new URLSearchParams();
+
+      if (dateRange?.from) {
+        params.append('dateFrom', dateRange.from);
+      }
+      if (dateRange?.to) {
+        params.append('dateTo', dateRange.to);
+      }
+
+      if (brand && brand !== 'all') {
+        if (Array.isArray(brand)) {
+          brand.forEach((brandCode) => {
+            params.append('brand', brandCode);
+          });
+        } else {
+          const mappedBrand = this.BRAND_MAPPING[brand as keyof typeof this.BRAND_MAPPING] || brand;
+          params.append('brand', mappedBrand);
+        }
+      }
+
+      if (userBrands && Array.isArray(userBrands) && userBrands.length > 0) {
+        params.append('userBrands', userBrands.join(','));
+      }
+
+      const serializedPlatform = this.serializePlatformParam(platform, false);
+      if (serializedPlatform) params.append('platform', serializedPlatform);
+
+      if (selfFlag && selfFlag !== 'all') {
+        params.append('selfFlag', selfFlag);
+      }
+
+      params.append('lite', '1');
+
+      const url = `${this.baseURL}/overview/flow-analysis${params.toString() ? `?${params.toString()}` : ''}`;
+      console.log('🌐 [ApiService.getOverviewFlowAnalysis] Lite mode request:', url);
+
+      const controller = new AbortController();
+      const timeoutMs = resolveOverviewTimeoutMs();
+      if (!signal) {
+        timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+      }
+
+      const response = await this.performanceFetch(url, {
+        method: 'GET',
+        signal: signal || controller.signal,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+
+      return await this.parseApiResponse<any>(response, '订单流向分析数据获取（Lite）');
+    } catch (error) {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+      throw error;
     }
   }
 
@@ -1241,9 +1475,8 @@ class ApiServiceClass {
         console.log('🔐 [ApiService.getShippedTransferStatus] 传递用户品牌权限:', userBrands.join(','));
       }
 
-      if (platform && platform !== 'all') {
-        params.append('platform', platform);
-      }
+      const serializedPlatform = this.serializePlatformParam(platform, false);
+      if (serializedPlatform) params.append('platform', serializedPlatform);
 
       if (selfFlag && selfFlag !== 'all') {
         params.append('selfFlag', selfFlag);
@@ -1456,10 +1689,8 @@ class ApiServiceClass {
         params.append('userBrands', userBrands.join(','));  // 🔥 使用逗号分隔，而不是JSON
         console.log('🔐 [ApiService.getLogisticsBrands] 传递用户品牌权限:', userBrands.join(','));
       }
-      if (platform && platform !== 'all') {
-        const mappedPlatform = this.PLATFORM_MAPPING[platform as keyof typeof this.PLATFORM_MAPPING] || platform;
-        params.append('platform', mappedPlatform);
-      }
+      const serializedPlatform = this.serializePlatformParam(platform, true);
+      if (serializedPlatform) params.append('platform', serializedPlatform);
       
       // 🔥 修复：自管筛选参数
       if (selfFlag && selfFlag !== 'all') {
@@ -1476,7 +1707,7 @@ class ApiServiceClass {
       console.log('🏷️ [ApiService] 获取物流品牌数据:', url);
       
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000);
+      const timeoutId = setTimeout(() => controller.abort(), 30000);
       
       const response = await this.performanceFetch(url, {
         method: 'GET',
@@ -1532,10 +1763,8 @@ class ApiServiceClass {
         }
       }
 
-      if (platform && platform !== 'all') {
-        const mappedPlatform = this.PLATFORM_MAPPING[platform as keyof typeof this.PLATFORM_MAPPING] || platform;
-        params.append('platform', mappedPlatform);
-      }
+      const serializedPlatform = this.serializePlatformParam(platform, true);
+      if (serializedPlatform) params.append('platform', serializedPlatform);
 
       if (selfFlag && selfFlag !== 'all') {
         params.append('selfFlag', selfFlag);
@@ -1593,10 +1822,8 @@ class ApiServiceClass {
       }
     }
 
-    if (platform && platform !== 'all') {
-      const mappedPlatform = this.PLATFORM_MAPPING[platform as keyof typeof this.PLATFORM_MAPPING] || platform;
-      params.append('platform', mappedPlatform);
-    }
+    const serializedPlatform = this.serializePlatformParam(platform, true);
+    if (serializedPlatform) params.append('platform', serializedPlatform);
 
     if (selfFlag && selfFlag !== 'all') {
       params.append('selfFlag', selfFlag);
@@ -1701,10 +1928,8 @@ class ApiServiceClass {
         console.log('🔐 [ApiService.getForwardingData] 用户品牌权限:', userBrands.join(','));
       }
       
-      if (platform && platform !== 'all') {
-        const mappedPlatform = this.PLATFORM_MAPPING[platform as keyof typeof this.PLATFORM_MAPPING] || platform;
-        params.append('platform', mappedPlatform);
-      }
+      const serializedPlatform = this.serializePlatformParam(platform, true);
+      if (serializedPlatform) params.append('platform', serializedPlatform);
       
       // 自管筛选参数
       if (selfFlag && selfFlag !== 'all') {
@@ -1814,10 +2039,8 @@ class ApiServiceClass {
       }
       
       // 平台筛选
-      if (platform && platform !== 'all') {
-        const mappedPlatform = this.PLATFORM_MAPPING[platform as keyof typeof this.PLATFORM_MAPPING] || platform;
-        params.append('platform', mappedPlatform);
-      }
+      const serializedPlatform = this.serializePlatformParam(platform, true);
+      if (serializedPlatform) params.append('platform', serializedPlatform);
       
       // 自管筛选
       if (selfFlag && selfFlag !== 'all') {
@@ -1949,7 +2172,7 @@ class ApiServiceClass {
       console.log('🏷️ [ApiService.getAvailablePlatforms] 请求URL:', url);
 
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 30000); // 放宽超时到30秒
+      const timeoutId = setTimeout(() => controller.abort(), 45000);
 
       const response = await this.performanceFetch(url, {
         method: 'GET',
@@ -2056,10 +2279,8 @@ class ApiServiceClass {
       } else if (brand === 'all' && userBrands && Array.isArray(userBrands) && userBrands.length > 0) {
         params.append('userBrands', userBrands.join(','));
       }
-      if (platform && platform !== 'all') {
-        const mappedPlatform = this.PLATFORM_MAPPING[platform as keyof typeof this.PLATFORM_MAPPING] || platform;
-        params.append('platform', mappedPlatform);
-      }
+      const serializedPlatform = this.serializePlatformParam(platform, true);
+      if (serializedPlatform) params.append('platform', serializedPlatform);
       if (selfFlag && selfFlag !== 'all') {
         params.append('selfFlag', selfFlag);
       }
@@ -2144,10 +2365,8 @@ class ApiServiceClass {
       }
       
       // 平台筛选
-      if (platform && platform !== 'all') {
-        const mappedPlatform = this.PLATFORM_MAPPING[platform as keyof typeof this.PLATFORM_MAPPING] || platform;
-        params.append('platform', mappedPlatform);
-      }
+      const serializedPlatform = this.serializePlatformParam(platform, true);
+      if (serializedPlatform) params.append('platform', serializedPlatform);
       
       // 自管筛选
       if (selfFlag && selfFlag !== 'all') {
@@ -2206,12 +2425,13 @@ class ApiServiceClass {
 
   // 🔥 新增：获取趋势分析-订单趋势数据
   async getTrendsOrders(options: TrendsOrdersOptions = {}): Promise<any> {
-    const { dateRange, brand, selfFlag, signal, granularity = 'day' } = options;
+    const { dateRange, brand, platform, selfFlag, signal, granularity = 'day', lite = false } = options;
 
     const params = new URLSearchParams();
     if (dateRange?.from) params.append('dateFrom', dateRange.from);
     if (dateRange?.to) params.append('dateTo', dateRange.to);
     params.append('granularity', granularity);
+    if (lite) params.append('lite', '1');
 
     if (brand && brand !== 'all') {
       if (Array.isArray(brand)) {
@@ -2222,6 +2442,9 @@ class ApiServiceClass {
       }
     }
 
+    const serializedPlatform = this.serializePlatformParam(platform, true);
+    if (serializedPlatform) params.append('platform', serializedPlatform);
+
     if (selfFlag && selfFlag !== 'all') {
       params.append('selfFlag', selfFlag);
     } else if (!selfFlag) {
@@ -2230,7 +2453,7 @@ class ApiServiceClass {
 
     const url = `${this.baseURL}/trends/orders${params.toString() ? `?${params.toString()}` : ''}`;
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 90000);
+    const timeoutId = setTimeout(() => controller.abort(), 180000);
 
     try {
       const response = await this.performanceFetch(url, {
@@ -2254,7 +2477,7 @@ class ApiServiceClass {
 
   // 🔥 新增：获取趋势分析-预测数据
   async getTrendsForecast(options: TrendsForecastOptions = {}): Promise<any> {
-    const { dateRange, brand, selfFlag, signal, days = 7 } = options;
+    const { dateRange, brand, platform, selfFlag, signal, days = 7 } = options;
 
     const params = new URLSearchParams();
     if (dateRange?.from) params.append('dateFrom', dateRange.from);
@@ -2270,6 +2493,9 @@ class ApiServiceClass {
       }
     }
 
+    const serializedPlatform = this.serializePlatformParam(platform, true);
+    if (serializedPlatform) params.append('platform', serializedPlatform);
+
     if (selfFlag && selfFlag !== 'all') {
       params.append('selfFlag', selfFlag);
     } else if (!selfFlag) {
@@ -2278,7 +2504,7 @@ class ApiServiceClass {
 
     const url = `${this.baseURL}/trends/forecast${params.toString() ? `?${params.toString()}` : ''}`;
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 90000);
+    const timeoutId = setTimeout(() => controller.abort(), 180000);
 
     try {
       const response = await this.performanceFetch(url, {
@@ -2302,7 +2528,7 @@ class ApiServiceClass {
 
   // 🔥 新增：获取趋势分析-快递公司趋势数据
   async getTrendsCarriers(options: TrendsCarriersOptions = {}): Promise<any> {
-    const { dateRange, brand, selfFlag, signal, granularity = 'day' } = options;
+    const { dateRange, brand, platform, selfFlag, signal, granularity = 'day' } = options;
 
     const params = new URLSearchParams();
     if (dateRange?.from) params.append('dateFrom', dateRange.from);
@@ -2318,6 +2544,9 @@ class ApiServiceClass {
       }
     }
 
+    const serializedPlatform = this.serializePlatformParam(platform, true);
+    if (serializedPlatform) params.append('platform', serializedPlatform);
+
     if (selfFlag && selfFlag !== 'all') {
       params.append('selfFlag', selfFlag);
     } else if (!selfFlag) {
@@ -2326,7 +2555,7 @@ class ApiServiceClass {
 
     const url = `${this.baseURL}/trends/carriers${params.toString() ? `?${params.toString()}` : ''}`;
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 90000);
+    const timeoutId = setTimeout(() => controller.abort(), 180000);
 
     try {
       const response = await this.performanceFetch(url, {
@@ -2350,7 +2579,7 @@ class ApiServiceClass {
 
   // 🔥 新增：获取趋势分析-异常趋势数据
   async getTrendsExceptions(options: TrendsExceptionsOptions = {}): Promise<any> {
-    const { dateRange, brand, selfFlag, signal, granularity = 'day' } = options;
+    const { dateRange, brand, platform, selfFlag, signal, granularity = 'day' } = options;
 
     const params = new URLSearchParams();
     if (dateRange?.from) params.append('dateFrom', dateRange.from);
@@ -2366,6 +2595,9 @@ class ApiServiceClass {
       }
     }
 
+    const serializedPlatform = this.serializePlatformParam(platform, true);
+    if (serializedPlatform) params.append('platform', serializedPlatform);
+
     if (selfFlag && selfFlag !== 'all') {
       params.append('selfFlag', selfFlag);
     } else if (!selfFlag) {
@@ -2374,7 +2606,7 @@ class ApiServiceClass {
 
     const url = `${this.baseURL}/trends/exceptions${params.toString() ? `?${params.toString()}` : ''}`;
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 90000);
+    const timeoutId = setTimeout(() => controller.abort(), 180000);
 
     try {
       const response = await this.performanceFetch(url, {

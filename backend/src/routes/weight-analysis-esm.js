@@ -142,16 +142,15 @@ router.get('/weight-analysis', async (req, res) => {
     if (!permissions.isInternalUser && weightType === 'payable') {
       return sendError(res, req, {
         status: 403,
-        code: ERROR_CODES.AUTH_FAILED,
-        error: '外部用户无权查看应付计费重量数据',
-        details: {
-          allowedWeightTypes: ['receivable']
-        }
+        code: ERROR_CODES.FORBIDDEN,
+        error: '当前账号无权访问应付重量数据',
+        details: { allowedWeightTypes: permissions.allowedWeightTypes }
       });
     }
 
     const authorizedCustomerNos = getAuthorizedCustomerNos(req.user);
     const brandMapping = await getBrandMapping();
+
     const weightColumn = weightType === 'payable' ? 'v.CAL_TON_AP' : 'v.CAL_TON_AR';
     const weightCaseSql = toWeightCaseSql(weightColumn);
     // 保证品牌分析接口与品牌筛选器编码一致，brandNameSql直接用t.CUSTOMERNO
@@ -179,19 +178,56 @@ router.get('/weight-analysis', async (req, res) => {
     console.log('[重量分析] brandFilter:', brandFilter);
     console.log('[重量分析] 最终 params:', params);
 
-    // 先处理 platformFilter 和 selfFlagFilter
+    // 先处理 platformFilter 和 selfFlagFilter（支持平台数组）
     let platformFilter = '';
-    if (platform && platform !== 'all') {
-      platformFilter = `
-        AND EXISTS (
-          SELECT 1
-          FROM APP_CMS.BAS_CODES bc
-          WHERE bc.CODEID = 'PLATFORM_CLASS'
-            AND bc.CODE = t.PLATFORM
-            AND bc.UDF1 = :platform
-        )
-      `;
-      params.platform = platform;
+    const normalize = (v) => {
+      if (v == null) return undefined;
+      if (typeof v === 'string') {
+        const t = v.trim();
+        if (t === '') return undefined;
+        if (t.includes(',')) return t.split(',').map(s => s.trim()).filter(Boolean);
+        return t;
+      }
+      if (Array.isArray(v)) return v.map(i => String(i).trim()).filter(Boolean);
+      return undefined;
+    };
+
+    const normalizedPlatform = normalize(platform);
+    if (normalizedPlatform && normalizedPlatform !== 'all') {
+      if (Array.isArray(normalizedPlatform)) {
+        const PLATFORM_MAPPING = {
+          'tmall': '天猫',
+          'douyin': '抖音',
+          'jd': '京东',
+          'pdd': '拼多多',
+          'official': '官网/小程序',
+          'o2o': 'O2O',
+          'xiaohongshu': '小红书',
+          'wechat': '微信'
+        };
+        const placeholders = normalizedPlatform.map((_, i) => `:platform_${i}`).join(', ');
+        platformFilter = `
+          AND EXISTS (
+            SELECT 1
+            FROM APP_CMS.BAS_CODES bc
+            WHERE bc.CODEID = 'PLATFORM_CLASS'
+              AND bc.CODE = t.PLATFORM
+              AND bc.UDF1 IN (${placeholders})
+          )
+        `;
+        normalizedPlatform.forEach((p, i) => { params[`platform_${i}`] = PLATFORM_MAPPING[p] || p; });
+      } else {
+        platformFilter = `
+          AND EXISTS (
+            SELECT 1
+            FROM APP_CMS.BAS_CODES bc
+            WHERE bc.CODEID = 'PLATFORM_CLASS'
+              AND bc.CODE = t.PLATFORM
+              AND bc.UDF1 = :platform
+          )
+        `;
+        params.platform = normalizedPlatform;
+      }
     }
 
     let selfFlagFilter = '';

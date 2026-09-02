@@ -5,7 +5,7 @@
  * - 超时未揽收：出库时间后2小时，订单状态仍为'00'(已出库)    
  * - 超时未发运：出库时间后12小时，订单状态仍为'55'(已揽收) 
  * - 超时未签收：IF_DELAY字段值存在且为'Y'的订单
- * - 超48H未更新：IS48H_FLAG字段值存在且为'Y'的订单
+ * - 超48H未更新：视图IS_48H='Y'且视图状态不属于已结束状态的订单
  */
 
 const express = require('express');
@@ -17,7 +17,147 @@ const { ERROR_CODES, sendError, sendRouteError } = require('../utils/apiError');
 
 // 高频看板请求短缓存，降低大数据量场景下重复聚合压力
 const KPI_CACHE_TTL_MS = 30000;
+const OVERVIEW_STALE_CACHE_TTL_MS = 10 * 60 * 1000;
+const OVERVIEW_CACHE_MAX_ENTRIES = 300;
 const kpiResponseCache = new Map();
+const overviewInFlightRequests = new Map();
+const NO_UPDATE_48H_EXCLUDED_STATUSES = "('40','90','93','94','95','99','100','105','110')";
+
+function buildNoUpdate48hCondition(flagExpr, statusExpr) {
+  return `(${flagExpr} = 'Y' AND ${statusExpr} NOT IN ${NO_UPDATE_48H_EXCLUDED_STATUSES})`;
+}
+
+function stableStringify(value) {
+  if (value === null || value === undefined) return String(value);
+  if (typeof value !== 'object') return String(value);
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+
+  const keys = Object.keys(value).sort();
+  const pairs = keys.map((key) => `${key}:${stableStringify(value[key])}`);
+  return `{${pairs.join(',')}}`;
+}
+
+function buildOverviewCacheKey(req, endpointName) {
+  const userScope = {
+    userId: req.user?.userId || 'anonymous',
+    isAdmin: Boolean(req.user?.isAdmin),
+    customerNo: req.user?.customerNo || '',
+    customerNos: req.user?.customerNos || []
+  };
+
+  return `${endpointName}|${stableStringify(userScope)}|${stableStringify(req.query || {})}`;
+}
+
+function getOverviewCache(cacheKey, ttlMs = KPI_CACHE_TTL_MS) {
+  const cached = kpiResponseCache.get(cacheKey);
+  if (!cached) return null;
+
+  if (Date.now() - cached.timestamp > ttlMs) {
+    kpiResponseCache.delete(cacheKey);
+    return null;
+  }
+
+  return cached.payload;
+}
+
+function getOverviewStaleCache(cacheKey, maxAgeMs = OVERVIEW_STALE_CACHE_TTL_MS) {
+  const cached = kpiResponseCache.get(cacheKey);
+  if (!cached) return null;
+
+  if (Date.now() - cached.timestamp > maxAgeMs) {
+    kpiResponseCache.delete(cacheKey);
+    return null;
+  }
+
+  return cached.payload;
+}
+
+function setOverviewCache(cacheKey, payload) {
+  if (kpiResponseCache.size >= OVERVIEW_CACHE_MAX_ENTRIES) {
+    const oldestKey = kpiResponseCache.keys().next().value;
+    if (oldestKey) {
+      kpiResponseCache.delete(oldestKey);
+    }
+  }
+
+  kpiResponseCache.set(cacheKey, {
+    timestamp: Date.now(),
+    payload
+  });
+}
+
+async function executeOverviewCached(cacheKey, handler) {
+  const cached = getOverviewCache(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  if (overviewInFlightRequests.has(cacheKey)) {
+    console.log('⏳ [Overview Cache] 命中同参进行中的请求，复用结果');
+    return overviewInFlightRequests.get(cacheKey);
+  }
+
+  const task = (async () => {
+    try {
+      const payload = await handler();
+      setOverviewCache(cacheKey, payload);
+      return payload;
+    } finally {
+      overviewInFlightRequests.delete(cacheKey);
+    }
+  })();
+
+  overviewInFlightRequests.set(cacheKey, task);
+  return task;
+}
+
+function isOverviewDbPressureError(error) {
+  const code = String(error?.code || '').toUpperCase();
+  return code === 'NJS-040' || code === 'DB_CIRCUIT_OPEN' || code === 'DB_UNAVAILABLE';
+}
+
+function buildStaleOverviewResponse(payload, reason) {
+  return {
+    ...payload,
+    cache: {
+      mode: 'stale',
+      reason,
+      servedAt: new Date().toISOString()
+    }
+  };
+}
+
+function calculateInclusiveDateSpan(dateFrom, dateTo) {
+  const from = new Date(`${dateFrom}T00:00:00Z`);
+  const to = new Date(`${dateTo}T00:00:00Z`);
+  const diffMs = to.getTime() - from.getTime();
+  if (!Number.isFinite(diffMs) || diffMs < 0) {
+    return 0;
+  }
+
+  return Math.floor(diffMs / (24 * 60 * 60 * 1000)) + 1;
+}
+
+function shouldForceOverviewLiteMode({ liteModeRequested, brand, authorizedCustomerNos, dateFrom, dateTo }) {
+  if (liteModeRequested) {
+    return true;
+  }
+
+  const requestedBrands = normalizeBrandValues(brand);
+  const hasExplicitBrandFilter = Array.isArray(requestedBrands) && requestedBrands.length > 0 && !requestedBrands.includes('all');
+  const hasScopedBrands = Array.isArray(authorizedCustomerNos) && authorizedCustomerNos.length > 0;
+  const dateSpanDays = calculateInclusiveDateSpan(dateFrom, dateTo);
+
+  if (!hasExplicitBrandFilter && !hasScopedBrands && dateSpanDays >= 7) {
+    return true;
+  }
+
+  if (!hasExplicitBrandFilter && dateSpanDays >= 31) {
+    return true;
+  }
+
+  return false;
+}
 
 // 🔧 共享工具函数 - 避免重复代码
 const QueryUtils = {
@@ -80,8 +220,8 @@ const QueryUtils = {
     // 超时未签收: IF_DELAY字段值存在且为'Y'的订单（从VIEW视图获取）
     DELIVERY_TIMEOUT: `(v.IF_DELAY = 'Y')`,
     
-    // 超48H未更新: IS48H_FLAG字段值存在且为'Y'的订单
-    NO_UPDATE_48H: `(t.IS48H_FLAG = 'Y')`
+    // 超48H未更新: 视图IS_48H='Y'且视图状态不属于已结束状态的订单
+    NO_UPDATE_48H: buildNoUpdate48hCondition('v.IS_48H', 'v.DIS_STATUS')
   },
 
   /**
@@ -95,7 +235,11 @@ const QueryUtils = {
     }
     if (typeof value === 'string') {
       const trimmed = value.trim();
-      return trimmed === '' ? undefined : trimmed;
+      if (trimmed === '') return undefined;
+      if (trimmed.includes(',')) {
+        return trimmed.split(',').map(s => s.trim()).filter(Boolean);
+      }
+      return trimmed;
     }
     if (Array.isArray(value)) {
       const normalized = value
@@ -137,18 +281,70 @@ const QueryUtils = {
     
     if (platform && platform !== 'all') {
       const normalizedPlatform = this.normalizeStringOrStringArray(platform);
-      if (Array.isArray(normalizedPlatform)) {
-        const platformPlaceholders = normalizedPlatform.map((p, i) => {
-          const mappedValue = this.PLATFORM_MAPPING[p] || p;
-          queryParams[`platform_${i}`] = mappedValue;
-          return `:platform_${i}`;
-        }).join(', ');
-        platformFilter = ` AND v.PLATFORM_CLASS IN (${platformPlaceholders})`;
-        console.log(`🏪 [Platform Filter] 平台多选筛选: [${normalizedPlatform.join(', ')}]`);
-      } else if (normalizedPlatform) {
-        platformFilter = ` AND v.PLATFORM_CLASS = :platform`;
-        queryParams.platform = this.PLATFORM_MAPPING[normalizedPlatform] || normalizedPlatform;
-        console.log(`🏪 [Platform Filter] 平台单选筛选: ${normalizedPlatform} -> ${queryParams.platform}`);
+      if (normalizedPlatform) {
+        const requested = Array.isArray(normalizedPlatform) ? normalizedPlatform : [normalizedPlatform];
+
+        // 兼容前端传 code/中文、半角/全角斜杠等差异，避免多选平台命中为空
+        const normalizedVariants = new Set();
+        const normalizePlatformToken = (value) => String(value || '')
+          .trim()
+          .replace(/／/g, '/')
+          .replace(/\s+/g, '')
+          .toLowerCase();
+
+        const aliasToCanonical = {
+          'tmall': '天猫',
+          'douyin': '抖音',
+          'jd': '京东',
+          'pdd': '拼多多',
+          'official': '官网/小程序',
+          'wechat': '微信',
+          'kuaishou': '快手',
+          'ks': '快手',
+          '微信小程序': '微信',
+          '抖音电商': '抖音',
+          '官网': '官网/小程序',
+          '小程序': '官网/小程序'
+        };
+
+        const canonicalVariants = {
+          '官网/小程序': ['官网/小程序', '官网／小程序', '官网', '小程序'],
+          '微信': ['微信', '微信小程序'],
+          '抖音': ['抖音', '抖音电商'],
+          '快手': ['快手', '快手电商']
+        };
+
+        const pushPlatformVariant = (value) => {
+          const text = String(value || '').trim();
+          if (!text) return;
+          normalizedVariants.add(text);
+          normalizedVariants.add(text.replace(/\//g, '／'));
+          normalizedVariants.add(text.replace(/／/g, '/'));
+
+          const normalizedToken = normalizePlatformToken(text);
+          const canonical = aliasToCanonical[normalizedToken] || aliasToCanonical[text] || text;
+          normalizedVariants.add(String(canonical).trim());
+
+          const aliasGroup = canonicalVariants[canonical] || [];
+          aliasGroup.forEach(item => {
+            normalizedVariants.add(String(item).trim());
+            normalizedVariants.add(String(item).trim().replace(/／/g, '/'));
+          });
+        };
+
+        requested.forEach((p) => {
+          pushPlatformVariant(p);
+          const mapped = (this.PLATFORM_MAPPING && this.PLATFORM_MAPPING[p]) || p;
+          pushPlatformVariant(mapped);
+        });
+
+        const mappedPlatforms = Array.from(normalizedVariants)
+          .map(v => String(v).trim().replace(/／/g, '/'))
+          .filter(Boolean);
+        const platformPlaceholders = mappedPlatforms.map((_, i) => `:platform_${i}`).join(', ');
+        platformFilter = ` AND REPLACE(TRIM(v.PLATFORM_CLASS), '／', '/') IN (${platformPlaceholders})`;
+        mappedPlatforms.forEach((val, i) => { queryParams[`platform_${i}`] = val; });
+        console.log(`🏪 [Platform Filter] 平台展开匹配: [${mappedPlatforms.join(', ')}]`);
       }
     }
     
@@ -178,12 +374,21 @@ const QueryUtils = {
  */
 router.get('/kpi', async (req, res) => {
   let connection;
+  let kpiCacheKey = '';
   
   try {
-    const { dateFrom, dateTo, brand, platform, selfFlag } = req.query;
+    const { dateFrom, dateTo, brand, platform, selfFlag, lite } = req.query;
+    const liteModeRequested = String(lite || '').toLowerCase() === '1' || String(lite || '').toLowerCase() === 'true';
     const authorizedCustomerNos = getAuthorizedCustomerNos(req.user);
+    const liteMode = shouldForceOverviewLiteMode({
+      liteModeRequested,
+      brand,
+      authorizedCustomerNos,
+      dateFrom,
+      dateTo
+    });
     
-    console.log('🔄 [KPI查询] 收到请求参数:', { dateFrom, dateTo, brand, platform, selfFlag, authorizedCustomerNos });
+    console.log('🔄 [KPI查询] 收到请求参数:', { dateFrom, dateTo, brand, platform, selfFlag, liteModeRequested, liteMode, authorizedCustomerNos });
     
     // 参数验证
     if (!dateFrom || !dateTo) {
@@ -204,224 +409,59 @@ router.get('/kpi', async (req, res) => {
       });
     }
 
-    const kpiCacheKey = JSON.stringify({
-      userId: req.user?.userId || 'anonymous',
-      authorizedCustomerNos: Array.isArray(authorizedCustomerNos) ? authorizedCustomerNos : 'all',
-      dateFrom,
-      dateTo,
-      brand,
-      platform,
-      selfFlag
-    });
+    kpiCacheKey = buildOverviewCacheKey(req, `kpi|${liteMode ? 'lite' : 'full'}`);
 
-    const cachedEntry = kpiResponseCache.get(kpiCacheKey);
-    if (cachedEntry && (Date.now() - cachedEntry.timestamp) < KPI_CACHE_TTL_MS) {
+    const cachedEntry = getOverviewCache(kpiCacheKey);
+    if (cachedEntry) {
       console.log('⚡ [KPI查询] 命中缓存，直接返回结果');
-      return res.json(cachedEntry.payload);
+      return res.json(cachedEntry);
     }
 
-    connection = await getConnection();
-    
-    // 计算历史日期范围用于同比环比
-    const momRange = DateHelper.calculateMoMDateRange(dateFrom, dateTo);
-    const yoyRange = DateHelper.calculateYoYDateRange(dateFrom, dateTo);
-    
-    // ⚡ 性能优化：准备3个时间段的参数用于并行查询
-    const currentParams = { dateFrom, dateTo };
-    const lastMonthParams = { dateFrom: momRange.lastMonthFrom, dateTo: momRange.lastMonthTo };
-    const lastYearParams = { dateFrom: yoyRange.lastYearFrom, dateTo: yoyRange.lastYearTo };
-    
-    // 构建筛选条件（只用当前期间参数）
-    const { brandFilter, platformFilter, selfFlagFilter } = await QueryUtils.buildFiltersAsync(currentParams, brand, platform, selfFlag, authorizedCustomerNos);
+    const response = await executeOverviewCached(kpiCacheKey, async () => {
+      connection = await getConnection();
+      
+      // 计算历史日期范围用于同比环比
+      const momRange = DateHelper.calculateMoMDateRange(dateFrom, dateTo);
+      const yoyRange = DateHelper.calculateYoYDateRange(dateFrom, dateTo);
+      
+      // ⚡ 性能优化：准备3个时间段的参数用于并行查询
+      const currentParams = { dateFrom, dateTo };
+      const lastMonthParams = { dateFrom: momRange.lastMonthFrom, dateTo: momRange.lastMonthTo };
+      const lastYearParams = { dateFrom: yoyRange.lastYearFrom, dateTo: yoyRange.lastYearTo };
+      
+      // 构建筛选条件（只用当前期间参数）
+      const { brandFilter, platformFilter, selfFlagFilter } = await QueryUtils.buildFiltersAsync(currentParams, brand, platform, selfFlag, authorizedCustomerNos);
 
-    // 复制筛选参数到其他时间段
-    Object.keys(currentParams).forEach(key => {
-      if (key.startsWith('brand') || key.startsWith('userBrand') || key === 'platform' || key === 'selfFlag') {
-        lastMonthParams[key] = currentParams[key];
-        lastYearParams[key] = currentParams[key];
-      }
-    });
-    
-    // ⚠️ 兼容性：为其他查询保留baseParams引用
-    const baseParams = currentParams;
+      // 复制筛选参数到其他时间段
+      Object.keys(currentParams).forEach(key => {
+        if (key.startsWith('brand') || key.startsWith('userBrand') || key.startsWith('platform') || key === 'selfFlag') {
+          lastMonthParams[key] = currentParams[key];
+          lastYearParams[key] = currentParams[key];
+        }
+      });
+      
+      // ⚠️ 兼容性：为其他查询保留baseParams引用
+      const baseParams = currentParams;
 
-    // 🔍 调试：打印筛选条件
+    // 🔍 调试：打印筛选条件和实际Oracle绑定参数
     console.log('⚡ [KPI查询] 使用并行查询模式，提升性能...');
+    const platformBindParams = Object.fromEntries(
+      Object.entries(currentParams).filter(([k]) => k.startsWith('platform'))
+    );
     console.log('🔍 [KPI查询] 筛选条件:', {
       brandFilter: brandFilter || '(无)',
       platformFilter: platformFilter || '(无)',
       selfFlagFilter: selfFlagFilter || '(无)',
-      'currentParams.platform': currentParams.platform
+      platformBindParams: Object.keys(platformBindParams).length > 0 ? platformBindParams : '(无平台过滤)'
     });
-
-    // 核心KPI查询
-    const kpiQuery = `
-      WITH base_data AS (
-        SELECT 
-          t.TSK_MERGE_NO,
-          t.CUSTOMERNO,
-          t.DIS_STATUS,
-          t.PLATFORM,
-          t.PAYMENTDATE_D,
-          t.WMS_OUTBOUND_TIME,
-          t.DELIVERY_TIME,
-          t.DISP_TIME,
-          t.TRACKING_TIME,
-          t.SUM_SEND_TIME2,
-          t.IS48H_FLAG,
-          v.IF_DELAY,
-          t.CARRIERID,
-          bs.CODENAME_C as status_name,
-          v.PLATFORM_CLASS as platform_class,
-          CASE 
-            WHEN (
-              t.WMS_OUTBOUND_TIME IS NOT NULL 
-              AND to_char(t.WMS_OUTBOUND_TIME,'yyyy-mm-dd') >= :dateFrom 
-              AND to_char(t.WMS_OUTBOUND_TIME,'yyyy-mm-dd') <= :dateTo
-            ) THEN 'current'
-            WHEN (
-              t.WMS_OUTBOUND_TIME IS NOT NULL 
-              AND to_char(t.WMS_OUTBOUND_TIME,'yyyy-mm-dd') >= :lastMonthFrom 
-              AND to_char(t.WMS_OUTBOUND_TIME,'yyyy-mm-dd') <= :lastMonthTo
-            ) THEN 'last_month'
-            WHEN (
-              t.WMS_OUTBOUND_TIME IS NOT NULL 
-              AND to_char(t.WMS_OUTBOUND_TIME,'yyyy-mm-dd') >= :lastYearFrom 
-              AND to_char(t.WMS_OUTBOUND_TIME,'yyyy-mm-dd') <= :lastYearTo
-            ) THEN 'last_year'
-          END as period_type
-        FROM APP_CMS.TSK_LIST_TASK t
-        LEFT JOIN APP_CMS.VIEW_TSK_LIST_TASK v ON t.TSK_MERGE_NO = v.TSK_MERGE_NO
-        LEFT JOIN APP_CMS.BAS_CODES bs ON t.DIS_STATUS = bs.CODE AND bs.CODEID = 'BL_STATUS'
-        WHERE t.WMS_OUTBOUND_TIME IS NOT NULL
-          AND (
-            (to_char(t.WMS_OUTBOUND_TIME,'yyyy-mm-dd') >= :dateFrom AND to_char(t.WMS_OUTBOUND_TIME,'yyyy-mm-dd') <= :dateTo)
-            OR
-            (to_char(t.WMS_OUTBOUND_TIME,'yyyy-mm-dd') >= :lastMonthFrom AND to_char(t.WMS_OUTBOUND_TIME,'yyyy-mm-dd') <= :lastMonthTo)
-            OR
-            (to_char(t.WMS_OUTBOUND_TIME,'yyyy-mm-dd') >= :lastYearFrom AND to_char(t.WMS_OUTBOUND_TIME,'yyyy-mm-dd') <= :lastYearTo)
-          )
-          AND t.TSK_MERGE_NO IS NOT NULL
-          AND t.CARRIERID IS NOT NULL
-          ${brandFilter}
-          ${platformFilter}
-          ${selfFlagFilter}
-      ),
-      current_stats AS (
-        SELECT 
-          COUNT(DISTINCT TSK_MERGE_NO) as total_orders,
-          COUNT(DISTINCT CASE WHEN IS48H_FLAG = 'Y' THEN TSK_MERGE_NO END) as timeout_48h_orders,
-          COUNT(DISTINCT CASE WHEN DIS_STATUS = '55' THEN TSK_MERGE_NO END) as picked_orders,
-          COUNT(DISTINCT CASE WHEN DIS_STATUS = '70' THEN TSK_MERGE_NO END) as shipped_orders,
-          COUNT(DISTINCT CASE WHEN DIS_STATUS in ('95','93') THEN TSK_MERGE_NO END) as delivered_orders,
-          COUNT(DISTINCT CASE WHEN DIS_STATUS = '40' THEN TSK_MERGE_NO END) as forwarded_orders,
-          COUNT(DISTINCT CASE WHEN DIS_STATUS IN ('100', '105') THEN TSK_MERGE_NO END) as returned_orders,
-          COUNT(DISTINCT CASE WHEN DIS_STATUS IN ('90', '110') THEN TSK_MERGE_NO END) as cancelled_orders,
-          ROUND(AVG(CASE WHEN SUM_SEND_TIME2 IS NOT NULL AND SUM_SEND_TIME2 > 0 THEN SUM_SEND_TIME2 END), 2) as avg_delivery_hours,
-          ROUND(AVG(CASE WHEN DIS_STATUS in ('95','93') AND DISP_TIME IS NOT NULL AND DELIVERY_TIME IS NOT NULL 
-                        THEN (DELIVERY_TIME - DISP_TIME) * 24 END), 2) as avg_first_dispatch_hours,
-          ROUND(
-            COUNT(CASE WHEN DIS_STATUS in ('95','93') AND DISP_TIME IS NOT NULL AND DELIVERY_TIME IS NOT NULL 
-                       AND (DELIVERY_TIME - DISP_TIME) * 24 <= 8 THEN 1 END) * 100.0 / 
-            NULLIF(COUNT(CASE WHEN DIS_STATUS in ('95','93') AND DISP_TIME IS NOT NULL AND DELIVERY_TIME IS NOT NULL THEN 1 END), 0),
-            2
-          ) as first_dispatch_success_rate,
-          ROUND(COUNT(CASE WHEN DIS_STATUS = '55' THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0), 2) as picked_rate,
-          ROUND(COUNT(CASE WHEN DIS_STATUS = '70' THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0), 2) as shipped_rate,
-          ROUND(COUNT(CASE WHEN DIS_STATUS in ('95','93') THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0), 2) as delivery_rate,
-          ROUND((
-            COUNT(CASE WHEN WMS_OUTBOUND_TIME IS NOT NULL AND DIS_STATUS = '00' AND (SYSDATE - WMS_OUTBOUND_TIME) * 24 > 2 THEN 1 END) +
-            COUNT(CASE WHEN WMS_OUTBOUND_TIME IS NOT NULL AND DIS_STATUS = '55' AND (SYSDATE - WMS_OUTBOUND_TIME) * 24 > 12 THEN 1 END) +
-            COUNT(CASE WHEN IF_DELAY = 'Y' THEN 1 END) +
-            COUNT(CASE WHEN IS48H_FLAG = 'Y' THEN 1 END)
-          ) * 100.0 / NULLIF(COUNT(*), 0), 2) as exception_rate,
-          ROUND(COUNT(CASE WHEN IS48H_FLAG = 'Y' THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0), 2) as timeout_48h_rate
-        FROM base_data 
-        WHERE period_type = 'current'
-      ),
-      -- 🔥 新增：上月同比数据统计
-      last_month_stats AS (
-        SELECT 
-          COUNT(DISTINCT TSK_MERGE_NO) as total_orders,
-          COUNT(DISTINCT CASE WHEN DIS_STATUS = '40' THEN TSK_MERGE_NO END) as forwarded_orders,
-          COUNT(DISTINCT CASE WHEN DIS_STATUS IN ('100', '105') THEN TSK_MERGE_NO END) as returned_orders,
-          COUNT(DISTINCT CASE WHEN DIS_STATUS IN ('90', '110') THEN TSK_MERGE_NO END) as cancelled_orders,
-          ROUND(AVG(CASE WHEN SUM_SEND_TIME2 IS NOT NULL AND SUM_SEND_TIME2 > 0 THEN SUM_SEND_TIME2 END), 2) as avg_delivery_hours,
-          ROUND(AVG(CASE WHEN DIS_STATUS IN ('95','93') AND DISP_TIME IS NOT NULL AND DELIVERY_TIME IS NOT NULL 
-                        THEN (DELIVERY_TIME - DISP_TIME) * 24 END), 2) as avg_first_dispatch_hours,
-          ROUND(
-            COUNT(CASE WHEN DIS_STATUS IN ('95','93') AND DISP_TIME IS NOT NULL AND DELIVERY_TIME IS NOT NULL 
-                       AND (DELIVERY_TIME - DISP_TIME) * 24 <= 8 THEN 1 END) * 100.0 / 
-            NULLIF(COUNT(CASE WHEN DIS_STATUS IN ('95','93') AND DISP_TIME IS NOT NULL AND DELIVERY_TIME IS NOT NULL THEN 1 END), 0),
-            2
-          ) as first_dispatch_success_rate
-        FROM base_data 
-        WHERE period_type = 'last_month'
-      ),
-      -- 🔥 新增：去年同比数据统计
-      last_year_stats AS (
-        SELECT 
-          COUNT(DISTINCT TSK_MERGE_NO) as total_orders,
-          COUNT(DISTINCT CASE WHEN DIS_STATUS = '40' THEN TSK_MERGE_NO END) as forwarded_orders,
-          COUNT(DISTINCT CASE WHEN DIS_STATUS IN ('100', '105') THEN TSK_MERGE_NO END) as returned_orders,
-          COUNT(DISTINCT CASE WHEN DIS_STATUS IN ('90', '110') THEN TSK_MERGE_NO END) as cancelled_orders,
-          ROUND(AVG(CASE WHEN SUM_SEND_TIME2 IS NOT NULL AND SUM_SEND_TIME2 > 0 THEN SUM_SEND_TIME2 END), 2) as avg_delivery_hours,
-          ROUND(AVG(CASE WHEN DIS_STATUS IN ('95','93') AND DISP_TIME IS NOT NULL AND DELIVERY_TIME IS NOT NULL 
-                        THEN (DELIVERY_TIME - DISP_TIME) * 24 END), 2) as avg_first_dispatch_hours,
-          ROUND(
-            COUNT(CASE WHEN DIS_STATUS IN ('95','93') AND DISP_TIME IS NOT NULL AND DELIVERY_TIME IS NOT NULL 
-                       AND (DELIVERY_TIME - DISP_TIME) * 24 <= 8 THEN 1 END) * 100.0 / 
-            NULLIF(COUNT(CASE WHEN DIS_STATUS IN ('95','93') AND DISP_TIME IS NOT NULL AND DELIVERY_TIME IS NOT NULL THEN 1 END), 0),
-            2
-          ) as first_dispatch_success_rate
-        FROM base_data 
-        WHERE period_type = 'last_year'
-      )
-      SELECT 
-        -- 当前数据
-        cs.total_orders,
-        cs.timeout_48h_orders,
-        cs.picked_orders,
-        cs.shipped_orders,
-        cs.delivered_orders,
-        cs.forwarded_orders,
-        cs.returned_orders,
-        cs.cancelled_orders,
-        cs.avg_delivery_hours,
-        cs.avg_first_dispatch_hours,
-        cs.first_dispatch_success_rate,
-        cs.picked_rate,
-        cs.shipped_rate,
-        cs.delivery_rate,
-        cs.exception_rate,
-        cs.timeout_48h_rate,
-        -- 🔥 新增：历史数据用于同比环比计算
-        lm.total_orders as last_month_total_orders,
-        lm.forwarded_orders as last_month_forwarded_orders,
-        lm.returned_orders as last_month_returned_orders,
-        lm.cancelled_orders as last_month_cancelled_orders,
-        lm.avg_delivery_hours as last_month_avg_delivery_hours,
-        lm.avg_first_dispatch_hours as last_month_avg_first_dispatch_hours,
-        lm.first_dispatch_success_rate as last_month_first_dispatch_success_rate,
-        ly.total_orders as last_year_total_orders,
-        ly.forwarded_orders as last_year_forwarded_orders,
-        ly.returned_orders as last_year_returned_orders,
-        ly.cancelled_orders as last_year_cancelled_orders,
-        ly.avg_delivery_hours as last_year_avg_delivery_hours,
-        ly.avg_first_dispatch_hours as last_year_avg_first_dispatch_hours,
-        ly.first_dispatch_success_rate as last_year_first_dispatch_success_rate
-      FROM current_stats cs
-      LEFT JOIN last_month_stats lm ON 1=1
-      LEFT JOIN last_year_stats ly ON 1=1
-    `;
 
     // ⚡ 优化：使用更简单的单时间段查询
     const buildPeriodQuery = () => `
       SELECT 
         COUNT(DISTINCT t.TSK_MERGE_NO) as total_orders,
-        COUNT(DISTINCT CASE WHEN t.IS48H_FLAG = 'Y' THEN t.TSK_MERGE_NO END) as timeout_48h_orders,
+        COUNT(DISTINCT CASE WHEN ${buildNoUpdate48hCondition('v.IS_48H', 'v.DIS_STATUS')} THEN t.TSK_MERGE_NO END) as timeout_48h_orders,
         COUNT(DISTINCT CASE WHEN t.DIS_STATUS = '55' THEN t.TSK_MERGE_NO END) as picked_orders,
-        COUNT(DISTINCT CASE WHEN t.DIS_STATUS = '70' THEN t.TSK_MERGE_NO END) as shipped_orders,
+        COUNT(DISTINCT CASE WHEN t.DIS_STATUS IN ('70','80','85','92') THEN t.TSK_MERGE_NO END) as shipped_orders,
         COUNT(DISTINCT CASE WHEN t.DIS_STATUS IN ('95','93') THEN t.TSK_MERGE_NO END) as delivered_orders,
         COUNT(DISTINCT CASE WHEN t.DIS_STATUS = '40' THEN t.TSK_MERGE_NO END) as forwarded_orders,
         COUNT(DISTINCT CASE WHEN t.DIS_STATUS IN ('100', '105') THEN t.TSK_MERGE_NO END) as returned_orders,
@@ -436,15 +476,47 @@ router.get('/kpi', async (req, res) => {
           2
         ) as first_dispatch_success_rate,
         ROUND(COUNT(CASE WHEN t.DIS_STATUS = '55' THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0), 2) as picked_rate,
-        ROUND(COUNT(CASE WHEN t.DIS_STATUS = '70' THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0), 2) as shipped_rate,
+        ROUND(COUNT(CASE WHEN t.DIS_STATUS IN ('70','80','85','92') THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0), 2) as shipped_rate,
         ROUND(COUNT(CASE WHEN t.DIS_STATUS IN ('95','93') THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0), 2) as delivery_rate,
         ROUND((
           COUNT(CASE WHEN t.WMS_OUTBOUND_TIME IS NOT NULL AND t.DIS_STATUS = '00' AND (SYSDATE - t.WMS_OUTBOUND_TIME) * 24 > 2 THEN 1 END) +
           COUNT(CASE WHEN t.WMS_OUTBOUND_TIME IS NOT NULL AND t.DIS_STATUS = '55' AND (SYSDATE - t.WMS_OUTBOUND_TIME) * 24 > 12 THEN 1 END) +
           COUNT(CASE WHEN v.IF_DELAY = 'Y' THEN 1 END) +
-          COUNT(CASE WHEN t.IS48H_FLAG = 'Y' THEN 1 END)
+          COUNT(CASE WHEN ${buildNoUpdate48hCondition('v.IS_48H', 'v.DIS_STATUS')} THEN 1 END)
         ) * 100.0 / NULLIF(COUNT(*), 0), 2) as exception_rate,
-        ROUND(COUNT(CASE WHEN t.IS48H_FLAG = 'Y' THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0), 2) as timeout_48h_rate
+        ROUND(COUNT(CASE WHEN ${buildNoUpdate48hCondition('v.IS_48H', 'v.DIS_STATUS')} THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0), 2) as timeout_48h_rate
+      FROM APP_CMS.TSK_LIST_TASK t
+      LEFT JOIN APP_CMS.VIEW_TSK_LIST_TASK v ON t.TSK_MERGE_NO = v.TSK_MERGE_NO
+      WHERE t.WMS_OUTBOUND_TIME IS NOT NULL
+        AND t.WMS_OUTBOUND_TIME >= TO_DATE(:dateFrom, 'YYYY-MM-DD')
+        AND t.WMS_OUTBOUND_TIME < TO_DATE(:dateTo, 'YYYY-MM-DD') + INTERVAL '1' DAY
+        AND t.TSK_MERGE_NO IS NOT NULL
+        AND t.CARRIERID IS NOT NULL
+        ${brandFilter}
+        ${platformFilter}
+        ${selfFlagFilter}
+    `;
+
+    // Lite模式历史查询：保留同比/环比所需字段，减少不必要聚合
+    const buildLiteHistoricalQuery = () => `
+      SELECT 
+        COUNT(DISTINCT t.TSK_MERGE_NO) as total_orders,
+        0 as timeout_48h_orders,
+        COUNT(DISTINCT CASE WHEN t.DIS_STATUS = '55' THEN t.TSK_MERGE_NO END) as picked_orders,
+        COUNT(DISTINCT CASE WHEN t.DIS_STATUS IN ('70','80','85','92') THEN t.TSK_MERGE_NO END) as shipped_orders,
+        COUNT(DISTINCT CASE WHEN t.DIS_STATUS IN ('95','93') THEN t.TSK_MERGE_NO END) as delivered_orders,
+        COUNT(DISTINCT CASE WHEN t.DIS_STATUS = '40' THEN t.TSK_MERGE_NO END) as forwarded_orders,
+        COUNT(DISTINCT CASE WHEN t.DIS_STATUS IN ('100', '105') THEN t.TSK_MERGE_NO END) as returned_orders,
+        COUNT(DISTINCT CASE WHEN t.DIS_STATUS IN ('90', '110') THEN t.TSK_MERGE_NO END) as cancelled_orders,
+        ROUND(AVG(CASE WHEN t.SUM_SEND_TIME2 IS NOT NULL AND t.SUM_SEND_TIME2 > 0 THEN t.SUM_SEND_TIME2 END), 2) as avg_delivery_hours,
+        ROUND(AVG(CASE WHEN t.DIS_STATUS IN ('95','93') AND t.DISP_TIME IS NOT NULL AND t.DELIVERY_TIME IS NOT NULL 
+                      THEN (t.DELIVERY_TIME - t.DISP_TIME) * 24 END), 2) as avg_first_dispatch_hours,
+        ROUND(
+          COUNT(CASE WHEN t.DIS_STATUS IN ('95','93') AND t.DISP_TIME IS NOT NULL AND t.DELIVERY_TIME IS NOT NULL 
+                     AND (t.DELIVERY_TIME - t.DISP_TIME) * 24 <= 8 THEN 1 END) * 100.0 / 
+          NULLIF(COUNT(CASE WHEN t.DIS_STATUS IN ('95','93') AND t.DISP_TIME IS NOT NULL AND t.DELIVERY_TIME IS NOT NULL THEN 1 END), 0),
+          2
+        ) as first_dispatch_success_rate
       FROM APP_CMS.TSK_LIST_TASK t
       LEFT JOIN APP_CMS.VIEW_TSK_LIST_TASK v ON t.TSK_MERGE_NO = v.TSK_MERGE_NO
       WHERE t.WMS_OUTBOUND_TIME IS NOT NULL
@@ -457,22 +529,35 @@ router.get('/kpi', async (req, res) => {
         ${selfFlagFilter}
     `;
     
-    const queryStartTime = Date.now();
+      const queryStartTime = Date.now();
     
-    // 🚀 并行执行3个查询
-    const [currentResult, lastMonthResult, lastYearResult] = await Promise.all([
-      connection.execute(buildPeriodQuery(), currentParams),
-      connection.execute(buildPeriodQuery(), lastMonthParams),
-      connection.execute(buildPeriodQuery(), lastYearParams)
-    ]);
+    // Lite模式只查当前区间，避免历史并行聚合触发网关超时
+      const currentResult = await connection.execute(buildPeriodQuery(), currentParams);
+      let lastMonthData = [];
+      let lastYearData = [];
+
+      if (!liteMode) {
+        const [lastMonthResult, lastYearResult] = await Promise.all([
+          connection.execute(buildPeriodQuery(), lastMonthParams),
+          connection.execute(buildPeriodQuery(), lastYearParams)
+        ]);
+        lastMonthData = lastMonthResult.rows[0] || [];
+        lastYearData = lastYearResult.rows[0] || [];
+      } else {
+        const [lastMonthResult, lastYearResult] = await Promise.all([
+          connection.execute(buildLiteHistoricalQuery(), lastMonthParams),
+          connection.execute(buildLiteHistoricalQuery(), lastYearParams)
+        ]);
+        lastMonthData = lastMonthResult.rows[0] || [];
+        lastYearData = lastYearResult.rows[0] || [];
+        console.log('⚡ [KPI查询] Lite 模式使用轻量历史查询，保持同比/环比可用');
+      }
     
-    const queryEndTime = Date.now();
-    console.log(`✅ [KPI查询] 3个查询并行完成，耗时: ${queryEndTime - queryStartTime}ms`);
+      const queryEndTime = Date.now();
+      console.log(`✅ [KPI查询] ${liteMode ? 'Lite单查询' : '3查询组合'}完成，耗时: ${queryEndTime - queryStartTime}ms`);
     
     // 提取查询结果
-    const kpiData = currentResult.rows[0];
-    const lastMonthData = lastMonthResult.rows[0];
-    const lastYearData = lastYearResult.rows[0];
+      const kpiData = currentResult.rows[0] || [];
     
     // 🔥 详细打印历史数据用于验证
     console.log('\n' + '='.repeat(80));
@@ -608,7 +693,7 @@ router.get('/kpi', async (req, res) => {
         ${QueryUtils.getBrandNameColumn()},
         COUNT(DISTINCT t.TSK_MERGE_NO) as order_count,
         COUNT(DISTINCT CASE WHEN t.DIS_STATUS = '55' THEN t.TSK_MERGE_NO END) as picked_count,
-        COUNT(DISTINCT CASE WHEN t.DIS_STATUS = '70' THEN t.TSK_MERGE_NO END) as shipped_count,
+        COUNT(DISTINCT CASE WHEN t.DIS_STATUS IN ('70','80','85','92') THEN t.TSK_MERGE_NO END) as shipped_count,
         COUNT(DISTINCT CASE WHEN t.DIS_STATUS IN ('95','93') THEN t.TSK_MERGE_NO END) as delivered_count,
         COUNT(DISTINCT CASE WHEN t.DIS_STATUS = '40' THEN t.TSK_MERGE_NO END) as forwarded_count,
         COUNT(DISTINCT CASE WHEN t.DIS_STATUS IN ('100', '105') THEN t.TSK_MERGE_NO END) as returned_count,
@@ -659,12 +744,12 @@ router.get('/kpi', async (req, res) => {
     
     // 复制所有 brand 相关参数（支持 brand0, brand1, brand2, ... 或单个 brand）
     Object.keys(baseParams).forEach(key => {
-      if (key.startsWith('brand')) {
+      if (key.startsWith('brand') || key.startsWith('platform')) {
         brandQueryParams[key] = baseParams[key];
       }
     });
-    
-    if (platform && platform !== 'all') {
+
+    if (baseParams.platform) {
       brandQueryParams.platform = baseParams.platform;
     }
     if (baseParams.selfFlag) {
@@ -711,7 +796,7 @@ router.get('/kpi', async (req, res) => {
     const hasExplicitBrandFilter = Array.isArray(brand)
       ? brand.length > 0 && !brand.includes('all')
       : Boolean(brand && brand !== 'all');
-    const shouldSkipBrandHistoricalQuery = !Array.isArray(authorizedCustomerNos) && !hasExplicitBrandFilter;
+    const shouldSkipBrandHistoricalQuery = liteMode || (!Array.isArray(authorizedCustomerNos) && !hasExplicitBrandFilter);
 
     console.log('\n' + '='.repeat(80));
     if (shouldSkipBrandHistoricalQuery) {
@@ -724,131 +809,129 @@ router.get('/kpi', async (req, res) => {
     const brandHistoricalDataMap = {};
     
     if (!shouldSkipBrandHistoricalQuery) {
-      for (const brand of brandData) {
-      const brandCustomerno = brand.customerno;
-      
-      // 构建品牌历史数据查询SQL（不需要品牌JOIN，因为已经用CUSTOMERNO过滤）
-      const buildBrandHistoricalQuery = (periodRange) => `
-        SELECT 
-          COUNT(DISTINCT t.TSK_MERGE_NO) as total_orders,
-          COUNT(DISTINCT CASE WHEN t.DIS_STATUS = '40' THEN t.TSK_MERGE_NO END) as forwarded_orders,
-          COUNT(DISTINCT CASE WHEN t.DIS_STATUS IN ('100', '105') THEN t.TSK_MERGE_NO END) as returned_orders,
-          COUNT(DISTINCT CASE WHEN t.DIS_STATUS IN ('90', '110') THEN t.TSK_MERGE_NO END) as cancelled_orders,
-          ROUND(AVG(CASE WHEN t.SUM_SEND_TIME2 IS NOT NULL AND t.SUM_SEND_TIME2 > 0 THEN t.SUM_SEND_TIME2 END), 2) as avg_delivery_hours,
-          ROUND(
-            AVG(
-              CASE 
-                WHEN t.DIS_STATUS IN ('95','93') 
+      const brandCustomerNos = Array.from(new Set(
+        brandData.map(item => item.customerno).filter(Boolean)
+      ));
+
+      if (brandCustomerNos.length > 0) {
+        const brandPlaceholders = brandCustomerNos.map((_, i) => `:hisBrand_${i}`).join(', ');
+
+        const buildBulkHistoricalQuery = (periodFrom, periodTo) => `
+          SELECT 
+            t.CUSTOMERNO as customerno,
+            COUNT(DISTINCT t.TSK_MERGE_NO) as total_orders,
+            COUNT(DISTINCT CASE WHEN t.DIS_STATUS = '40' THEN t.TSK_MERGE_NO END) as forwarded_orders,
+            COUNT(DISTINCT CASE WHEN t.DIS_STATUS IN ('100', '105') THEN t.TSK_MERGE_NO END) as returned_orders,
+            COUNT(DISTINCT CASE WHEN t.DIS_STATUS IN ('90', '110') THEN t.TSK_MERGE_NO END) as cancelled_orders,
+            ROUND(AVG(CASE WHEN t.SUM_SEND_TIME2 IS NOT NULL AND t.SUM_SEND_TIME2 > 0 THEN t.SUM_SEND_TIME2 END), 2) as avg_delivery_hours,
+            ROUND(
+              AVG(
+                CASE 
+                  WHEN t.DIS_STATUS IN ('95','93') 
+                    AND v.DISP_TIME_T IS NOT NULL 
+                    AND v.DELIVERY_TIME_C IS NOT NULL
+                  THEN (TO_DATE(v.DELIVERY_TIME_C, 'YYYY-MM-DD HH24:MI:SS') - TO_DATE(v.DISP_TIME_T, 'YYYY-MM-DD HH24:MI:SS')) * 24
+                  ELSE NULL 
+                END
+              ), 
+              2
+            ) as avg_first_dispatch_hours,
+            ROUND(
+              COUNT(DISTINCT CASE 
+                WHEN t.DIS_STATUS IN ('95','93')
                   AND v.DISP_TIME_T IS NOT NULL 
                   AND v.DELIVERY_TIME_C IS NOT NULL
-                THEN (TO_DATE(v.DELIVERY_TIME_C, 'YYYY-MM-DD HH24:MI:SS') - TO_DATE(v.DISP_TIME_T, 'YYYY-MM-DD HH24:MI:SS')) * 24
-                ELSE NULL 
-              END
-            ), 
-            2
-          ) as avg_first_dispatch_hours,
-          ROUND(
-            COUNT(DISTINCT CASE 
-              WHEN t.DIS_STATUS IN ('95','93')
-                AND v.DISP_TIME_T IS NOT NULL 
-                AND v.DELIVERY_TIME_C IS NOT NULL
-                AND (TO_DATE(v.DELIVERY_TIME_C, 'YYYY-MM-DD HH24:MI:SS') - TO_DATE(v.DISP_TIME_T, 'YYYY-MM-DD HH24:MI:SS')) * 24 <= 8
-              THEN t.TSK_MERGE_NO 
-            END) * 100.0 / 
-            NULLIF(COUNT(DISTINCT CASE WHEN t.DIS_STATUS IN ('95','93') AND v.DISP_TIME_T IS NOT NULL AND v.DELIVERY_TIME_C IS NOT NULL THEN t.TSK_MERGE_NO END), 0), 
-            2
-          ) as first_dispatch_success_rate
-        FROM APP_CMS.TSK_LIST_TASK t
-        LEFT JOIN APP_CMS.VIEW_TSK_LIST_TASK v ON t.TSK_MERGE_NO = v.TSK_MERGE_NO
-        WHERE t.CUSTOMERNO = :brandCustomerno
-          AND t.WMS_OUTBOUND_TIME >= TO_DATE(:periodFrom, 'YYYY-MM-DD')
-          AND t.WMS_OUTBOUND_TIME < TO_DATE(:periodTo, 'YYYY-MM-DD') + INTERVAL '1' DAY
-          ${platformFilter}
-          ${selfFlagFilter}
-      `;
-      
-      try {
-        // 查询上月数据
+                  AND (TO_DATE(v.DELIVERY_TIME_C, 'YYYY-MM-DD HH24:MI:SS') - TO_DATE(v.DISP_TIME_T, 'YYYY-MM-DD HH24:MI:SS')) * 24 <= 8
+                THEN t.TSK_MERGE_NO 
+              END) * 100.0 / 
+              NULLIF(COUNT(DISTINCT CASE WHEN t.DIS_STATUS IN ('95','93') AND v.DISP_TIME_T IS NOT NULL AND v.DELIVERY_TIME_C IS NOT NULL THEN t.TSK_MERGE_NO END), 0), 
+              2
+            ) as first_dispatch_success_rate
+          FROM APP_CMS.TSK_LIST_TASK t
+          LEFT JOIN APP_CMS.VIEW_TSK_LIST_TASK v ON t.TSK_MERGE_NO = v.TSK_MERGE_NO
+          WHERE t.CUSTOMERNO IN (${brandPlaceholders})
+            AND t.WMS_OUTBOUND_TIME >= TO_DATE(:periodFrom, 'YYYY-MM-DD')
+            AND t.WMS_OUTBOUND_TIME < TO_DATE(:periodTo, 'YYYY-MM-DD') + INTERVAL '1' DAY
+            ${platformFilter}
+            ${selfFlagFilter}
+          GROUP BY t.CUSTOMERNO
+        `;
+
+        const commonHistoricalParams = {};
+        brandCustomerNos.forEach((no, i) => {
+          commonHistoricalParams[`hisBrand_${i}`] = no;
+        });
+        Object.keys(baseParams).forEach(key => {
+          if (key.startsWith('platform') || key === 'selfFlag') {
+            commonHistoricalParams[key] = baseParams[key];
+          }
+        });
+        if (baseParams.platform) {
+          commonHistoricalParams.platform = baseParams.platform;
+        }
+
         const lastMonthParams = {
-          brandCustomerno,
+          ...commonHistoricalParams,
           periodFrom: momRange.lastMonthFrom,
           periodTo: momRange.lastMonthTo
         };
-        if (platform && platform !== 'all') {
-          lastMonthParams.platform = baseParams.platform;
-        }
-        if (baseParams.selfFlag) {
-          lastMonthParams.selfFlag = baseParams.selfFlag;
-        }
-        
-        const lastMonthResult = await connection.execute(
-          buildBrandHistoricalQuery(momRange),
-          lastMonthParams
-        );
-        
-        // 查询去年同期数据
         const lastYearParams = {
-          brandCustomerno,
+          ...commonHistoricalParams,
           periodFrom: yoyRange.lastYearFrom,
           periodTo: yoyRange.lastYearTo
         };
-        if (platform && platform !== 'all') {
-          lastYearParams.platform = baseParams.platform;
-        }
-        if (baseParams.selfFlag) {
-          lastYearParams.selfFlag = baseParams.selfFlag;
-        }
-        
-        const lastYearResult = await connection.execute(
-          buildBrandHistoricalQuery(yoyRange),
-          lastYearParams
-        );
-        
-        const lastMonthData = lastMonthResult.rows[0] || [];
-        const lastYearData = lastYearResult.rows[0] || [];
-        
-        // 保存该品牌的历史数据
-        brandHistoricalDataMap[brandCustomerno] = {
-          lastMonth: {
-            totalOrders: lastMonthData[0] || 0,
-            forwardedOrders: lastMonthData[1] || 0,
-            returnedOrders: lastMonthData[2] || 0,
-            cancelledOrders: lastMonthData[3] || 0,
-            avgDeliveryHours: lastMonthData[4] || 0,
-            avgFirstDispatchHours: lastMonthData[5] || 0,
-            firstDispatchSuccessRate: lastMonthData[6] || 0,
-            performanceMetrics: {
-              avgDeliveryHours: lastMonthData[4] || 0,
-              avgFirstDispatchHours: lastMonthData[5] || 0,
-              firstDispatchSuccessRate: lastMonthData[6] || 0
+
+        const bulkHistoricalStart = Date.now();
+        const [lastMonthResult, lastYearResult] = await Promise.all([
+          connection.execute(buildBulkHistoricalQuery(momRange.lastMonthFrom, momRange.lastMonthTo), lastMonthParams),
+          connection.execute(buildBulkHistoricalQuery(yoyRange.lastYearFrom, yoyRange.lastYearTo), lastYearParams)
+        ]);
+        console.log(`✅ [品牌历史数据] 批量查询完成，耗时: ${Date.now() - bulkHistoricalStart}ms`);
+
+        const lastMonthByBrand = new Map();
+        const lastYearByBrand = new Map();
+
+        (lastMonthResult.rows || []).forEach(row => {
+          lastMonthByBrand.set(row[0], row);
+        });
+        (lastYearResult.rows || []).forEach(row => {
+          lastYearByBrand.set(row[0], row);
+        });
+
+        brandCustomerNos.forEach(brandCustomerno => {
+          const lastMonthData = lastMonthByBrand.get(brandCustomerno) || [];
+          const lastYearData = lastYearByBrand.get(brandCustomerno) || [];
+          brandHistoricalDataMap[brandCustomerno] = {
+            lastMonth: {
+              totalOrders: lastMonthData[1] || 0,
+              forwardedOrders: lastMonthData[2] || 0,
+              returnedOrders: lastMonthData[3] || 0,
+              cancelledOrders: lastMonthData[4] || 0,
+              avgDeliveryHours: lastMonthData[5] || 0,
+              avgFirstDispatchHours: lastMonthData[6] || 0,
+              firstDispatchSuccessRate: lastMonthData[7] || 0,
+              performanceMetrics: {
+                avgDeliveryHours: lastMonthData[5] || 0,
+                avgFirstDispatchHours: lastMonthData[6] || 0,
+                firstDispatchSuccessRate: lastMonthData[7] || 0
+              }
+            },
+            lastYear: {
+              totalOrders: lastYearData[1] || 0,
+              forwardedOrders: lastYearData[2] || 0,
+              returnedOrders: lastYearData[3] || 0,
+              cancelledOrders: lastYearData[4] || 0,
+              avgDeliveryHours: lastYearData[5] || 0,
+              avgFirstDispatchHours: lastYearData[6] || 0,
+              firstDispatchSuccessRate: lastYearData[7] || 0,
+              performanceMetrics: {
+                avgDeliveryHours: lastYearData[5] || 0,
+                avgFirstDispatchHours: lastYearData[6] || 0,
+                firstDispatchSuccessRate: lastYearData[7] || 0
+              }
             }
-          },
-          lastYear: {
-            totalOrders: lastYearData[0] || 0,
-            forwardedOrders: lastYearData[1] || 0,
-            returnedOrders: lastYearData[2] || 0,
-            cancelledOrders: lastYearData[3] || 0,
-            avgDeliveryHours: lastYearData[4] || 0,
-            avgFirstDispatchHours: lastYearData[5] || 0,
-            firstDispatchSuccessRate: lastYearData[6] || 0,
-            performanceMetrics: {
-              avgDeliveryHours: lastYearData[4] || 0,
-              avgFirstDispatchHours: lastYearData[5] || 0,
-              firstDispatchSuccessRate: lastYearData[6] || 0
-            }
-          }
-        };
-        
-        console.log(`✅ [品牌历史数据] ${brand.brandName} (${brandCustomerno}):`);
-        console.log(`   上月订单: ${lastMonthData[0] || 0}, 去年同期: ${lastYearData[0] || 0}`);
-        
-      } catch (error) {
-        console.error(`❌ [品牌历史数据] 查询失败 - ${brand.brandName}:`, error.message);
-        brandHistoricalDataMap[brandCustomerno] = {
-          lastMonth: { totalOrders: 0, forwardedOrders: 0, returnedOrders: 0, cancelledOrders: 0, avgDeliveryHours: 0, avgFirstDispatchHours: 0, firstDispatchSuccessRate: 0, performanceMetrics: {} },
-          lastYear: { totalOrders: 0, forwardedOrders: 0, returnedOrders: 0, cancelledOrders: 0, avgDeliveryHours: 0, avgFirstDispatchHours: 0, firstDispatchSuccessRate: 0, performanceMetrics: {} }
-        };
-      }
+          };
+        });
       }
     }
     
@@ -870,7 +953,7 @@ router.get('/kpi', async (req, res) => {
         COALESCE(v.PLATFORM_CLASS, '未知平台') as platform_class,
         COUNT(DISTINCT t.TSK_MERGE_NO) as order_count,
         COUNT(DISTINCT CASE WHEN t.DIS_STATUS = '55' THEN t.TSK_MERGE_NO END) as picked_count,
-        COUNT(DISTINCT CASE WHEN t.DIS_STATUS = '70' THEN t.TSK_MERGE_NO END) as shipped_count,
+        COUNT(DISTINCT CASE WHEN t.DIS_STATUS IN ('70','80','85','92') THEN t.TSK_MERGE_NO END) as shipped_count,
         COUNT(DISTINCT CASE WHEN t.DIS_STATUS IN ('95','93') THEN t.TSK_MERGE_NO END) as delivered_count,
         COUNT(DISTINCT CASE WHEN t.DIS_STATUS = '40' THEN t.TSK_MERGE_NO END) as forwarded_count,
         COUNT(DISTINCT CASE WHEN t.DIS_STATUS IN ('100', '105') THEN t.TSK_MERGE_NO END) as returned_count,
@@ -896,12 +979,12 @@ router.get('/kpi', async (req, res) => {
     const platformQueryParams = { dateFrom, dateTo };
     
     Object.keys(baseParams).forEach(key => {
-      if (key.startsWith('brand')) {
+      if (key.startsWith('brand') || key.startsWith('platform')) {
         platformQueryParams[key] = baseParams[key];
       }
     });
-    
-    if (platform && platform !== 'all') {
+
+    if (baseParams.platform) {
       platformQueryParams.platform = baseParams.platform;
     }
     if (baseParams.selfFlag) {
@@ -938,9 +1021,10 @@ router.get('/kpi', async (req, res) => {
     const courierQuery = `
       SELECT 
         t.CARRIERID as courier_id,
+        bc_carrier.COMPANY_ABNAME as courier_name,
         COUNT(DISTINCT t.TSK_MERGE_NO) as order_count,
         COUNT(DISTINCT CASE WHEN t.DIS_STATUS = '55' THEN t.TSK_MERGE_NO END) as picked_count,
-        COUNT(DISTINCT CASE WHEN t.DIS_STATUS = '70' THEN t.TSK_MERGE_NO END) as shipped_count,
+        COUNT(DISTINCT CASE WHEN t.DIS_STATUS IN ('70','80','85','92') THEN t.TSK_MERGE_NO END) as shipped_count,
         COUNT(DISTINCT CASE WHEN t.DIS_STATUS IN ('95','93') THEN t.TSK_MERGE_NO END) as delivered_count,
         COUNT(DISTINCT CASE WHEN t.DIS_STATUS = '40' THEN t.TSK_MERGE_NO END) as forwarded_count,
         COUNT(DISTINCT CASE WHEN t.DIS_STATUS IN ('100', '105') THEN t.TSK_MERGE_NO END) as returned_count,
@@ -960,12 +1044,13 @@ router.get('/kpi', async (req, res) => {
         ) * 100.0 / NULLIF(COUNT(*), 0), 2) as timeout_48h_rate
       FROM APP_CMS.TSK_LIST_TASK t
       LEFT JOIN APP_CMS.VIEW_TSK_LIST_TASK v ON t.TSK_MERGE_NO = v.TSK_MERGE_NO
+      LEFT JOIN APP_CMS.BAS_COMPANY bc_carrier ON t.CARRIERID = bc_carrier.COMPANY_SYSID
       ${QueryUtils.BASE_WHERE_CONDITIONS}
         AND t.CARRIERID IS NOT NULL
         ${brandFilter}
         ${platformFilter}
         ${selfFlagFilter}
-      GROUP BY t.CARRIERID
+      GROUP BY t.CARRIERID, bc_carrier.COMPANY_ABNAME
       HAVING COUNT(DISTINCT t.TSK_MERGE_NO) > 0
       ORDER BY order_count DESC
     `;
@@ -974,12 +1059,12 @@ router.get('/kpi', async (req, res) => {
     const courierQueryParams = { dateFrom, dateTo };
     
     Object.keys(baseParams).forEach(key => {
-      if (key.startsWith('brand')) {
+      if (key.startsWith('brand') || key.startsWith('platform')) {
         courierQueryParams[key] = baseParams[key];
       }
     });
-    
-    if (platform && platform !== 'all') {
+
+    if (baseParams.platform) {
       courierQueryParams.platform = baseParams.platform;
     }
     if (baseParams.selfFlag) {
@@ -992,64 +1077,73 @@ router.get('/kpi', async (req, res) => {
     console.log(`✅ [快递商分析] 查询完成，耗时: ${courierEndTime - courierStartTime}ms`);
     
     // 计算快递公司总订单数用于百分比计算
-    const totalCourierOrders = courierResult.rows.reduce((sum, row) => sum + (row[1] || 0), 0);
+    const totalCourierOrders = courierResult.rows.reduce((sum, row) => sum + (row[2] || 0), 0);
     
     const courierData = courierResult.rows.map(row => ({
       carrierId: row[0] || 'UNKNOWN',
-      orderCount: row[1] || 0,
-      pickedCount: row[2] || 0,
-      shippedCount: row[3] || 0,
-      deliveredCount: row[4] || 0,
-      forwardedCount: row[5] || 0,
-      returnedCount: row[6] || 0,
-      cancelledCount: row[7] || 0,
-      exceptionCount: row[8] || 0,
-      avgDeliveryTime: row[9] || 0,
-      timeout48hRate: row[10] || 0,
+      carrierName: row[1] || row[0] || 'UNKNOWN',
+      orderCount: row[2] || 0,
+      pickedCount: row[3] || 0,
+      shippedCount: row[4] || 0,
+      deliveredCount: row[5] || 0,
+      forwardedCount: row[6] || 0,
+      returnedCount: row[7] || 0,
+      cancelledCount: row[8] || 0,
+      exceptionCount: row[9] || 0,
+      avgDeliveryTime: row[10] || 0,
+      timeout48hRate: row[11] || 0,
       // 计算各状态比率
-      pickedRate: (row[1] && row[2]) ? Math.round((row[2] / row[1]) * 100 * 100) / 100 : 0,
-      shippedRate: (row[1] && row[3]) ? Math.round((row[3] / row[1]) * 100 * 100) / 100 : 0,
-      deliveryRate: (row[1] && row[4]) ? Math.round((row[4] / row[1]) * 100 * 100) / 100 : 0,
-      forwardedRate: (row[1] && row[5]) ? Math.round((row[5] / row[1]) * 100 * 100) / 100 : 0,
-      returnedRate: (row[1] && row[6]) ? Math.round((row[6] / row[1]) * 100 * 100) / 100 : 0,
-      cancelledRate: (row[1] && row[7]) ? Math.round((row[7] / row[1]) * 100 * 100) / 100 : 0,
-      exceptionRate: (row[1] && row[8]) ? Math.round((row[8] / row[1]) * 100 * 100) / 100 : 0,
+      pickedRate: (row[2] && row[3]) ? Math.round((row[3] / row[2]) * 100 * 100) / 100 : 0,
+      shippedRate: (row[2] && row[4]) ? Math.round((row[4] / row[2]) * 100 * 100) / 100 : 0,
+      deliveryRate: (row[2] && row[5]) ? Math.round((row[5] / row[2]) * 100 * 100) / 100 : 0,
+      forwardedRate: (row[2] && row[6]) ? Math.round((row[6] / row[2]) * 100 * 100) / 100 : 0,
+      returnedRate: (row[2] && row[7]) ? Math.round((row[7] / row[2]) * 100 * 100) / 100 : 0,
+      cancelledRate: (row[2] && row[8]) ? Math.round((row[8] / row[2]) * 100 * 100) / 100 : 0,
+      exceptionRate: (row[2] && row[9]) ? Math.round((row[9] / row[2]) * 100 * 100) / 100 : 0,
       // 计算在所有快递公司中的占比
-      percentage: totalCourierOrders > 0 ? Math.round(((row[1] || 0) / totalCourierOrders * 100) * 100) / 100 : 0
+      percentage: totalCourierOrders > 0 ? Math.round(((row[2] || 0) / totalCourierOrders * 100) * 100) / 100 : 0
     }));
 
-    // 🔥 品牌×平台交叉分析查询 - 按PLATFORM_CLASS汇总，而不是PLATFORM详细值
-    // 🔥 修复：复制所有品牌参数（支持多品牌数组）
-    const crossAnalysisQueryParams = {
-      dateFrom: dateFrom,
-      dateTo: dateTo
-    };
-    
-    // 复制所有 brand 相关参数（支持 brand0, brand1, brand2, ... 或单个 brand）
-    Object.keys(baseParams).forEach(key => {
-      if (key.startsWith('brand') || key.startsWith('userBrand')) {
-        crossAnalysisQueryParams[key] = baseParams[key];
+      let crossAnalysisData = [];
+      if (liteMode) {
+      console.log('⏭️ [交叉分析] Lite 模式已启用，跳过品牌×平台交叉查询以避免网关超时');
+      } else {
+      // 🔥 品牌×平台交叉分析查询 - 按PLATFORM_CLASS汇总，而不是PLATFORM详细值
+      // 🔥 修复：复制所有品牌参数（支持多品牌数组）
+      const crossAnalysisQueryParams = {
+        dateFrom: dateFrom,
+        dateTo: dateTo
+      };
+      
+      // 复制所有 brand 相关参数（支持 brand0, brand1, brand2, ... 或单个 brand）
+      Object.keys(baseParams).forEach(key => {
+        if (key.startsWith('brand') || key.startsWith('userBrand')) {
+          crossAnalysisQueryParams[key] = baseParams[key];
+        }
+      });
+      
+      Object.keys(baseParams).forEach(key => {
+        if (key.startsWith('platform')) {
+          crossAnalysisQueryParams[key] = baseParams[key];
+        }
+      });
+      if (baseParams.platform) {
+        crossAnalysisQueryParams.platform = baseParams.platform;
       }
-    });
-    
-    // 🔥 修复：从baseParams获取platform参数（buildFiltersAsync已添加到baseParams）
-    if (platform && platform !== 'all' && baseParams.platform) {
-      crossAnalysisQueryParams.platform = baseParams.platform;
-    }
-    
-    // 🔥 修复：从baseParams获取selfFlag参数（buildFiltersAsync已添加到baseParams）
-    if (baseParams.selfFlag) {
-      crossAnalysisQueryParams.selfFlag = baseParams.selfFlag;
-    }
+      
+      // 🔥 修复：从baseParams获取selfFlag参数（buildFiltersAsync已添加到baseParams）
+      if (baseParams.selfFlag) {
+        crossAnalysisQueryParams.selfFlag = baseParams.selfFlag;
+      }
 
-    const crossAnalysisQuery = `
+      const crossAnalysisQuery = `
       SELECT 
         t.CUSTOMERNO,
         ${QueryUtils.getBrandNameColumn()},
         COALESCE(v.PLATFORM_CLASS, '未知平台') as platform_class,
         COUNT(DISTINCT t.TSK_MERGE_NO) as total_orders,
         COUNT(DISTINCT CASE WHEN t.DIS_STATUS = '55' THEN t.TSK_MERGE_NO END) as picked_orders,
-        COUNT(DISTINCT CASE WHEN t.DIS_STATUS = '70' THEN t.TSK_MERGE_NO END) as shipped_orders,
+        COUNT(DISTINCT CASE WHEN t.DIS_STATUS IN ('70','80','85','92') THEN t.TSK_MERGE_NO END) as shipped_orders,
         COUNT(DISTINCT CASE WHEN t.DIS_STATUS IN ('95','93') THEN t.TSK_MERGE_NO END) as delivered_orders,
         COUNT(DISTINCT CASE WHEN t.DIS_STATUS = '40' THEN t.TSK_MERGE_NO END) as forwarded_orders,
         COUNT(DISTINCT CASE WHEN t.DIS_STATUS IN ('100', '105') THEN t.TSK_MERGE_NO END) as returned_orders,
@@ -1103,45 +1197,46 @@ router.get('/kpi', async (req, res) => {
       ORDER BY brand_name, total_orders DESC
     `;
 
-    console.log('🔄 [交叉分析] 执行品牌×平台交叉查询（从VIEW_TSK_LIST_TASK获取PLATFORM_CLASS）');
-    console.log('📊 [交叉分析] brandFilter:', brandFilter);
-    console.log('📊 [交叉分析] platformFilter:', platformFilter);
-    
-    const crossAnalysisStartTime = Date.now();
-    const crossAnalysisResult = await connection.execute(crossAnalysisQuery, crossAnalysisQueryParams);
-    const crossAnalysisEndTime = Date.now();
-    
-    console.log(`✅ [交叉分析] 查询完成，耗时: ${crossAnalysisEndTime - crossAnalysisStartTime}ms`);
-    console.log('✅ [交叉分析] 查询结果条数:', crossAnalysisResult.rows.length);
-    
-    // 🔍 调试：打印第一行原始数据
-    if (crossAnalysisResult.rows.length > 0) {
-      console.log('🔍 [交叉分析] 第一行原始数据:', crossAnalysisResult.rows[0]);
-      console.log('🔍 [交叉分析] 字段索引映射:');
-      console.log('  row[10] = avgDeliveryTime:', crossAnalysisResult.rows[0][10]);
-      console.log('  row[11] = firstDispatchSuccessRate:', crossAnalysisResult.rows[0][11]);
-      console.log('  row[12] = avgFirstDispatchHours:', crossAnalysisResult.rows[0][12]);
-      console.log('  row[13] = avgDeliveryHours:', crossAnalysisResult.rows[0][13]);
-    }
-    
-    // 处理查询结果 - platformClass已经是平台显示名称，直接使用
-    const crossAnalysisData = crossAnalysisResult.rows.map(row => ({
-      customerno: row[0],
-      brandName: row[1],
-      platformClass: row[2] || '未知平台',  // 平台名称（如 天猫, 京东, 抖音）- 直接来自视图
-      totalOrders: row[3] || 0,
-      pickedOrders: row[4] || 0,
-      shippedOrders: row[5] || 0,
-      deliveredOrders: row[6] || 0,
-      forwardedOrders: row[7] || 0,
-      returnedOrders: row[8] || 0,
-      cancelledOrders: row[9] || 0,
-      avgDeliveryTime: row[10] || 0,
-      // 🔥 新增：效率指标
-      firstDispatchSuccessRate: row[11] || 0,  // 首派成功率（%）
-      avgFirstDispatchHours: row[12] || 0,      // 平均首派时长（小时）
-      avgDeliveryHours: row[13] || 0            // 平均签收时长（小时）
-    }));
+      console.log('🔄 [交叉分析] 执行品牌×平台交叉查询（从VIEW_TSK_LIST_TASK获取PLATFORM_CLASS）');
+      console.log('📊 [交叉分析] brandFilter:', brandFilter);
+      console.log('📊 [交叉分析] platformFilter:', platformFilter);
+      
+      const crossAnalysisStartTime = Date.now();
+      const crossAnalysisResult = await connection.execute(crossAnalysisQuery, crossAnalysisQueryParams);
+      const crossAnalysisEndTime = Date.now();
+      
+      console.log(`✅ [交叉分析] 查询完成，耗时: ${crossAnalysisEndTime - crossAnalysisStartTime}ms`);
+      console.log('✅ [交叉分析] 查询结果条数:', crossAnalysisResult.rows.length);
+      
+      // 🔍 调试：打印第一行原始数据
+      if (crossAnalysisResult.rows.length > 0) {
+        console.log('🔍 [交叉分析] 第一行原始数据:', crossAnalysisResult.rows[0]);
+        console.log('🔍 [交叉分析] 字段索引映射:');
+        console.log('  row[10] = avgDeliveryTime:', crossAnalysisResult.rows[0][10]);
+        console.log('  row[11] = firstDispatchSuccessRate:', crossAnalysisResult.rows[0][11]);
+        console.log('  row[12] = avgFirstDispatchHours:', crossAnalysisResult.rows[0][12]);
+        console.log('  row[13] = avgDeliveryHours:', crossAnalysisResult.rows[0][13]);
+      }
+      
+      // 处理查询结果 - platformClass已经是平台显示名称，直接使用
+      crossAnalysisData = crossAnalysisResult.rows.map(row => ({
+        customerno: row[0],
+        brandName: row[1],
+        platformClass: row[2] || '未知平台',  // 平台名称（如 天猫, 京东, 抖音）- 直接来自视图
+        totalOrders: row[3] || 0,
+        pickedOrders: row[4] || 0,
+        shippedOrders: row[5] || 0,
+        deliveredOrders: row[6] || 0,
+        forwardedOrders: row[7] || 0,
+        returnedOrders: row[8] || 0,
+        cancelledOrders: row[9] || 0,
+        avgDeliveryTime: row[10] || 0,
+        // 🔥 新增：效率指标
+        firstDispatchSuccessRate: row[11] || 0,  // 首派成功率（%）
+        avgFirstDispatchHours: row[12] || 0,      // 平均首派时长（小时）
+        avgDeliveryHours: row[13] || 0            // 平均签收时长（小时）
+      }));
+      }
     
     // 🔍 调试：打印处理后的第一条数据
     if (crossAnalysisData.length > 0) {
@@ -1194,12 +1289,12 @@ router.get('/kpi', async (req, res) => {
     
     // 🔥 修复：复制所有品牌参数（支持多品牌数组）
     Object.keys(baseParams).forEach(key => {
-      if (key.startsWith('brand') || key.startsWith('userBrand')) {
+      if (key.startsWith('brand') || key.startsWith('userBrand') || key.startsWith('platform')) {
         exceptionQueryParams[key] = baseParams[key];
       }
     });
-    
-    if (platform && platform !== 'all') {
+
+    if (baseParams.platform) {
       exceptionQueryParams.platform = baseParams.platform;
     }
 
@@ -1231,9 +1326,9 @@ router.get('/kpi', async (req, res) => {
           THEN 1 
         END) as delivery_timeout_count,
         
-        -- 超48H未更新：IS48H_FLAG字段值存在且为'Y'的订单
+        -- 超48H未更新：视图IS_48H='Y'且视图状态不属于已结束状态的订单
         COUNT(CASE 
-          WHEN t.IS48H_FLAG = 'Y' 
+          WHEN ${buildNoUpdate48hCondition('v.IS_48H', 'v.DIS_STATUS')} 
           THEN 1 
         END) as update_timeout_count
         
@@ -1262,70 +1357,71 @@ router.get('/kpi', async (req, res) => {
       noUpdate48h: exceptionData[3] || 0          // 超48H未更新
     };
 
-    console.log('📊 数据汇总完成（含交叉分析和异常监控）');
+      console.log('📊 数据汇总完成（含交叉分析和异常监控）');
 
-    // 返回完整的KPI数据，包含快递公司统计、交叉分析数据、异常监控统计和同比环比数据
-    const response = {
-      success: true,
-      data: {
-        kpi: {
-          totalOrders: kpiData[0] || 0,
-          timeout48hOrders: kpiData[1] || 0,
-          pickedOrders: kpiData[2] || 0,
-          shippedOrders: kpiData[3] || 0,
-          deliveredOrders: kpiData[4] || 0,
-          forwardedOrders: kpiData[5] || 0,
-          returnedOrders: kpiData[6] || 0,
-          cancelledOrders: kpiData[7] || 0,
-          avgDeliveryHours: kpiData[8] || 0,
-          avgFirstDispatchHours: kpiData[9] || 0,
-          firstDispatchSuccessRate: kpiData[10] || 0,
-          pickedRate: kpiData[11] || 0,
-          shippedRate: kpiData[12] || 0,
-          deliveryRate: kpiData[13] || 0,
-          exceptionRate: kpiData[14] || 0,
-          timeout48hRate: kpiData[15] || 0,
-          // 🔥 新增：历史数据和同比环比增长率
-          lastMonthOrders: historicalData.lastMonth.totalOrders,
-          lastYearOrders: historicalData.lastYear.totalOrders,
-          momGrowth: momGrowthRates.totalOrders,
-          yoyGrowth: yoyGrowthRates.totalOrders,
-          // 🔥 新增：各指标的同比环比数据
-          growthRates: {
-            totalOrders: { mom: momGrowthRates.totalOrders, yoy: yoyGrowthRates.totalOrders },
-            forwardedOrders: { mom: momGrowthRates.forwardedOrders, yoy: yoyGrowthRates.forwardedOrders },
-            returnedOrders: { mom: momGrowthRates.returnedOrders, yoy: yoyGrowthRates.returnedOrders },
-            cancelledOrders: { mom: momGrowthRates.cancelledOrders, yoy: yoyGrowthRates.cancelledOrders },
-            avgDeliveryHours: { mom: momGrowthRates.avgDeliveryHours, yoy: yoyGrowthRates.avgDeliveryHours },
-            avgFirstDispatchHours: { mom: momGrowthRates.avgFirstDispatchHours, yoy: yoyGrowthRates.avgFirstDispatchHours },
-            firstDispatchSuccessRate: { mom: momGrowthRates.firstDispatchSuccessRate, yoy: yoyGrowthRates.firstDispatchSuccessRate }
-          }
+      return {
+        success: true,
+        data: {
+          kpi: {
+            totalOrders: kpiData[0] || 0,
+            timeout48hOrders: kpiData[1] || 0,
+            pickedOrders: kpiData[2] || 0,
+            shippedOrders: kpiData[3] || 0,
+            deliveredOrders: kpiData[4] || 0,
+            forwardedOrders: kpiData[5] || 0,
+            returnedOrders: kpiData[6] || 0,
+            cancelledOrders: kpiData[7] || 0,
+            avgDeliveryHours: kpiData[8] || 0,
+            avgFirstDispatchHours: kpiData[9] || 0,
+            firstDispatchSuccessRate: kpiData[10] || 0,
+            pickedRate: kpiData[11] || 0,
+            shippedRate: kpiData[12] || 0,
+            deliveryRate: kpiData[13] || 0,
+            exceptionRate: kpiData[14] || 0,
+            timeout48hRate: kpiData[15] || 0,
+            lastMonthOrders: historicalData.lastMonth.totalOrders,
+            lastYearOrders: historicalData.lastYear.totalOrders,
+            momGrowth: momGrowthRates.totalOrders,
+            yoyGrowth: yoyGrowthRates.totalOrders,
+            growthRates: {
+              totalOrders: { mom: momGrowthRates.totalOrders, yoy: yoyGrowthRates.totalOrders },
+              forwardedOrders: { mom: momGrowthRates.forwardedOrders, yoy: yoyGrowthRates.forwardedOrders },
+              returnedOrders: { mom: momGrowthRates.returnedOrders, yoy: yoyGrowthRates.returnedOrders },
+              cancelledOrders: { mom: momGrowthRates.cancelledOrders, yoy: yoyGrowthRates.cancelledOrders },
+              avgDeliveryHours: { mom: momGrowthRates.avgDeliveryHours, yoy: yoyGrowthRates.avgDeliveryHours },
+              avgFirstDispatchHours: { mom: momGrowthRates.avgFirstDispatchHours, yoy: yoyGrowthRates.avgFirstDispatchHours },
+              firstDispatchSuccessRate: { mom: momGrowthRates.firstDispatchSuccessRate, yoy: yoyGrowthRates.firstDispatchSuccessRate }
+            }
+          },
+          brandDistribution: brandData,
+          platformDistribution: platformData,
+          courierDistribution: courierData,
+          crossAnalysisData: crossAnalysisData,
+          exceptionStats: exceptionsStatistics,
+          historicalData: historicalData
         },
-        brandDistribution: brandData,
-        platformDistribution: platformData,
-        courierDistribution: courierData, // 🔥 新增：快递公司分布数据
-        crossAnalysisData: crossAnalysisData, // 🔥 新增：品牌×平台交叉分析数据
-        exceptionStats: exceptionsStatistics, // 🔥 新增：专门的异常监控统计数据
-        // 🔥 新增：完整的历史数据，支持前端详细分析
-        historicalData: historicalData
-      },
-      timestamp: new Date().toISOString(),
-      filters: {
-        dateFrom: dateFrom,
-        dateTo: dateTo,
-        brand: brand || 'all',
-        platform: platform || 'all'
-      }
-    };
-
-    kpiResponseCache.set(kpiCacheKey, {
-      timestamp: Date.now(),
-      payload: response
+        timestamp: new Date().toISOString(),
+        filters: {
+          dateFrom: dateFrom,
+          dateTo: dateTo,
+          brand: brand || 'all',
+          platform: platform || 'all',
+          mode: liteMode ? 'lite' : 'full'
+        }
+      };
     });
 
     res.json(response);
 
   } catch (error) {
+    if (kpiCacheKey && isOverviewDbPressureError(error)) {
+      const stalePayload = getOverviewStaleCache(kpiCacheKey);
+      if (stalePayload) {
+        console.warn('⚠️ [KPI查询] 数据库连接紧张，返回过期缓存兜底结果');
+        res.setHeader('X-Overview-Cache', 'stale');
+        return res.json(buildStaleOverviewResponse(stalePayload, error.code || 'db-pressure'));
+      }
+    }
     console.error('❌ [KPI查询] 查询失败:', error);
     return sendRouteError(res, req, error, { fallbackError: 'KPI数据查询失败' });
   } finally {
@@ -1345,6 +1441,7 @@ router.get('/kpi', async (req, res) => {
  */
 router.get('/shipped-transfer', async (req, res) => {
   let connection;
+  const cacheKey = buildOverviewCacheKey(req, 'shipped-transfer');
 
   try {
     const { dateFrom, dateTo, brand, platform, selfFlag } = req.query;
@@ -1368,6 +1465,11 @@ router.get('/shipped-transfer', async (req, res) => {
         error: '日期格式无效',
         details: { expectedFormat: 'YYYY-MM-DD' }
       });
+    }
+
+    const cached = getOverviewCache(cacheKey);
+    if (cached) {
+      return res.json(cached);
     }
 
     const requestedBrands = normalizeBrandValues(brand);
@@ -1428,7 +1530,7 @@ router.get('/shipped-transfer', async (req, res) => {
           SELECT 1
           FROM APP_CMS.VIEW_TSK_TRACKING_LOG l
           WHERE l.TSK_MERGE_NO = b.TSK_MERGE_NO
-            AND l.TO_SO_STATUS = '70'
+            AND l.TO_SO_STATUS IN ('70','80','85','92')
             AND (
               (COALESCE(l.CARRIERID, b.CARRIERID) = 'SF'
                 AND l.TRACKING_DESCR LIKE '%苏州市%'
@@ -1475,6 +1577,7 @@ router.get('/shipped-transfer', async (req, res) => {
       }
     };
 
+    setOverviewCache(cacheKey, response);
     res.json(response);
   } catch (error) {
     console.error('❌ [Shipped Transfer] 查询失败:', error);
@@ -1496,6 +1599,7 @@ router.get('/shipped-transfer', async (req, res) => {
  */
 router.get('/status-flow-analysis', async (req, res) => {
   let connection;
+  const cacheKey = buildOverviewCacheKey(req, 'status-flow-analysis');
   
   try {
     const { dateFrom, dateTo, brand, platform, selfFlag } = req.query;
@@ -1520,6 +1624,11 @@ router.get('/status-flow-analysis', async (req, res) => {
         error: '日期格式无效',
         details: { expectedFormat: 'YYYY-MM-DD' }
       });
+    }
+
+    const cached = getOverviewCache(cacheKey);
+    if (cached) {
+      return res.json(cached);
     }
 
     connection = await getConnection();
@@ -1574,12 +1683,13 @@ router.get('/status-flow-analysis', async (req, res) => {
     const flowQueryParams = { dateFrom, dateTo };
     
     Object.keys(baseParams).forEach(key => {
-      if (key.startsWith('brand')) {
+      if (key.startsWith('brand') || key.startsWith('platform')) {
         flowQueryParams[key] = baseParams[key];
       }
     });
-    
-    if (platform && platform !== 'all') {
+
+    // 保留单一 platform 值（如果存在），以兼容旧代码路径
+    if (baseParams.platform) {
       flowQueryParams.platform = baseParams.platform;
     }
     if (baseParams.selfFlag) {
@@ -1665,6 +1775,8 @@ router.get('/status-flow-analysis', async (req, res) => {
       }
     };
 
+    setOverviewCache(cacheKey, response);
+    setOverviewCache(cacheKey, response);
     res.json(response);
 
   } catch (error) {
@@ -1690,12 +1802,14 @@ router.get('/status-flow-analysis', async (req, res) => {
  */
 router.get('/flow-analysis', async (req, res) => {
   let connection;
+  const cacheKey = buildOverviewCacheKey(req, 'flow-analysis');
   
   try {
-    const { dateFrom, dateTo, brand, platform, selfFlag } = req.query;
+    const { dateFrom, dateTo, brand, platform, selfFlag, lite } = req.query;
+    const liteMode = String(lite || '').toLowerCase() === '1' || String(lite || '').toLowerCase() === 'true';
     const authorizedCustomerNos = getAuthorizedCustomerNos(req.user);
     
-    console.log('🔄 [品牌×快递商流向分析] 收到请求参数:', { dateFrom, dateTo, brand, platform, selfFlag, authorizedCustomerNos });
+    console.log('🔄 [品牌×快递商流向分析] 收到请求参数:', { dateFrom, dateTo, brand, platform, selfFlag, liteMode, authorizedCustomerNos });
     
     // 参数验证
     if (!dateFrom || !dateTo) {
@@ -1716,21 +1830,58 @@ router.get('/flow-analysis', async (req, res) => {
       });
     }
 
-    connection = await getConnection();
-    
-    // 基础参数
-    const baseParams = {
-      dateFrom: dateFrom,
-      dateTo: dateTo
-    };
-    
-    const { brandFilter, platformFilter, selfFlagFilter } = await QueryUtils.buildFiltersAsync(baseParams, brand, platform, selfFlag, authorizedCustomerNos);
+    const cached = getOverviewCache(cacheKey);
+    if (cached) {
+      return res.json(cached);
+    }
+
+    const response = await executeOverviewCached(cacheKey, async () => {
+      connection = await getConnection();
+      
+      // 基础参数
+      const baseParams = {
+        dateFrom: dateFrom,
+        dateTo: dateTo
+      };
+      
+      const { brandFilter, platformFilter, selfFlagFilter } = await QueryUtils.buildFiltersAsync(baseParams, brand, platform, selfFlag, authorizedCustomerNos);
 
     // 🔥 核心查询：品牌×快递商×异常分类流向分析（✅ 从数据库查询品牌名称）
-    const flowAnalysisQuery = `
+    const flowAnalysisQuery = liteMode ? `
       SELECT 
         ${QueryUtils.getBrandNameColumn()},
         t.CARRIERID as courier_id,
+        bc_carrier.COMPANY_ABNAME as courier_name,
+        COUNT(*) as total_orders,
+        SUM(CASE WHEN ${QueryUtils.EXCEPTION_SQL_FRAGMENTS.PICKUP_TIMEOUT} THEN 1 ELSE 0 END) as pickup_timeout_orders,
+        SUM(CASE WHEN ${QueryUtils.EXCEPTION_SQL_FRAGMENTS.SHIPPING_TIMEOUT} THEN 1 ELSE 0 END) as shipping_timeout_orders,
+        SUM(CASE WHEN ${QueryUtils.EXCEPTION_SQL_FRAGMENTS.DELIVERY_TIMEOUT} THEN 1 ELSE 0 END) as delivery_timeout_orders,
+        SUM(CASE WHEN ${QueryUtils.EXCEPTION_SQL_FRAGMENTS.NO_UPDATE_48H} THEN 1 ELSE 0 END) as update_timeout_orders,
+        SUM(CASE WHEN t.DIS_STATUS = '00' THEN 1 ELSE 0 END) as outbound_orders,
+        SUM(CASE WHEN t.DIS_STATUS = '55' THEN 1 ELSE 0 END) as picked_orders,
+        SUM(CASE WHEN t.DIS_STATUS IN ('70','80','85','92') THEN 1 ELSE 0 END) as shipped_orders,
+        SUM(CASE WHEN t.DIS_STATUS IN ('95','93') THEN 1 ELSE 0 END) as delivered_orders,
+        SUM(CASE WHEN t.DIS_STATUS = '40' THEN 1 ELSE 0 END) as forwarded_orders,
+        SUM(CASE WHEN t.DIS_STATUS IN ('100', '105') THEN 1 ELSE 0 END) as returned_orders,
+        SUM(CASE WHEN t.DIS_STATUS IN ('90', '110') THEN 1 ELSE 0 END) as cancelled_orders,
+        ROUND(AVG(CASE WHEN t.SUM_SEND_TIME2 IS NOT NULL AND t.SUM_SEND_TIME2 > 0 THEN t.SUM_SEND_TIME2 END), 2) as avg_delivery_time
+      FROM APP_CMS.TSK_LIST_TASK t
+      LEFT JOIN APP_CMS.VIEW_TSK_LIST_TASK v ON t.TSK_MERGE_NO = v.TSK_MERGE_NO
+      ${QueryUtils.getBrandJoin('t')}
+      LEFT JOIN APP_CMS.BAS_COMPANY bc_carrier ON t.CARRIERID = bc_carrier.COMPANY_SYSID
+      ${QueryUtils.BASE_WHERE_CONDITIONS}
+        AND t.CARRIERID IS NOT NULL
+        ${brandFilter}
+        ${platformFilter}
+        ${selfFlagFilter}
+      GROUP BY t.CUSTOMERNO, bc_brand.COMPANY_ABNAME, t.CARRIERID, bc_carrier.COMPANY_ABNAME
+      HAVING COUNT(*) > 0
+      ORDER BY brand_name, total_orders DESC
+    ` : `
+      SELECT 
+        ${QueryUtils.getBrandNameColumn()},
+        t.CARRIERID as courier_id,
+        bc_carrier.COMPANY_ABNAME as courier_name,
         COUNT(DISTINCT t.TSK_MERGE_NO) as total_orders,
         -- 四种核心异常类型统计
         COUNT(DISTINCT CASE WHEN ${QueryUtils.EXCEPTION_SQL_FRAGMENTS.PICKUP_TIMEOUT} THEN t.TSK_MERGE_NO END) as pickup_timeout_orders,
@@ -1740,7 +1891,7 @@ router.get('/flow-analysis', async (req, res) => {
         -- 各订单状态统计
         COUNT(DISTINCT CASE WHEN t.DIS_STATUS = '00' THEN t.TSK_MERGE_NO END) as outbound_orders,
         COUNT(DISTINCT CASE WHEN t.DIS_STATUS = '55' THEN t.TSK_MERGE_NO END) as picked_orders,
-        COUNT(DISTINCT CASE WHEN t.DIS_STATUS = '70' THEN t.TSK_MERGE_NO END) as shipped_orders,
+        COUNT(DISTINCT CASE WHEN t.DIS_STATUS IN ('70','80','85','92') THEN t.TSK_MERGE_NO END) as shipped_orders,
         COUNT(DISTINCT CASE WHEN t.DIS_STATUS IN ('95','93') THEN t.TSK_MERGE_NO END) as delivered_orders,
         COUNT(DISTINCT CASE WHEN t.DIS_STATUS = '40' THEN t.TSK_MERGE_NO END) as forwarded_orders,
         COUNT(DISTINCT CASE WHEN t.DIS_STATUS IN ('100', '105') THEN t.TSK_MERGE_NO END) as returned_orders,
@@ -1750,60 +1901,63 @@ router.get('/flow-analysis', async (req, res) => {
       FROM APP_CMS.TSK_LIST_TASK t
       LEFT JOIN APP_CMS.VIEW_TSK_LIST_TASK v ON t.TSK_MERGE_NO = v.TSK_MERGE_NO
       ${QueryUtils.getBrandJoin('t')}
+      LEFT JOIN APP_CMS.BAS_COMPANY bc_carrier ON t.CARRIERID = bc_carrier.COMPANY_SYSID
       ${QueryUtils.BASE_WHERE_CONDITIONS}
         AND t.CARRIERID IS NOT NULL
         ${brandFilter}
         ${platformFilter}
         ${selfFlagFilter}
-      GROUP BY t.CUSTOMERNO, bc_brand.COMPANY_ABNAME, t.CARRIERID
+      GROUP BY t.CUSTOMERNO, bc_brand.COMPANY_ABNAME, t.CARRIERID, bc_carrier.COMPANY_ABNAME
       HAVING COUNT(DISTINCT t.TSK_MERGE_NO) > 0
       ORDER BY brand_name, total_orders DESC
     `;
 
-    // 🔥 修复：复制所有品牌参数（支持多品牌数组）
+    // 🔥 修复：复制所有品牌/平台参数（支持多品牌/多平台数组）
     const flowQueryParams = { dateFrom, dateTo };
-    
+
     Object.keys(baseParams).forEach(key => {
-      if (key.startsWith('brand')) {
+      if (key.startsWith('brand') || key.startsWith('platform')) {
         flowQueryParams[key] = baseParams[key];
       }
     });
-    
-    if (platform && platform !== 'all') {
+
+    // 保留单一 platform 值（如果存在），以兼容旧代码路径
+    if (baseParams.platform) {
       flowQueryParams.platform = baseParams.platform;
     }
     if (baseParams.selfFlag) {
       flowQueryParams.selfFlag = baseParams.selfFlag;
     }
 
-    const flowResult = await connection.execute(flowAnalysisQuery, flowQueryParams);
-    const flowAnalysisData = flowResult.rows.map(row => ({
+      const flowResult = await connection.execute(flowAnalysisQuery, flowQueryParams);
+      const flowAnalysisData = flowResult.rows.map(row => ({
       brandName: row[0],
       courierId: row[1],
-      totalOrders: row[2] || 0,
-      pickupTimeoutOrders: row[3] || 0,
-      shippingTimeoutOrders: row[4] || 0,
-      deliveryTimeoutOrders: row[5] || 0,
-      updateTimeoutOrders: row[6] || 0,
-      outboundOrders: row[7] || 0,
-      pickedOrders: row[8] || 0,
-      shippedOrders: row[9] || 0,
-      deliveredOrders: row[10] || 0,
-      forwardedOrders: row[11] || 0,
-      returnedOrders: row[12] || 0,
-      cancelledOrders: row[13] || 0,
-      avgDeliveryTime: row[14] || 0,
+      carrierName: row[2] || row[1],
+      totalOrders: row[3] || 0,
+      pickupTimeoutOrders: row[4] || 0,
+      shippingTimeoutOrders: row[5] || 0,
+      deliveryTimeoutOrders: row[6] || 0,
+      updateTimeoutOrders: row[7] || 0,
+      outboundOrders: row[8] || 0,
+      pickedOrders: row[9] || 0,
+      shippedOrders: row[10] || 0,
+      deliveredOrders: row[11] || 0,
+      forwardedOrders: row[12] || 0,
+      returnedOrders: row[13] || 0,
+      cancelledOrders: row[14] || 0,
+      avgDeliveryTime: row[15] || 0,
       // 计算异常率
-      exceptionRate: row[2] > 0 ? Math.round(((row[3] + row[4] + row[5] + row[6]) / row[2] * 100) * 100) / 100 : 0,
+      exceptionRate: row[3] > 0 ? Math.round(((row[4] + row[5] + row[6] + row[7]) / row[3] * 100) * 100) / 100 : 0,
       // 计算各异常类型比率
-      pickupTimeoutRate: row[2] > 0 ? Math.round((row[3] / row[2] * 100) * 100) / 100 : 0,
-      shippingTimeoutRate: row[2] > 0 ? Math.round((row[4] / row[2] * 100) * 100) / 100 : 0,
-      deliveryTimeoutRate: row[2] > 0 ? Math.round((row[5] / row[2] * 100) * 100) / 100 : 0,
-      updateTimeoutRate: row[2] > 0 ? Math.round((row[6] / row[2] * 100) * 100) / 100 : 0
+      pickupTimeoutRate: row[3] > 0 ? Math.round((row[4] / row[3] * 100) * 100) / 100 : 0,
+      shippingTimeoutRate: row[3] > 0 ? Math.round((row[5] / row[3] * 100) * 100) / 100 : 0,
+      deliveryTimeoutRate: row[3] > 0 ? Math.round((row[6] / row[3] * 100) * 100) / 100 : 0,
+      updateTimeoutRate: row[3] > 0 ? Math.round((row[7] / row[3] * 100) * 100) / 100 : 0
     }));
 
     // 汇总统计
-    const overallStats = {
+      const overallStats = {
       totalOrders: flowAnalysisData.reduce((sum, item) => sum + item.totalOrders, 0),
       activeBrands: new Set(flowAnalysisData.map(item => item.brandName)).size,
       activeCouriers: new Set(flowAnalysisData.map(item => item.courierId)).size,
@@ -1813,15 +1967,16 @@ router.get('/flow-analysis', async (req, res) => {
       overallExceptionRate: 0 // 后面计算
     };
 
-    overallStats.overallExceptionRate = overallStats.totalOrders > 0 ? 
-      Math.round((overallStats.totalExceptions / overallStats.totalOrders * 100) * 100) / 100 : 0;
+      overallStats.overallExceptionRate = overallStats.totalOrders > 0 ? 
+        Math.round((overallStats.totalExceptions / overallStats.totalOrders * 100) * 100) / 100 : 0;
 
     // 快递商汇总统计
-    const courierSummary = {};
-    flowAnalysisData.forEach(item => {
+      const courierSummary = {};
+      flowAnalysisData.forEach(item => {
       if (!courierSummary[item.courierId]) {
         courierSummary[item.courierId] = {
           courierId: item.courierId,
+          carrierName: item.carrierName,
           totalOrders: 0,
           totalExceptions: 0,
           avgDeliveryTime: 0,
@@ -1836,47 +1991,57 @@ router.get('/flow-analysis', async (req, res) => {
       if (item.avgDeliveryTime > 0) {
         courier.deliveryTimes.push(item.avgDeliveryTime);
       }
-    });
+      });
 
     // 计算快递商平均值
-    const courierSummaryArray = Object.values(courierSummary).map(courier => ({
+      const courierSummaryArray = Object.values(courierSummary).map(courier => ({
       courierId: courier.courierId,
+      carrierName: courier.carrierName,
       totalOrders: courier.totalOrders,
       totalExceptions: courier.totalExceptions,
       avgExceptionRate: courier.totalOrders > 0 ? 
         Math.round((courier.totalExceptions / courier.totalOrders * 100) * 100) / 100 : 0,
       avgDeliveryTime: courier.deliveryTimes.length > 0 ? 
         Math.round((courier.deliveryTimes.reduce((sum, time) => sum + time, 0) / courier.deliveryTimes.length) * 100) / 100 : 0
-    }));
+      }));
 
-    console.log('📊 [品牌×快递商流向分析] 数据汇总完成:', {
+      console.log('📊 [品牌×快递商流向分析] 数据汇总完成:', {
       flowRecords: flowAnalysisData.length,
       totalOrders: overallStats.totalOrders,
       activeBrands: overallStats.activeBrands,
       activeCouriers: overallStats.activeCouriers,
       overallExceptionRate: overallStats.overallExceptionRate
-    });
+      });
 
-    // 返回完整的流向分析数据
-    const response = {
-      success: true,
-      data: {
-        flowAnalysisData: flowAnalysisData,
-        overallStats: overallStats,
-        courierSummary: courierSummaryArray
-      },
-      timestamp: new Date().toISOString(),
-      filters: {
-        dateFrom: dateFrom,
-        dateTo: dateTo,
-        brand: brand || 'all',
-        platform: platform || 'all'
-      }
-    };
+      return {
+        success: true,
+        data: {
+          flowAnalysisData: flowAnalysisData,
+          overallStats: overallStats,
+          courierSummary: courierSummaryArray
+        },
+        timestamp: new Date().toISOString(),
+        filters: {
+          dateFrom: dateFrom,
+          dateTo: dateTo,
+          brand: brand || 'all',
+          platform: platform || 'all',
+          mode: liteMode ? 'lite' : 'full'
+        }
+      };
+    });
 
     res.json(response);
 
   } catch (error) {
+    if (isOverviewDbPressureError(error)) {
+      const stalePayload = getOverviewStaleCache(cacheKey);
+      if (stalePayload) {
+        console.warn('⚠️ [品牌×快递商流向分析] 数据库连接紧张，返回过期缓存兜底结果');
+        res.setHeader('X-Overview-Cache', 'stale');
+        return res.json(buildStaleOverviewResponse(stalePayload, error.code || 'db-pressure'));
+      }
+    }
     console.error('❌ [品牌×快递商流向分析] 查询失败:', error);
     return sendRouteError(res, req, error, { fallbackError: '品牌×快递商流向分析数据查询失败' });
   } finally {

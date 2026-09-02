@@ -217,7 +217,7 @@ export function CourierPerformanceTable({
 
       return {
         courier: carrierId,
-        courierName: COURIER_NAME_MAPPING[carrierId] || carrierId,
+        courierName: carrierStat.carrierName || COURIER_NAME_MAPPING[carrierId] || carrierId,
         brands,
         total
       };

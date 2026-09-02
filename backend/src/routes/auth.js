@@ -6,9 +6,10 @@
 const express = require('express');
 const router = express.Router();
 const oracledb = require('oracledb');
-const { randomInt } = require('crypto');
+const { randomInt, randomUUID } = require('crypto');
 const { getConnection, releaseConnection } = require('../config/database-api');
-const { generateToken, generateRefreshToken, verifyRefreshToken, verifyToken, revokeToken, revokeRefreshToken, rotateRefreshToken } = require('../middleware/authMiddleware'); // 🔥 JWT生成函数
+const { generateToken, generateRefreshToken, verifyRefreshToken, verifyToken, revokeToken, revokeRefreshToken, rotateRefreshToken, setUserSession, clearUserSession } = require('../middleware/authMiddleware'); // 🔥 JWT生成函数
+const jwt = require('jsonwebtoken');
 const { loginRateLimit } = require('../middleware/rateLimitMiddleware'); // 🔥 防暴力破解中间件
 const { ERROR_CODES, sendError } = require('../utils/apiError');
 const { verifyAndUpgradePassword } = require('../utils/passwordUtils');
@@ -245,8 +246,19 @@ router.post('/login', loginRateLimit, async (req, res) => {
 
     // 若MFA未启用，保持原登录行为（兼容环境开关）
     const { tokenPayload, customerNoScope } = buildAuthPayload(user);
-    const token = generateToken(tokenPayload);
-    const refreshToken = await generateRefreshToken(tokenPayload);
+    const sessionId = randomUUID();
+    const payloadWithSession = { ...tokenPayload, sessionId };
+    const token = generateToken(payloadWithSession);
+    const refreshToken = await generateRefreshToken({ ...tokenPayload, sessionId });
+
+    // persist session mapping in Redis with TTL == refreshToken TTL
+    try {
+      const decodedRefresh = jwt.decode(refreshToken);
+      const ttl = decodedRefresh?.exp ? decodedRefresh.exp - Math.floor(Date.now() / 1000) : null;
+      if (ttl && ttl > 0) await setUserSession(user.USERID, sessionId, ttl);
+    } catch (e) {
+      // best-effort
+    }
 
     if (req.clearLoginAttempts) {
       await req.clearLoginAttempts();
@@ -373,8 +385,18 @@ router.post('/login/verify-otp', loginRateLimit, async (req, res) => {
 
     const user = result.rows[0];
     const { tokenPayload, customerNoScope } = buildAuthPayload(user);
-    const token = generateToken(tokenPayload);
-    const refreshToken = await generateRefreshToken(tokenPayload);
+    const sessionId = randomUUID();
+    const payloadWithSession = { ...tokenPayload, sessionId };
+    const token = generateToken(payloadWithSession);
+    const refreshToken = await generateRefreshToken({ ...tokenPayload, sessionId });
+
+    try {
+      const decodedRefresh = jwt.decode(refreshToken);
+      const ttl = decodedRefresh?.exp ? decodedRefresh.exp - Math.floor(Date.now() / 1000) : null;
+      if (ttl && ttl > 0) await setUserSession(user.USERID, sessionId, ttl);
+    } catch (e) {
+      // best-effort
+    }
 
     if (req.clearLoginAttempts) {
       await req.clearLoginAttempts();
@@ -484,8 +506,20 @@ router.post('/refresh', loginRateLimit, async (req, res) => {
       isAdmin: isAdmin
     };
 
-    const newToken = generateToken(tokenPayload);
-    const newRefreshToken = await rotateRefreshToken(refreshToken, tokenPayload);
+    // preserve sessionId from incoming refresh token if present
+    const sessionId = decoded.sessionId || randomUUID();
+    const payloadWithSession = { ...tokenPayload, sessionId };
+
+    const newToken = generateToken(payloadWithSession);
+    const newRefreshToken = await rotateRefreshToken(refreshToken, { ...tokenPayload, sessionId });
+
+    try {
+      const decodedRefresh = jwt.decode(newRefreshToken);
+      const ttl = decodedRefresh?.exp ? decodedRefresh.exp - Math.floor(Date.now() / 1000) : null;
+      if (ttl && ttl > 0) await setUserSession(user.USERID, sessionId, ttl);
+    } catch (e) {
+      // best-effort
+    }
 
     console.log('🔄 [Auth] Token刷新成功');
 
@@ -528,6 +562,13 @@ router.post('/logout', loginRateLimit, verifyToken, async (req, res) => {
     if (refreshToken) {
       await revokeRefreshToken(refreshToken);
       console.log('👋 [Auth] Refresh token已撤销');
+    }
+
+    // 清理session映射
+    try {
+      if (req.user && req.user.userId) await clearUserSession(req.user.userId);
+    } catch (e) {
+      // best-effort
     }
 
     return res.json({

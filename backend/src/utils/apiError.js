@@ -112,6 +112,14 @@ function sendRouteError(res, req, error, {
 }
 
 function normalizeError(error, { isProduction = false } = {}) {
+  if (error?.code === 'NJS-040' || error?.code === 'NJS-510' || error?.code === 'DB_CIRCUIT_OPEN') {
+    return {
+      status: 503,
+      code: ERROR_CODES.DB_UNAVAILABLE,
+      error: '数据库连接繁忙，请稍后重试'
+    };
+  }
+
   if (error?.code && typeof error.code === 'string' && error.code.startsWith('ORA-')) {
     return {
       status: 503,

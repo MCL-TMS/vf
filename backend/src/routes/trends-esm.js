@@ -51,9 +51,29 @@ const BRAND_MAPPING_FALLBACK = {
   'SMARTWOOL': '18405-5'
 };
 
+const PLATFORM_MAPPING = {
+  tmall: '天猫',
+  douyin: '抖音',
+  jd: '京东',
+  pdd: '拼多多',
+  official: '官网/小程序',
+  o2o: 'O2O',
+  xiaohongshu: '小红书',
+  wechat: '微信'
+};
+
 const TRENDS_CACHE_TTL_MS = 30000;
 const TRENDS_CACHE_MAX_ENTRIES = 200;
 const trendsResponseCache = new Map();
+const NO_UPDATE_48H_EXCLUDED_STATUSES = "('40','90','93','94','95','99','100','105','110')";
+
+function buildNoUpdate48hCondition(flagExpr, statusExpr) {
+  return `(${flagExpr} = 'Y' AND ${statusExpr} NOT IN ${NO_UPDATE_48H_EXCLUDED_STATUSES})`;
+}
+
+function buildNoUpdate48hNegativeCondition(flagExpr, statusExpr) {
+  return `(${flagExpr} IS NULL OR ${flagExpr} <> 'Y' OR ${statusExpr} IS NULL OR ${statusExpr} IN ${NO_UPDATE_48H_EXCLUDED_STATUSES})`;
+}
 
 function stableStringify(value) {
   if (value === null || value === undefined) return String(value);
@@ -76,11 +96,11 @@ function buildTrendsCacheKey(req, endpointName) {
   return `${endpointName}|${stableStringify(userScope)}|${stableStringify(req.query || {})}`;
 }
 
-function getTrendsCache(cacheKey) {
+function getTrendsCache(cacheKey, ttlMs = TRENDS_CACHE_TTL_MS) {
   const cached = trendsResponseCache.get(cacheKey);
   if (!cached) return null;
 
-  if (Date.now() - cached.timestamp > TRENDS_CACHE_TTL_MS) {
+  if (Date.now() - cached.timestamp > ttlMs) {
     trendsResponseCache.delete(cacheKey);
     return null;
   }
@@ -129,6 +149,63 @@ async function buildBrandFilterForTrends({ req, params, brand, fieldName = 't.CU
   return { brandFilter, authorizedCustomerNos };
 }
 
+function normalizePlatformList(platform) {
+  if (platform === undefined || platform === null) return [];
+
+  const rawValues = Array.isArray(platform)
+    ? platform
+    : String(platform)
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean);
+
+  const normalized = rawValues
+    .map((value) => {
+      const mapped = PLATFORM_MAPPING[String(value).toLowerCase()] || value;
+      return String(mapped).replace(/／/g, '/').trim();
+    })
+    .filter((value) => value && value.toLowerCase() !== 'all');
+
+  return Array.from(new Set(normalized));
+}
+
+function buildPlatformFilterForTrends({ params, platform, fieldExpr = 'v.PLATFORM_CLASS', paramPrefix = 'platform' }) {
+  const normalizedPlatforms = normalizePlatformList(platform);
+  if (!normalizedPlatforms.length) return '';
+
+  if (normalizedPlatforms.length === 1) {
+    const key = `${paramPrefix}_0`;
+    params[key] = normalizedPlatforms[0];
+    return ` AND REPLACE(TRIM(${fieldExpr}), '／', '/') = :${key}`;
+  }
+
+  const placeholders = normalizedPlatforms.map((_, index) => `:${paramPrefix}_${index}`).join(', ');
+  normalizedPlatforms.forEach((value, index) => {
+    params[`${paramPrefix}_${index}`] = value;
+  });
+  return ` AND REPLACE(TRIM(${fieldExpr}), '／', '/') IN (${placeholders})`;
+}
+
+function buildPlatformFilterForTrendsByCode({ params, platform, platformCodeExpr = 't.PLATFORM', paramPrefix = 'platform' }) {
+  const normalizedPlatforms = normalizePlatformList(platform);
+  if (!normalizedPlatforms.length) return '';
+
+  const placeholders = normalizedPlatforms.map((_, index) => `:${paramPrefix}_${index}`).join(', ');
+  normalizedPlatforms.forEach((value, index) => {
+    params[`${paramPrefix}_${index}`] = value;
+  });
+
+  return `
+    AND EXISTS (
+      SELECT 1
+      FROM APP_CMS.BAS_CODES bc
+      WHERE bc.CODEID = 'PLATFORM_CLASS'
+        AND bc.CODE = ${platformCodeExpr}
+        AND REPLACE(TRIM(bc.UDF1), '／', '/') IN (${placeholders})
+    )
+  `;
+}
+
 /**
  * 获取订单趋势数据
  * GET /api/trends/orders
@@ -145,7 +222,8 @@ router.get('/orders', async (req, res) => {
   const cacheKey = buildTrendsCacheKey(req, 'orders');
   
   try {
-    const { dateFrom, dateTo, brand, granularity = 'day', selfFlag } = req.query;
+    const { dateFrom, dateTo, brand, platform, granularity = 'day', selfFlag, lite } = req.query;
+    const liteMode = String(lite || '').toLowerCase() === '1' || String(lite || '').toLowerCase() === 'true';
     
     // 参数验证
     if (!dateFrom || !dateTo) {
@@ -174,7 +252,8 @@ router.get('/orders', async (req, res) => {
       });
     }
 
-    const cached = getTrendsCache(cacheKey);
+    const cacheTtlMs = granularity === 'month' ? 180000 : TRENDS_CACHE_TTL_MS;
+    const cached = getTrendsCache(cacheKey, cacheTtlMs);
     if (cached) {
       return res.json(cached);
     }
@@ -188,6 +267,9 @@ router.get('/orders', async (req, res) => {
       dateTo: dateTo
     };
     const { brandFilter } = await buildBrandFilterForTrends({ req, params, brand });
+    const platformFilter = liteMode
+      ? buildPlatformFilterForTrendsByCode({ params, platform })
+      : buildPlatformFilterForTrends({ params, platform });
     
     // 自管筛选
     if (selfFlag && selfFlag !== 'all') {
@@ -216,25 +298,50 @@ router.get('/orders', async (req, res) => {
     }
 
     // 订单趋势查询
-    const trendsQuery = `
+    const trendsQuery = liteMode ? `
       SELECT 
         ${timeGroupBy} as time_period,
-        COUNT(DISTINCT t.TSK_MERGE_NO) as total_orders,
-        COUNT(DISTINCT CASE WHEN t.DIS_STATUS  in('95','93') THEN t.TSK_MERGE_NO END) as delivered_orders,
-        COUNT(DISTINCT CASE WHEN t.DIS_STATUS IN ('55', '70', '80') THEN t.TSK_MERGE_NO END) as in_transit_orders,
-        COUNT(DISTINCT CASE WHEN t.DIS_STATUS = '00' THEN t.TSK_MERGE_NO END) as pending_orders,
-        COUNT(DISTINCT CASE WHEN t.IS48H_FLAG = 'Y' THEN t.TSK_MERGE_NO END) as timeout_48h_orders,
-        COUNT(DISTINCT CASE WHEN t.DIS_STATUS in ('100','105') THEN t.TSK_MERGE_NO END) as return_orders,
-          COUNT(DISTINCT CASE WHEN t.DIS_STATUS IN ('90', '110') THEN t.TSK_MERGE_NO END) as cancelled_orders,
+        COUNT(*) as total_orders,
+        SUM(CASE WHEN t.DIS_STATUS  in('95','93') THEN 1 ELSE 0 END) as delivered_orders,
+        SUM(CASE WHEN t.DIS_STATUS IN ('55', '70', '80','85','92') THEN 1 ELSE 0 END) as in_transit_orders,
+        SUM(CASE WHEN t.DIS_STATUS = '00' THEN 1 ELSE 0 END) as pending_orders,
+        0 as timeout_48h_orders,
+        SUM(CASE WHEN t.DIS_STATUS in ('100','105') THEN 1 ELSE 0 END) as return_orders,
+        SUM(CASE WHEN t.DIS_STATUS IN ('90', '110') THEN 1 ELSE 0 END) as cancelled_orders,
         ROUND(AVG(CASE WHEN t.SUM_SEND_TIME2 IS NOT NULL AND t.SUM_SEND_TIME2 > 0 THEN t.SUM_SEND_TIME2 END), 2) as avg_delivery_hours,
-        ROUND(COUNT(DISTINCT CASE WHEN t.DIS_STATUS in('95','93') THEN t.TSK_MERGE_NO END) * 100.0 / NULLIF(COUNT(DISTINCT t.TSK_MERGE_NO), 0), 2) as delivery_rate,
-        ROUND(COUNT(DISTINCT CASE WHEN t.IS48H_FLAG = 'Y' THEN t.TSK_MERGE_NO END) * 100.0 / NULLIF(COUNT(DISTINCT t.TSK_MERGE_NO), 0), 2) as timeout_rate
+        ROUND(SUM(CASE WHEN t.DIS_STATUS in('95','93') THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0), 2) as delivery_rate,
+        0 as timeout_rate
       FROM APP_CMS.TSK_LIST_TASK t
       WHERE t.WMS_OUTBOUND_TIME IS NOT NULL
         AND t.WMS_OUTBOUND_TIME >= TO_DATE(:dateFrom, 'YYYY-MM-DD')
         AND t.WMS_OUTBOUND_TIME < TO_DATE(:dateTo, 'YYYY-MM-DD') + INTERVAL '1' DAY
         AND t.TSK_MERGE_NO IS NOT NULL
         ${brandFilter}
+        ${platformFilter}
+        ${selfFlagFilter}
+      GROUP BY ${timeGroupBy}
+      ORDER BY ${timeGroupBy}
+    ` : `
+      SELECT 
+        ${timeGroupBy} as time_period,
+        COUNT(DISTINCT t.TSK_MERGE_NO) as total_orders,
+        COUNT(DISTINCT CASE WHEN t.DIS_STATUS  in('95','93') THEN t.TSK_MERGE_NO END) as delivered_orders,
+        COUNT(DISTINCT CASE WHEN t.DIS_STATUS IN ('55', '70', '80','85','92') THEN t.TSK_MERGE_NO END) as in_transit_orders,
+        COUNT(DISTINCT CASE WHEN t.DIS_STATUS = '00' THEN t.TSK_MERGE_NO END) as pending_orders,
+        COUNT(DISTINCT CASE WHEN ${buildNoUpdate48hCondition('v.IS_48H', 'v.DIS_STATUS')} THEN t.TSK_MERGE_NO END) as timeout_48h_orders,
+        COUNT(DISTINCT CASE WHEN t.DIS_STATUS in ('100','105') THEN t.TSK_MERGE_NO END) as return_orders,
+          COUNT(DISTINCT CASE WHEN t.DIS_STATUS IN ('90', '110') THEN t.TSK_MERGE_NO END) as cancelled_orders,
+        ROUND(AVG(CASE WHEN t.SUM_SEND_TIME2 IS NOT NULL AND t.SUM_SEND_TIME2 > 0 THEN t.SUM_SEND_TIME2 END), 2) as avg_delivery_hours,
+        ROUND(COUNT(DISTINCT CASE WHEN t.DIS_STATUS in('95','93') THEN t.TSK_MERGE_NO END) * 100.0 / NULLIF(COUNT(DISTINCT t.TSK_MERGE_NO), 0), 2) as delivery_rate,
+        ROUND(COUNT(DISTINCT CASE WHEN ${buildNoUpdate48hCondition('v.IS_48H', 'v.DIS_STATUS')} THEN t.TSK_MERGE_NO END) * 100.0 / NULLIF(COUNT(DISTINCT t.TSK_MERGE_NO), 0), 2) as timeout_rate
+      FROM APP_CMS.TSK_LIST_TASK t
+      LEFT JOIN APP_CMS.VIEW_TSK_LIST_TASK v ON t.TSK_MERGE_NO = v.TSK_MERGE_NO
+      WHERE t.WMS_OUTBOUND_TIME IS NOT NULL
+        AND t.WMS_OUTBOUND_TIME >= TO_DATE(:dateFrom, 'YYYY-MM-DD')
+        AND t.WMS_OUTBOUND_TIME < TO_DATE(:dateTo, 'YYYY-MM-DD') + INTERVAL '1' DAY
+        AND t.TSK_MERGE_NO IS NOT NULL
+        ${brandFilter}
+        ${platformFilter}
         ${selfFlagFilter}
       GROUP BY ${timeGroupBy}
       ORDER BY ${timeGroupBy}
@@ -264,8 +371,10 @@ router.get('/orders', async (req, res) => {
         dateFrom,
         dateTo,
         brand: brand || 'all',
+        platform: platform || 'all',
         granularity,
-        selfFlag: selfFlag || 'Y'
+        selfFlag: selfFlag || 'Y',
+        liteMode
       }
     };
 
@@ -307,7 +416,7 @@ router.get('/performance', async (req, res) => {
   const cacheKey = buildTrendsCacheKey(req, 'performance');
   
   try {
-    const { dateFrom, dateTo, brand, metric = 'delivery_rate', selfFlag } = req.query;
+    const { dateFrom, dateTo, brand, platform, metric = 'delivery_rate', selfFlag } = req.query;
     
     // 参数验证
     if (!dateFrom || !dateTo) {
@@ -349,6 +458,7 @@ router.get('/performance', async (req, res) => {
       dateTo: dateTo
     };
     const { brandFilter } = await buildBrandFilterForTrends({ req, params, brand });
+    const platformFilter = buildPlatformFilterForTrends({ params, platform });
     
     if (selfFlag && selfFlag !== 'all') {
       selfFlagFilter = ` AND t.SELF_FLAG = :selfFlag`;
@@ -365,19 +475,21 @@ router.get('/performance', async (req, res) => {
         to_char(t.WMS_OUTBOUND_TIME, 'YYYY-MM-DD') as date_period,
         COUNT(DISTINCT t.TSK_MERGE_NO) as total_orders,
         ROUND(COUNT(DISTINCT CASE WHEN t.DIS_STATUS in('95','93') THEN t.TSK_MERGE_NO END) * 100.0 / NULLIF(COUNT(DISTINCT t.TSK_MERGE_NO), 0), 2) as delivery_rate,
-        ROUND(COUNT(DISTINCT CASE WHEN t.IS48H_FLAG = 'Y' THEN t.TSK_MERGE_NO END) * 100.0 / NULLIF(COUNT(DISTINCT t.TSK_MERGE_NO), 0), 2) as timeout_rate,
+        ROUND(COUNT(DISTINCT CASE WHEN ${buildNoUpdate48hCondition('v.IS_48H', 'v.DIS_STATUS')} THEN t.TSK_MERGE_NO END) * 100.0 / NULLIF(COUNT(DISTINCT t.TSK_MERGE_NO), 0), 2) as timeout_rate,
         ROUND(AVG(CASE WHEN t.SUM_SEND_TIME2 IS NOT NULL AND t.SUM_SEND_TIME2 > 0 THEN t.SUM_SEND_TIME2 END), 2) as avg_delivery_time,
         ROUND(
-          COUNT(DISTINCT CASE WHEN t.DIS_STATUS in('95','93') AND t.IS48H_FLAG = 'N' THEN t.TSK_MERGE_NO END) * 100.0 / 
+          COUNT(DISTINCT CASE WHEN t.DIS_STATUS in('95','93') AND ${buildNoUpdate48hNegativeCondition('v.IS_48H', 'v.DIS_STATUS')} THEN t.TSK_MERGE_NO END) * 100.0 / 
           NULLIF(COUNT(DISTINCT CASE WHEN t.DIS_STATUS in('95','93') THEN t.TSK_MERGE_NO END), 0),
           2
         ) as on_time_rate
       FROM APP_CMS.TSK_LIST_TASK t
+      LEFT JOIN APP_CMS.VIEW_TSK_LIST_TASK v ON t.TSK_MERGE_NO = v.TSK_MERGE_NO
       WHERE t.WMS_OUTBOUND_TIME IS NOT NULL
         AND t.WMS_OUTBOUND_TIME >= TO_DATE(:dateFrom, 'YYYY-MM-DD')
         AND t.WMS_OUTBOUND_TIME < TO_DATE(:dateTo, 'YYYY-MM-DD') + INTERVAL '1' DAY
         AND t.TSK_MERGE_NO IS NOT NULL
         ${brandFilter}
+        ${platformFilter}
         ${selfFlagFilter}
       GROUP BY to_char(t.WMS_OUTBOUND_TIME, 'YYYY-MM-DD')
       ORDER BY to_char(t.WMS_OUTBOUND_TIME, 'YYYY-MM-DD')
@@ -402,6 +514,7 @@ router.get('/performance', async (req, res) => {
         dateFrom,
         dateTo,
         brand: brand || 'all',
+        platform: platform || 'all',
         metric,
         selfFlag: selfFlag || 'Y'
       }
@@ -445,7 +558,7 @@ router.get('/carriers', async (req, res) => {
   const cacheKey = buildTrendsCacheKey(req, 'carriers');
   
   try {
-    const { dateFrom, dateTo, brand, granularity = 'day', selfFlag } = req.query;
+    const { dateFrom, dateTo, brand, platform, granularity = 'day', selfFlag } = req.query;
     
     // 参数验证
     if (!dateFrom || !dateTo) {
@@ -476,6 +589,7 @@ router.get('/carriers', async (req, res) => {
       dateTo: dateTo
     };
     const { brandFilter } = await buildBrandFilterForTrends({ req, params, brand });
+    const platformFilter = buildPlatformFilterForTrends({ params, platform });
     
     if (selfFlag && selfFlag !== 'all') {
       selfFlagFilter = ` AND t.SELF_FLAG = :selfFlag`;
@@ -508,9 +622,10 @@ router.get('/carriers', async (req, res) => {
         bc.COMPANY_ABNAME as carrier_name,
         COUNT(DISTINCT t.TSK_MERGE_NO) as total_orders,
         ROUND(COUNT(DISTINCT CASE WHEN t.DIS_STATUS in('95','93') THEN t.TSK_MERGE_NO END) * 100.0 / NULLIF(COUNT(DISTINCT t.TSK_MERGE_NO), 0), 2) as delivery_rate,
-        ROUND(COUNT(DISTINCT CASE WHEN t.IS48H_FLAG = 'Y' THEN t.TSK_MERGE_NO END) * 100.0 / NULLIF(COUNT(DISTINCT t.TSK_MERGE_NO), 0), 2) as timeout_rate,
+        ROUND(COUNT(DISTINCT CASE WHEN ${buildNoUpdate48hCondition('v.IS_48H', 'v.DIS_STATUS')} THEN t.TSK_MERGE_NO END) * 100.0 / NULLIF(COUNT(DISTINCT t.TSK_MERGE_NO), 0), 2) as timeout_rate,
         ROUND(AVG(CASE WHEN t.SUM_SEND_TIME2 IS NOT NULL AND t.SUM_SEND_TIME2 > 0 THEN t.SUM_SEND_TIME2 END), 2) as avg_delivery_hours
       FROM APP_CMS.TSK_LIST_TASK t
+      LEFT JOIN APP_CMS.VIEW_TSK_LIST_TASK v ON t.TSK_MERGE_NO = v.TSK_MERGE_NO
       LEFT JOIN APP_CMS.BAS_COMPANY bc ON t.CARRIERID = bc.COMPANY_SYSID
       WHERE t.WMS_OUTBOUND_TIME IS NOT NULL
         AND t.WMS_OUTBOUND_TIME >= TO_DATE(:dateFrom, 'YYYY-MM-DD')
@@ -518,6 +633,7 @@ router.get('/carriers', async (req, res) => {
         AND t.TSK_MERGE_NO IS NOT NULL
         AND t.CARRIERID IS NOT NULL
         ${brandFilter}
+        ${platformFilter}
         ${selfFlagFilter}
       GROUP BY ${timeGroupBy}, t.CARRIERID, bc.COMPANY_ABNAME
       ORDER BY ${timeGroupBy}, t.CARRIERID
@@ -543,6 +659,7 @@ router.get('/carriers', async (req, res) => {
         dateFrom,
         dateTo,
         brand: brand || 'all',
+        platform: platform || 'all',
         granularity,
         selfFlag: selfFlag || 'Y'
       }
@@ -585,7 +702,7 @@ router.get('/forecast', async (req, res) => {
   const cacheKey = buildTrendsCacheKey(req, 'forecast');
   
   try {
-    const { dateFrom, dateTo, days = 7, brand, selfFlag } = req.query;
+    const { dateFrom, dateTo, days = 7, brand, platform, selfFlag } = req.query;
     
     // 参���验证
     if (!dateFrom || !dateTo) {
@@ -625,6 +742,7 @@ router.get('/forecast', async (req, res) => {
       dateTo: dateTo
     };
     const { brandFilter } = await buildBrandFilterForTrends({ req, params, brand });
+    const platformFilter = buildPlatformFilterForTrends({ params, platform });
     
     if (selfFlag && selfFlag !== 'all') {
       selfFlagFilter = ` AND t.SELF_FLAG = :selfFlag`;
@@ -643,11 +761,13 @@ router.get('/forecast', async (req, res) => {
         COUNT(DISTINCT t.TSK_MERGE_NO) as total_orders,
         ROUND(COUNT(DISTINCT CASE WHEN t.DIS_STATUS in('95','93') THEN t.TSK_MERGE_NO END) * 100.0 / NULLIF(COUNT(DISTINCT t.TSK_MERGE_NO), 0), 2) as delivery_rate
       FROM APP_CMS.TSK_LIST_TASK t
+      LEFT JOIN APP_CMS.VIEW_TSK_LIST_TASK v ON t.TSK_MERGE_NO = v.TSK_MERGE_NO
       WHERE t.WMS_OUTBOUND_TIME IS NOT NULL
         AND t.WMS_OUTBOUND_TIME >= TO_DATE(:dateFrom, 'YYYY-MM-DD')
         AND t.WMS_OUTBOUND_TIME < TO_DATE(:dateTo, 'YYYY-MM-DD') + INTERVAL '1' DAY
         AND t.TSK_MERGE_NO IS NOT NULL
         ${brandFilter}
+        ${platformFilter}
         ${selfFlagFilter}
       GROUP BY to_char(t.WMS_OUTBOUND_TIME, 'YYYY-MM-DD')
       ORDER BY to_char(t.WMS_OUTBOUND_TIME, 'YYYY-MM-DD') DESC
@@ -720,6 +840,7 @@ router.get('/forecast', async (req, res) => {
         dateFrom,
         dateTo,
         brand: brand || 'all',
+        platform: platform || 'all',
         forecastDays,
         selfFlag: selfFlag || 'Y'
       }
@@ -763,7 +884,7 @@ router.get('/exceptions', async (req, res) => {
   const cacheKey = buildTrendsCacheKey(req, 'exceptions');
   
   try {
-    const { dateFrom, dateTo, brand, granularity = 'day', selfFlag } = req.query;
+    const { dateFrom, dateTo, brand, platform, granularity = 'day', selfFlag } = req.query;
     
     // 参数验证
     if (!dateFrom || !dateTo) {
@@ -806,6 +927,7 @@ router.get('/exceptions', async (req, res) => {
       dateTo: dateTo
     };
     const { brandFilter } = await buildBrandFilterForTrends({ req, params, brand });
+    const platformFilter = buildPlatformFilterForTrends({ params, platform });
     
     // 自管筛选
     if (selfFlag && selfFlag !== 'all') {
@@ -834,33 +956,38 @@ router.get('/exceptions', async (req, res) => {
     }
 
     // 异常趋势查询
-    // 注意：需要根据实际数据库中的异常标识字段调整
     const exceptionsQuery = `
       SELECT 
         ${timeGroupBy} as time_period,
         COUNT(DISTINCT t.TSK_MERGE_NO) as total_orders,
         
-        -- 揽收延迟（假设：DIS_STATUS='00' 且超过24小时未发货）
+        -- 揽收超时：出库后2小时仍为已出库状态
         COUNT(DISTINCT CASE 
           WHEN t.DIS_STATUS = '00' 
           AND t.WMS_OUTBOUND_TIME IS NOT NULL 
-          AND (SYSDATE - t.WMS_OUTBOUND_TIME) * 24 > 24 
+          AND (SYSDATE - t.WMS_OUTBOUND_TIME) * 24 > 2
           THEN t.TSK_MERGE_NO 
         END) as pickup_delay,
         
-        -- 发运延迟（假设：IS48H_FLAG='Y'表示超时48小时）
+        -- 发运超时：出库后12小时仍为已揽收状态
         COUNT(DISTINCT CASE 
-          WHEN t.IS48H_FLAG = 'Y' 
-          AND t.DIS_STATUS IN ('55', '70', '80')
+          WHEN t.DIS_STATUS = '55'
+          AND t.WMS_OUTBOUND_TIME IS NOT NULL
+          AND (SYSDATE - t.WMS_OUTBOUND_TIME) * 24 > 12
           THEN t.TSK_MERGE_NO 
         END) as ship_delay,
         
-        -- 签收延迟（假设：已签收但超时）
+        -- 签收超时：视图 IF_DELAY='Y'
         COUNT(DISTINCT CASE 
-          WHEN t.DIS_STATUS IN ('95', '93') 
-          AND t.IS48H_FLAG = 'Y'
+          WHEN v.IF_DELAY = 'Y'
           THEN t.TSK_MERGE_NO 
         END) as delivery_delay,
+
+        -- 路由延迟：视图 IS_48H='Y' 且视图状态不属于已结束状态
+        COUNT(DISTINCT CASE
+          WHEN ${buildNoUpdate48hCondition('v.IS_48H', 'v.DIS_STATUS')}
+          THEN t.TSK_MERGE_NO
+        END) as route_delay,
         
         -- 退货异常
         COUNT(DISTINCT CASE 
@@ -874,25 +1001,34 @@ router.get('/exceptions', async (req, res) => {
           THEN t.TSK_MERGE_NO 
         END) as cancel_exceptions,
         
-        -- 总异常数（超时48小时的订单）
-        COUNT(DISTINCT CASE 
-          WHEN t.IS48H_FLAG = 'Y'
-          THEN t.TSK_MERGE_NO 
-        END) as total_exceptions,
+        -- 总异常数：四类异常计数之和，与总览异常口径一致
+        (
+          COUNT(DISTINCT CASE WHEN t.DIS_STATUS = '00' AND t.WMS_OUTBOUND_TIME IS NOT NULL AND (SYSDATE - t.WMS_OUTBOUND_TIME) * 24 > 2 THEN t.TSK_MERGE_NO END) +
+          COUNT(DISTINCT CASE WHEN t.DIS_STATUS = '55' AND t.WMS_OUTBOUND_TIME IS NOT NULL AND (SYSDATE - t.WMS_OUTBOUND_TIME) * 24 > 12 THEN t.TSK_MERGE_NO END) +
+          COUNT(DISTINCT CASE WHEN v.IF_DELAY = 'Y' THEN t.TSK_MERGE_NO END) +
+          COUNT(DISTINCT CASE WHEN ${buildNoUpdate48hCondition('v.IS_48H', 'v.DIS_STATUS')} THEN t.TSK_MERGE_NO END)
+        ) as total_exceptions,
         
-        -- 异常率
+        -- 异常率：四类异常计数之和占订单数的比例
         ROUND(
-          COUNT(DISTINCT CASE WHEN t.IS48H_FLAG = 'Y' THEN t.TSK_MERGE_NO END) * 100.0 / 
+          (
+            COUNT(DISTINCT CASE WHEN t.DIS_STATUS = '00' AND t.WMS_OUTBOUND_TIME IS NOT NULL AND (SYSDATE - t.WMS_OUTBOUND_TIME) * 24 > 2 THEN t.TSK_MERGE_NO END) +
+            COUNT(DISTINCT CASE WHEN t.DIS_STATUS = '55' AND t.WMS_OUTBOUND_TIME IS NOT NULL AND (SYSDATE - t.WMS_OUTBOUND_TIME) * 24 > 12 THEN t.TSK_MERGE_NO END) +
+            COUNT(DISTINCT CASE WHEN v.IF_DELAY = 'Y' THEN t.TSK_MERGE_NO END) +
+            COUNT(DISTINCT CASE WHEN ${buildNoUpdate48hCondition('v.IS_48H', 'v.DIS_STATUS')} THEN t.TSK_MERGE_NO END)
+          ) * 100.0 / 
           NULLIF(COUNT(DISTINCT t.TSK_MERGE_NO), 0), 
           2
         ) as exception_rate
         
       FROM APP_CMS.TSK_LIST_TASK t
+      LEFT JOIN APP_CMS.VIEW_TSK_LIST_TASK v ON t.TSK_MERGE_NO = v.TSK_MERGE_NO
       WHERE t.WMS_OUTBOUND_TIME IS NOT NULL
         AND t.WMS_OUTBOUND_TIME >= TO_DATE(:dateFrom, 'YYYY-MM-DD')
         AND t.WMS_OUTBOUND_TIME < TO_DATE(:dateTo, 'YYYY-MM-DD') + INTERVAL '1' DAY
         AND t.TSK_MERGE_NO IS NOT NULL
         ${brandFilter}
+        ${platformFilter}
         ${selfFlagFilter}
       GROUP BY ${timeGroupBy}
       ORDER BY ${timeGroupBy}
@@ -906,10 +1042,11 @@ router.get('/exceptions', async (req, res) => {
       pickupDelay: row[2] || 0,
       shipDelay: row[3] || 0,
       deliveryDelay: row[4] || 0,
-      returnExceptions: row[5] || 0,
-      cancelExceptions: row[6] || 0,
-      totalExceptions: row[7] || 0,
-      exceptionRate: row[8] || 0
+      routeDelay: row[5] || 0,
+      returnExceptions: row[6] || 0,
+      cancelExceptions: row[7] || 0,
+      totalExceptions: row[8] || 0,
+      exceptionRate: row[9] || 0
     }));
 
     // 计算汇总统计
@@ -921,7 +1058,8 @@ router.get('/exceptions', async (req, res) => {
         : 0,
       pickupDelayTotal: exceptionsData.reduce((sum, d) => sum + d.pickupDelay, 0),
       shipDelayTotal: exceptionsData.reduce((sum, d) => sum + d.shipDelay, 0),
-      deliveryDelayTotal: exceptionsData.reduce((sum, d) => sum + d.deliveryDelay, 0)
+      deliveryDelayTotal: exceptionsData.reduce((sum, d) => sum + d.deliveryDelay, 0),
+      routeDelayTotal: exceptionsData.reduce((sum, d) => sum + d.routeDelay, 0)
     };
 
     const payload = {
@@ -933,6 +1071,7 @@ router.get('/exceptions', async (req, res) => {
         dateFrom,
         dateTo,
         brand: brand || 'all',
+        platform: platform || 'all',
         granularity,
         selfFlag: selfFlag || 'Y'
       }

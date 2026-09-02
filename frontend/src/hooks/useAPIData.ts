@@ -16,10 +16,21 @@ interface UseAPIDataOptions {
 interface APIDataState<T = any> {
   data: T | null;
   loading: boolean;
+  refreshing: boolean;
   error: string | null;
   logisticsData?: T | null;
   brandLogisticsData?: T | null;
 }
+
+interface CachedAPIData<T = any> {
+  data: T | null;
+  logisticsData?: T | null;
+  brandLogisticsData?: T | null;
+  timestamp: number;
+}
+
+const MENU_CACHE_TTL_MS = 120000;
+const MENU_CACHE_MAX_ENTRIES = 60;
 
 export function useAPIData(options: UseAPIDataOptions = {}) {
   const { 
@@ -48,6 +59,7 @@ export function useAPIData(options: UseAPIDataOptions = {}) {
   const [state, setState] = useState<APIDataState>({
     data: null,
     loading: false,
+    refreshing: false,
     error: null,
     logisticsData: null,
     brandLogisticsData: null
@@ -56,8 +68,58 @@ export function useAPIData(options: UseAPIDataOptions = {}) {
   const abortControllerRef = useRef<AbortController | null>(null);
   const lastFetchParamsRef = useRef<string>('');
   const isInitializedRef = useRef(false);
+  const requestSeqRef = useRef(0);
+  const lastActiveMenuRef = useRef<string | undefined>(activeMenu);
+  const responseCacheRef = useRef<Map<string, CachedAPIData>>(new Map());
+
+  const buildRequestCacheKey = useCallback((effectiveDateRange: DateRange) => {
+    return JSON.stringify({
+      userId: user?.userId || 'anonymous',
+      activeMenu: activeMenu || 'overview-dashboard',
+      dateRange: {
+        from: effectiveDateRange.from,
+        to: effectiveDateRange.to
+      },
+      selectedBrand: selectedBrand || null,
+      selectedPlatform: selectedPlatform || null,
+      selectedSelfFlag: selectedSelfFlag || null,
+      userBrands
+    });
+  }, [
+    user?.userId,
+    activeMenu,
+    selectedBrand,
+    selectedPlatform,
+    selectedSelfFlag,
+    userBrands
+  ]);
+
+  const getCachedData = useCallback((cacheKey: string): CachedAPIData | null => {
+    const cached = responseCacheRef.current.get(cacheKey);
+    if (!cached) return null;
+
+    if (Date.now() - cached.timestamp > MENU_CACHE_TTL_MS) {
+      responseCacheRef.current.delete(cacheKey);
+      return null;
+    }
+
+    return cached;
+  }, []);
+
+  const setCachedData = useCallback((cacheKey: string, nextValue: CachedAPIData) => {
+    const cacheMap = responseCacheRef.current;
+    if (cacheMap.size >= MENU_CACHE_MAX_ENTRIES) {
+      const oldestKey = cacheMap.keys().next().value;
+      if (oldestKey) {
+        cacheMap.delete(oldestKey);
+      }
+    }
+
+    cacheMap.set(cacheKey, nextValue);
+  }, []);
 
   const fetchData = useCallback(async (force = false) => {
+    const requestSeq = ++requestSeqRef.current;
     const currentActiveMenu = activeMenu || 'overview-dashboard';
     
     // ✅ 新增：如果认证还在加载中，不发起API请求
@@ -72,6 +134,7 @@ export function useAPIData(options: UseAPIDataOptions = {}) {
         setState({
           data: null,
           loading: false,
+          refreshing: false,
           error: null,
           logisticsData: null,
           brandLogisticsData: null
@@ -82,6 +145,7 @@ export function useAPIData(options: UseAPIDataOptions = {}) {
 
     // 确保总是有日期范围 - 如果没有提供，使用今天的日期范围
     const effectiveDateRange = dateRange || getTodayDateRange();
+    const cacheKey = buildRequestCacheKey(effectiveDateRange);
     
     console.log('📊 [useAPIData] fetchData called with:', {
       enabled,
@@ -145,17 +209,34 @@ export function useAPIData(options: UseAPIDataOptions = {}) {
     // 创建新的 AbortController
     abortControllerRef.current = new AbortController();
     
-    // 🔥 修复：如果是页面切换，先清空不相关的数据
-    if (menuChanged) {
+    const cachedData = !force ? getCachedData(cacheKey) : null;
+    const hasCachedData = !!(cachedData?.data || cachedData?.logisticsData || cachedData?.brandLogisticsData);
+    const hasCurrentData = !!(state.data || state.logisticsData || state.brandLogisticsData);
+
+    // 命中菜单+筛选缓存时先秒开，再静默刷新
+    if (cachedData) {
       setState({
-        data: null,  // 清空旧数据
-        loading: true,
+        data: cachedData.data ?? null,
+        loading: false,
+        refreshing: true,
         error: null,
-        logisticsData: null,  // 清空物流数据
-        brandLogisticsData: null  // 清空品牌物流数据
+        logisticsData: cachedData.logisticsData ?? null,
+        brandLogisticsData: cachedData.brandLogisticsData ?? null
       });
+      console.log('⚡ [useAPIData] 命中菜单缓存，先展示缓存并后台刷新');
+    } else if (menuChanged && !hasCurrentData) {
+      setState({
+        data: null,
+        loading: true,
+        refreshing: false,
+        error: null,
+        logisticsData: null,
+        brandLogisticsData: null
+      });
+    } else if (hasCurrentData || hasCachedData) {
+      setState(prev => ({ ...prev, loading: false, refreshing: true, error: null }));
     } else {
-      setState(prev => ({ ...prev, loading: true, error: null }));
+      setState(prev => ({ ...prev, loading: true, refreshing: false, error: null }));
     }
     
     try {
@@ -172,55 +253,52 @@ export function useAPIData(options: UseAPIDataOptions = {}) {
       let brandLogisticsData = null;
       
       if (activeMenu === 'overview-logistics') {
-        // 物流页面：获取物流数据、总览数据和专门的品牌物流异常数据
-        console.log('🚚 [useAPIData] Calling logistics, overview and brand logistics APIs for logistics page with:', {
+        // 物流页面：仅获取物流专用数据，避免切换到转寄/拦截分析时额外请求overview/kpi。
+        console.log('🚚 [useAPIData] Calling logistics and brand logistics APIs for logistics page with:', {
           dateRange: effectiveDateRange,
           brand: selectedBrand
         });
         
-        // 🔥 并行获取三种数据源
-        const [logisticsResponse, overviewResponse, brandLogisticsResponse] = await Promise.all([
-          // 获取物流数据（快递商维度）
+        // 并行获取物流数据源，但不让单个慢/失败请求阻塞整页
+        const [logisticsSettled, brandLogisticsSettled] = await Promise.allSettled([
           ApiService.getLogisticsData({
-            dateRange: effectiveDateRange,
-            brand: selectedBrand,
-            platform: selectedPlatform,  // ✅ 修复：添加platform参数
-            selfFlag: selectedSelfFlag,
-            userBrands: userBrands.length > 0 ? userBrands : undefined, // ✅ 修复：只要有userBrands就传递
-            signal: abortControllerRef.current.signal
-          }),
-          
-          // 获取总览数据（基础品牌数据）
-          ApiService.getOverviewData({
             dateRange: effectiveDateRange,
             brand: selectedBrand,
             platform: selectedPlatform,
             selfFlag: selectedSelfFlag,
-            userBrands: userBrands.length > 0 ? userBrands : undefined, // ✅ 修复：只要有userBrands就传递
+            userBrands: userBrands.length > 0 ? userBrands : undefined,
             signal: abortControllerRef.current.signal
           }),
-          
-          // 🔥 新增：获取专门的品牌物流异常数据
           ApiService.getLogisticsBrands({
             dateRange: effectiveDateRange,
             brand: selectedBrand,
             platform: selectedPlatform,
             selfFlag: selectedSelfFlag,
-            userBrands: userBrands.length > 0 ? userBrands : undefined, // ✅ 修复：只要有userBrands就传递
+            userBrands: userBrands.length > 0 ? userBrands : undefined,
             signal: abortControllerRef.current.signal
-          }).catch(error => {
-            console.warn('⚠️ [useAPIData] 品牌物流异常接口调用失败，将回退到overview数据:', error);
-            return null; // 允许失败，回退到overview数据
           })
         ]);
-        
-        logisticsData = logisticsResponse;
-        overviewData = overviewResponse;
-        brandLogisticsData = brandLogisticsResponse;
+
+        if (logisticsSettled.status === 'fulfilled') {
+          logisticsData = logisticsSettled.value;
+        } else {
+          console.warn('⚠️ [useAPIData] 物流快递商接口失败:', logisticsSettled.reason);
+        }
+
+        if (brandLogisticsSettled.status === 'fulfilled') {
+          brandLogisticsData = brandLogisticsSettled.value;
+        } else {
+          console.warn('⚠️ [useAPIData] 品牌物流异常接口失败，将回退到overview数据:', brandLogisticsSettled.reason);
+          brandLogisticsData = null;
+        }
+
+        // 物流页核心数据只依赖物流专用接口。
+        if (!logisticsData) {
+          throw new Error('物流页面核心数据接口请求失败');
+        }
         
         console.log('✅ [useAPIData] Logistics page API requests completed:', {
           logisticsData: !!logisticsData,
-          overviewData: !!overviewData,
           brandLogisticsData: !!brandLogisticsData,
           brandLogisticsCount: brandLogisticsData?.data?.brandExceptions?.length || 0,
           brandLogisticsSuccess: brandLogisticsData?.success,
@@ -255,18 +333,37 @@ export function useAPIData(options: UseAPIDataOptions = {}) {
           brand: selectedBrand,
           platform: selectedPlatform,
           selfFlag: selectedSelfFlag,
+          preferLite: false,
+          requireCrossAnalysis: true,
           signal: abortControllerRef.current.signal
         });
         
         console.log('✅ [useAPIData] Overview API request successful:', overviewData);
       }
       
+      if (requestSeq !== requestSeqRef.current) {
+        console.log('⏭️ [useAPIData] 忽略过期响应（已有更新请求在途）');
+        return;
+      }
+
+      const nextData = overviewData || state.data || null;
+      const nextLogisticsData = logisticsData || state.logisticsData || null;
+      const nextBrandLogisticsData = brandLogisticsData || state.brandLogisticsData || null;
+
       setState({
-        data: overviewData,
+        data: nextData,
         loading: false,
+        refreshing: false,
         error: null,
-        logisticsData,
-        brandLogisticsData
+        logisticsData: nextLogisticsData,
+        brandLogisticsData: nextBrandLogisticsData
+      });
+
+      setCachedData(cacheKey, {
+        data: nextData,
+        logisticsData: nextLogisticsData,
+        brandLogisticsData: nextBrandLogisticsData,
+        timestamp: Date.now()
       });
       
       // 更新最后请求参数
@@ -274,12 +371,26 @@ export function useAPIData(options: UseAPIDataOptions = {}) {
       isInitializedRef.current = true;
       
     } catch (error: any) {
-      // 如果请求被取消，不更新状态
+      // 如果请求被取消，也要结束loading，避免界面一直转圈
       if (error.name === 'AbortError') {
+        if (requestSeq !== requestSeqRef.current) {
+          return;
+        }
+
+        setState(prev => ({
+          ...prev,
+          loading: false,
+          refreshing: false
+        }));
+        isInitializedRef.current = true;
         return;
       }
       
       console.error('❌ [useAPIData] API数据获取失败:', error);
+
+      if (requestSeq !== requestSeqRef.current) {
+        return;
+      }
       
       // 根据错误类型设置不同的错误信息
       let errorMessage = '数据获取失败';
@@ -298,12 +409,18 @@ export function useAPIData(options: UseAPIDataOptions = {}) {
         errorMessage = error.message || '未知错误';
       }
       
+      const fallbackCachedData = getCachedData(cacheKey);
+      const fallbackData = fallbackCachedData?.data ?? state.data ?? null;
+      const fallbackLogisticsData = fallbackCachedData?.logisticsData ?? state.logisticsData ?? null;
+      const fallbackBrandLogisticsData = fallbackCachedData?.brandLogisticsData ?? state.brandLogisticsData ?? null;
+
       setState({
-        data: null,
+        data: fallbackData,
         loading: false,
+        refreshing: false,
         error: errorMessage,
-        logisticsData: null,
-        brandLogisticsData: null
+        logisticsData: fallbackLogisticsData,
+        brandLogisticsData: fallbackBrandLogisticsData
       });
       
       isInitializedRef.current = true;
@@ -354,11 +471,18 @@ export function useAPIData(options: UseAPIDataOptions = {}) {
       return;
     }
     
+    const previousActiveMenu = lastActiveMenuRef.current;
+    const menuChanged = previousActiveMenu !== (activeMenu || 'overview-dashboard');
+    lastActiveMenuRef.current = activeMenu;
+
+    // 菜单快速切换时增加短防抖，减少无效请求风暴
+    const fetchDelayMs = menuChanged ? 220 : 0;
+
     // 使用 setTimeout 来避免在同一个渲染周期内多次调用
     const timeoutId = setTimeout(() => {
       console.log('⚡ [useAPIData] Calling fetchData after timeout');
       fetchData();
-    }, 0);
+    }, fetchDelayMs);
     
     return () => {
       clearTimeout(timeoutId);
@@ -380,6 +504,7 @@ export function useAPIData(options: UseAPIDataOptions = {}) {
   return {
     data: state.data,
     loading: state.loading,
+    refreshing: state.refreshing,
     error: state.error,
     refetch,
     isEnabled: enabled,

@@ -325,6 +325,73 @@ export function exportLogisticsData(data: LogisticsExportData) {
   console.log(`✅ 物流监控数据导出成功: ${filename}.csv，共 ${data.courierData.length} 条记录`);
 }
 
+export interface BrandLogisticsExportData {
+  brandData: {
+    brandName: string;
+    orderCount: number;
+    pickupTimeout: number;
+    shippingTimeout: number;
+    deliveryTimeout: number;
+    noUpdate48h: number;
+    pickupRate: number;
+    shippingRate: number;
+    deliveryRate: number;
+    exceptionRate: number;
+  }[];
+  selectedBrand?: string;
+  selectedPlatform?: string;
+  selectedSelfFlag?: string;
+  dateRange?: { from: string; to: string };
+}
+
+/**
+ * 导出物流监控数据（品牌维度）
+ */
+export function exportBrandLogisticsData(data: BrandLogisticsExportData) {
+  const timestamp = new Date().toISOString().split('T')[0];
+  const brandText = data.selectedBrand && data.selectedBrand !== 'all' ? `_${data.selectedBrand}` : '';
+  const platformText = data.selectedPlatform && data.selectedPlatform !== 'all' ? `_${data.selectedPlatform}` : '';
+  const dateRangeText = data.dateRange
+    ? `_${data.dateRange.from}_to_${data.dateRange.to}`
+    : '';
+  const filename = `VF物流监控_品牌数据${brandText}${platformText}${dateRangeText}_${timestamp}`;
+
+  const headers = [
+    '品牌',
+    '订单总数',
+    '超时未揽收',
+    '超时未发运',
+    '超时未签收',
+    '超48h未更新',
+    '揽收率(%)',
+    '发运率(%)',
+    '签收率(%)',
+    '异常率(%)'
+  ];
+
+  const exportRows = data.brandData.map(brand => [
+    brand.brandName || '',
+    brand.orderCount || 0,
+    brand.pickupTimeout || 0,
+    brand.shippingTimeout || 0,
+    brand.deliveryTimeout || 0,
+    brand.noUpdate48h || 0,
+    brand.pickupRate ? brand.pickupRate.toFixed(2) : '0.00',
+    brand.shippingRate ? brand.shippingRate.toFixed(2) : '0.00',
+    brand.deliveryRate ? brand.deliveryRate.toFixed(2) : '0.00',
+    brand.exceptionRate ? brand.exceptionRate.toFixed(2) : '0.00'
+  ]);
+
+  exportToExcel({
+    filename,
+    sheetName: '品牌数据',
+    headers,
+    data: exportRows
+  });
+
+  console.log(`✅ 品牌维度物流监控数据导出成功: ${filename}.csv，共 ${data.brandData.length} 条记录`);
+}
+
 /**
  * 导出时效分析RawData到Excel
  */
@@ -365,7 +432,7 @@ export function exportTimelinessRawData(
     '签收时间', '超时天数', '最后跟踪时间', '最后描述', '是否自管',
     '订单类型', '快递单类型', '配送时长H', '一级警告原因', '二级警告原因',
     '超时级别', '超24H未揽收', '超48H未更新', '首派时间',
-    '实际时效区间', '计划时效区间', '实际时效小时', '计划时效小时'
+    '时效分析类型', '实际时效区间', '计划时效区间', '实际时效小时', '计划时效小时'
   ];
 
   // 转换数据为二维数组
@@ -414,6 +481,7 @@ export function exportTimelinessRawData(
       order['超24H未揽收'] || '',
       order['超48H未更新'] || '',
       order['首派时间'] || '',
+      order['时效分析类型'] || '',
       order['实际时效区间'] || '',
       order['计划时效区间'] || '',
       order['实际时效小时'] || '',

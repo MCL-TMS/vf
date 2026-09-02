@@ -47,6 +47,7 @@ export interface UnifiedCourierData {
   deliveryRate: number;
   pickupRate: number;
   shippingRate: number;
+  avgDeliveryTime: number;
   
   // 市场占比
   percentage: number;
@@ -83,6 +84,10 @@ export function getCourierChineseName(carrierId: string): string {
   return COURIER_NAME_MAPPING[carrierId as keyof typeof COURIER_NAME_MAPPING] || carrierId || '未知快递商';
 }
 
+function resolveCourierDisplayName(courier: any): string {
+  return String(courier?.carrierName || courier?.courierName || courier?.name || courier?.carrierId || '未知快递商');
+}
+
 /**
  * 从总览API数据中提取快递商信息
  */
@@ -95,7 +100,7 @@ function extractCouriersFromOverview(apiData: APIOverviewData): UnifiedCourierDa
     console.log('📊 [UnifiedCourierProcessor] 使用总览API的courierDistribution数据');
     
     courierDistribution.forEach(courier => {
-      const chineseName = getCourierChineseName(courier.carrierId);
+      const displayName = resolveCourierDisplayName(courier);
       
       // 计算效率指标
       const totalOrders = courier.orderCount || 0;
@@ -106,15 +111,17 @@ function extractCouriersFromOverview(apiData: APIOverviewData): UnifiedCourierDa
       const pickupRate = totalOrders > 0 ? (pickedCount / totalOrders * 100) : 0;
       const shippingRate = totalOrders > 0 ? (shippedCount / totalOrders * 100) : 0;
       const deliveryRate = totalOrders > 0 ? (deliveredCount / totalOrders * 100) : 0;
+      const avgDeliveryTime = courier.avgDeliveryTime ?? courier.avg_delivery_time ?? 0;
       
       couriers.push({
         carrierId: courier.carrierId,
-        name: chineseName,
+        name: displayName,
         total: totalOrders,
         orderCount: totalOrders,
         deliveryRate: deliveryRate,
         pickupRate: pickupRate,
         shippingRate: shippingRate,
+        avgDeliveryTime,
         percentage: courier.percentage || 0,
         exceptions: {
           notPickedOver2h: courier.exceptionCount || 0, // 暂时使用总异常数
@@ -152,7 +159,7 @@ function extractCouriersFromLogistics(logisticsData: any): UnifiedCourierData[] 
     console.log('🚚 [UnifiedCourierProcessor] 使用物流API数据');
     
     logisticsCouriers.forEach(courier => {
-      const chineseName = getCourierChineseName(courier.carrierId);
+      const displayName = resolveCourierDisplayName(courier);
       
       // 从物流数据中提取订单统计
       const totalOrders = courier.totalOrders || courier.orderCount || 0;
@@ -164,6 +171,7 @@ function extractCouriersFromLogistics(logisticsData: any): UnifiedCourierData[] 
       const deliveryRate = courier.deliveryRate || (totalOrders > 0 ? (deliveredOrders / totalOrders * 100) : 0);
       const pickupRate = courier.pickupRate || (totalOrders > 0 ? (pickedOrders / totalOrders * 100) : 0);
       const shippingRate = courier.shippingRate || (totalOrders > 0 ? (shippedOrders / totalOrders * 100) : 0);
+      const avgDeliveryTime = courier.avgDeliveryTime ?? courier.avg_delivery_time ?? 0;
       
       // 🔥 修复：支持多种异常数据字段名格式 - 使用 ?? 而非 || 避免0值被跳过
       const pickupTimeout = courier.notPickedOver2h ?? courier.pickupTimeout ?? courier.pickup_timeout ?? 0;
@@ -171,7 +179,7 @@ function extractCouriersFromLogistics(logisticsData: any): UnifiedCourierData[] 
       const updateTimeout = courier.timeout48hOrders ?? courier.notUpdatedOver48h ?? courier.noUpdate48h ?? courier.no_update_48h ?? 0;
       const deliveryTimeout = courier.notDeliveredOver3days ?? courier.deliveryTimeout ?? courier.delivery_timeout ?? 0;
       
-      console.log(`🔍 [UnifiedCourierProcessor] ${chineseName} 异常数据提取:`, {
+      console.log(`🔍 [UnifiedCourierProcessor] ${displayName} 异常数据提取:`, {
         原始courier对象所有字段: Object.keys(courier),
         原始数据字段: {
           pickup_timeout: courier.pickup_timeout,
@@ -198,12 +206,13 @@ function extractCouriersFromLogistics(logisticsData: any): UnifiedCourierData[] 
       
       couriers.push({
         carrierId: courier.carrierId,
-        name: chineseName,
+        name: displayName,
         total: totalOrders,
         orderCount: totalOrders,
         deliveryRate: deliveryRate,
         pickupRate: pickupRate,
         shippingRate: shippingRate,
+        avgDeliveryTime,
         percentage: 0, // 需要后续计算
         exceptions: {
           // 🔥 修复：使用标准的驼峰命名字段
@@ -551,7 +560,7 @@ export function generateDetailedConsistencyReport(
       
       if (isSignificant) {
         analysis = `显著差异 - 订单数相差${ordersDiff}单(${ordersPercentageDiff.toFixed(1)}%), 配送率相差${deliveryRateDiff.toFixed(1)}%`;
-        issues.push(`${getCourierChineseName(carrierId)}数据差异显著: ${analysis}`);
+        issues.push(`${overviewCourier?.name || logisticsCourier?.name || carrierId}数据差异显著: ${analysis}`);
       } else {
         analysis = `轻微差异 - 订单数相差${ordersDiff}单(${ordersPercentageDiff.toFixed(1)}%), 配送率相差${deliveryRateDiff.toFixed(1)}%`;
       }
@@ -559,17 +568,17 @@ export function generateDetailedConsistencyReport(
     } else if (overviewCourier && !logisticsCourier) {
       analysis = '仅在总览接口中存在';
       isSignificant = true;
-      issues.push(`${getCourierChineseName(carrierId)}仅在总览接口中存在`);
+      issues.push(`${overviewCourier.name || carrierId}仅在总览接口中存在`);
       
     } else if (!overviewCourier && logisticsCourier) {
       analysis = '仅在物流接口中存在';
       isSignificant = true;
-      issues.push(`${getCourierChineseName(carrierId)}仅在物流接口中存在`);
+      issues.push(`${logisticsCourier.name || carrierId}仅在物流接口中存在`);
     }
     
     courierComparison.push({
       carrierId,
-      name: getCourierChineseName(carrierId),
+      name: overviewCourier?.name || logisticsCourier?.name || carrierId,
       overviewData: overviewCourier ? {
         totalOrders: overviewCourier.total,
         deliveryRate: overviewCourier.deliveryRate,

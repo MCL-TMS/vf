@@ -315,7 +315,7 @@ export function ImpactChart({
         
         return {
           brand: item.brandName || item.brand_name || '未知品牌',
-          courier: item.courierId || item.carrier_id || '未知快递商',
+          courier: item.carrierName || item.courierName || item.courierId || item.carrier_id || '未知快递商',
           totalOrders: item.totalOrders || 0,
           normalOrders: normalOrders,
           totalExceptionOrders: totalExceptionOrders,

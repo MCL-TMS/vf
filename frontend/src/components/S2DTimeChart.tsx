@@ -63,7 +63,7 @@ export function S2DTimeChart({ selectedBrand, apiData, isLoading = false, access
         'ZTO': '中通快递'
       };
 
-      const courierName = CARRIER_NAME_MAP[carrierId] || carrierId;
+      const courierName = carrierStat.carrierName || CARRIER_NAME_MAP[carrierId] || carrierId;
 
       // 计算完成率（Plan / Actual * 100，Plan是目标，Actual是实际）
       const completionRate = avgActualHours > 0 ? (avgPlanHours / avgActualHours) * 100 : 100;
@@ -150,7 +150,7 @@ export function S2DTimeChart({ selectedBrand, apiData, isLoading = false, access
         }
       }
 
-      const courierName = CARRIER_NAME_MAP[carrierId] || carrierId;
+      const courierName = stat.carrierName || CARRIER_NAME_MAP[carrierId] || carrierId;
       const actualCats = stat.actualCategories || {};
       const totalOrders = stat.total || 0;
 

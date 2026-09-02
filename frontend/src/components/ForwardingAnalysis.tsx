@@ -12,6 +12,7 @@ import { useAuth } from "../contexts/AuthContext"; // 🔥 新增：引入权限
 import type { DateRange } from "../data/types";
 
 const COLORS = ['#42b0d5', '#119c85', '#6ca926', '#f3870c'];
+const formatNumber = (value: number | null | undefined) => Number(value || 0).toLocaleString();
 
 interface ForwardingAnalysisProps {
   useRealData?: boolean;
@@ -321,7 +322,7 @@ export function ForwardingAnalysis({
             <div className="grid grid-cols-2 gap-4">
               <div className="text-center p-4 border border-functional-light-grey rounded-lg">
                 <div className="text-2xl font-semibold text-maersk-blue">
-                  {addressChange?.count.toLocaleString()}
+                  {formatNumber(addressChange?.count)}
                 </div>
                 <div className="text-sm text-functional-mid-grey">改地址</div>
                 <Badge variant="outline" className="mt-1 maersk-badge-secondary">
@@ -330,7 +331,7 @@ export function ForwardingAnalysis({
               </div>
               <div className="text-center p-4 border border-functional-light-grey rounded-lg">
                 <div className="text-2xl font-semibold text-accent-mid-orange">
-                  {outOfRange?.count.toLocaleString()}
+                  {formatNumber(outOfRange?.count)}
                 </div>
                 <div className="text-sm text-functional-mid-grey">超区转寄</div>
                 <Badge variant="outline" className="mt-1 maersk-badge-secondary">
@@ -356,7 +357,7 @@ export function ForwardingAnalysis({
                     ))}
                   </Pie>
                   <Tooltip 
-                    formatter={(value) => [value, '数量']} 
+                    formatter={(value) => [formatNumber(Number(value)), '数量']} 
                     contentStyle={{
                       backgroundColor: 'var(--maersk-white)',
                       border: '1px solid var(--functional-light-grey)',
@@ -380,7 +381,7 @@ export function ForwardingAnalysis({
                   <XAxis dataKey="name" />
                   <YAxis />
                   <Tooltip 
-                    formatter={(value) => [value, '数量']}
+                    formatter={(value) => [formatNumber(Number(value)), '数量']}
                     contentStyle={{
                       backgroundColor: 'var(--maersk-white)',
                       border: '1px solid var(--functional-light-grey)',
@@ -404,7 +405,7 @@ export function ForwardingAnalysis({
                     <Badge variant="outline">{courier.percentage}%</Badge>
                   </div>
                   <div className="text-2xl font-semibold text-maersk-blue mt-2">
-                    {courier.count.toLocaleString()}
+                    {formatNumber(courier.count)}
                   </div>
                   <div className="text-xs text-functional-mid-grey">改地址订单</div>
                 </div>
@@ -434,7 +435,7 @@ export function ForwardingAnalysis({
                   </div>
                   <div className="flex items-baseline space-x-2">
                     <div className="text-3xl font-bold text-maersk-blue">
-                      {courier.count.toLocaleString()}
+                      {formatNumber(courier.count)}
                     </div>
                     <div className="text-sm text-functional-mid-grey">超区转寄订单</div>
                   </div>
@@ -476,7 +477,7 @@ export function ForwardingAnalysis({
                             <div className="flex justify-between items-start mb-1">
                               <span className={`font-medium ${colorScheme.textDark}`}>{dest.province}</span>
                               <div className="text-right">
-                                <div className={`text-sm font-semibold ${colorScheme.textDark}`}>{dest.count}单</div>
+                                <div className={`text-sm font-semibold ${colorScheme.textDark}`}>{formatNumber(dest.count)}单</div>
                                 <div className={`text-xs ${colorScheme.textMid}`}>{dest.percentage}%</div>
                               </div>
                             </div>
@@ -502,12 +503,12 @@ export function ForwardingAnalysis({
                 <div>
                   <div className="font-semibold text-functional-dark-grey">总省份数</div>
                   <div className="text-lg text-maersk-black">
-                    {Object.values(provincesByCourier).flat().length}
+                    {formatNumber(Object.values(provincesByCourier).flat().length)}
                   </div>
                 </div>
                 <div>
                   <div className="font-semibold text-functional-dark-blue">超区订单</div>
-                  <div className="text-lg text-functional-dark-blue">{outOfRange?.count.toLocaleString()}</div>
+                  <div className="text-lg text-functional-dark-blue">{formatNumber(outOfRange?.count)}</div>
                 </div>
                 <div>
                   <div className="font-semibold text-accent-dark-orange">占比</div>
