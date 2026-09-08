@@ -87,7 +87,7 @@ src/backend/
 │   │   └── rateLimitMiddleware.js   # API 限频保护  #API rate limiting
 │   │
 │   ├── utils/
-│   │   ├── passwordUtils.js         # 密码校验
+│   │   ├── passwordUtils.js         # 密码处理与校验 #Password MD5
 │   │   ├── apiError.js              # 规范化异常处理，定义统一错误响应格式 #Unified error response format
 │   │   ├── mfaOtpStore.js(To be completed)           # 多因素认证存储 (Redis/Memory) #MFA Setup
 │   │   ├── emailSender.js(To be completed)           # 系统级邮件分发服务 (SMTP) #System email service
