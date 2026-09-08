@@ -421,7 +421,7 @@ export function exportTimelinessRawData(
     ? `_${filterInfo.dateRange.from}_to_${filterInfo.dateRange.to}`
     : '';
   
-  const filename = `VF时效分析RawData_${analysisText}${brandText}${dateRangeText}_${timestamp}`;
+  const filename = `时效分析RawData_${analysisText}${brandText}${dateRangeText}_${timestamp}`;
 
   // Excel表头（根据后端返回的字段顺序）
   const headers = [

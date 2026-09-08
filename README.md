@@ -87,7 +87,7 @@ src/backend/
 │   │   └── rateLimitMiddleware.js   # API 限频保护  #API rate limiting
 │   │
 │   ├── utils/
-│   │   ├── passwordUtils.js         # 密码处理 #Password MD5
+│   │   ├── passwordUtils.js         # 密码处理与校验 #Password MD5
 │   │   ├── apiError.js              # 规范化异常处理，定义统一错误响应格式 #Unified error response format
 │   │   ├── mfaOtpStore.js(To be completed)           # 多因素认证存储 (Redis/Memory) #MFA Setup
 │   │   ├── emailSender.js(To be completed)           # 系统级邮件分发服务 (SMTP) #System email service
@@ -218,6 +218,30 @@ cd frontend && npm run dev
 - [ ] Oracle 数据库连接正常
       Oracle database connection verified
 - [ ] 端口 `3001`（后端）与 `3000`（前端）未被占用
+
+## 🔁 CI/CD
+
+GitHub Actions 配置位于 `.github/workflows/`：
+
+- `ci.yml`：对主要分支的 push 和 Pull Request 执行前端生产构建、后端 JavaScript 语法检查和高危依赖审计。
+- `deploy.yml`：仅支持手动触发，先构建，再通过 SSH 上传前端产物和后端代码，执行 `npm ci --omit=dev`、重启 `cms_dashboard_backend` systemd 服务，并检查 `/api/health`。
+- `deploy.yml`：手动触发时默认 `dry_run=true`，只检查服务器目录、SSH、sudo、systemd、Nginx 和证书，不修改线上文件；确认通过后将 `dry_run` 改为 `false` 执行正式部署。
+
+启用部署前，在 GitHub 的 `production` Environment 中配置以下 Secrets：
+
+| Secret | 用途 |
+| --- | --- |
+| `SSH_HOST` | 部署服务器地址 |
+| `SSH_PORT` | SSH 端口，可选，默认 `22` |
+| `SSH_USER` | 部署用户 |
+| `SSH_PRIVATE_KEY` | 部署用户对应的 SSH 私钥 |
+| `DEPLOY_PATH` | 后端应用目录，填写 `/home/evelyn.zou/apps/cms-dashboard/backend` |
+
+当前部署目标约定如下：前端先上传到 `/home/evelyn.zou/apps/cms-dashboard/frontend`，再由 sudo 清理并移动到 `/var/www/mcl`；Nginx 配置为 `/etc/nginx/conf.d/cms_dashboard_dev.conf`；证书为 `/etc/nginx/ssl/fullchain.crt` 和 `/etc/nginx/ssl/cms-dashboard.ocf.fulfillment.maersk.com.cn.key`；后端 systemd 服务为 `cms_dashboard_backend`。
+
+后端环境文件由流水线从 `/home/evelyn.zou/apps/cms-dashboard/backend/.env` 同步到 `/etc/cms-dashboard/backend.env`，并执行 `chown root:root`、`chmod 600`。部署用户需要允许无交互执行前端文件切换、SELinux `restorecon`、环境文件复制和 systemd/Nginx 管理命令。
+
+部署用户需要具备后端目录和 `/var/www/mcl` 写权限，并允许无交互执行 `sudo systemctl restart cms_dashboard_backend`、`sudo systemctl is-active cms_dashboard_backend`、`sudo nginx -t` 和 `sudo systemctl reload nginx`。服务器上的 `.env`、`uploads`、日志和调试目录不会被流水线覆盖。
       Ports `3001` (backend) and `3000` (frontend) are free
 - [ ] 前后端依赖已安装完成
       Frontend & backend dependencies installed
