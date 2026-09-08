@@ -121,6 +121,7 @@ jobs:
           SSH_HOST: ${{ secrets.SSH_HOST }}
         run: |
           set -euo pipefail
+          install -m 700 -d ~/.ssh
           if [ -n "$SSH_PRIVATE_KEY_B64" ]; then
             printf '%s' "$SSH_PRIVATE_KEY_B64" | base64 --decode > ~/.ssh/deploy_key
           elif [ -n "$SSH_PRIVATE_KEY" ]; then
@@ -137,8 +138,6 @@ jobs:
             echo "SSH_PORT is empty"
             exit 1
           }
-          install -m 700 -d ~/.ssh
-          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
           ssh-keygen -y -f ~/.ssh/deploy_key >/dev/null || {
             echo "SSH_PRIVATE_KEY is not a valid private key"
