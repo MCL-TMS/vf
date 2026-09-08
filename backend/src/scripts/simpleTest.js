@@ -92,6 +92,7 @@ try {
   process.exit(1);
 }
 
+async function main() {
 // 步骤3: 创建数据库连接
 console.log('\n📋 步骤3: 创建数据库连接...');
 let connection;
@@ -200,3 +201,9 @@ console.log('2. npm run dev      # 启动开发服务器');
 console.log('='.repeat(60));
 
 process.exit(0);
+}
+
+main().catch((error) => {
+  console.error('❌ 简化数据库测试未完成:', error);
+  process.exit(1);
+});
