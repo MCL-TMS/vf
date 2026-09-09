@@ -70,7 +70,8 @@
   "overrides": {
     "esbuild": "0.28.1",
     "lodash": "^4.17.21",
-    "busboy": "^1.6.0"
+    "busboy": "^1.6.0",
+    "qs": "^6.16.0"
   },
   "devDependencies": {
     "@tailwindcss/vite": "4.1.12",
