@@ -219,86 +219,10 @@ cd frontend && npm run dev
       Oracle database connection verified
 - [ ] 端口 `3001`（后端）与 `3000`（前端）未被占用
 
-## 🔁 CI/CD
-
-GitHub Actions 配置位于 `.github/workflows/`：
-
-- `ci.yml`：对主要分支的 push 和 Pull Request 执行前端生产构建、后端 JavaScript 语法检查和高危依赖审计。
-- `deploy.yml`：仅支持手动触发，先构建，再通过 SSH 上传前端产物和后端代码，执行 `npm ci --omit=dev`、重启 `cms_dashboard_backend` systemd 服务，并检查 `/api/health`。
-- `deploy.yml`：手动触发时默认 `dry_run=true`，只检查服务器目录、SSH、sudo、systemd、Nginx 和证书，不修改线上文件；确认通过后将 `dry_run` 改为 `false` 执行正式部署。
-
-启用部署前，在 GitHub 的 `production` Environment 中配置以下 Secrets：
-
-| Secret | 用途 |
-| --- | --- |
-| `SSH_HOST` | 部署服务器地址 |
-| `SSH_PORT` | SSH 端口，可选，默认 `22` |
-| `SSH_USER` | 部署用户 |
-| `SSH_PRIVATE_KEY` | 部署用户对应的 SSH 私钥 |
-| `DEPLOY_PATH` | 后端应用目录，填写 `/home/evelyn.zou/apps/cms-dashboard/backend` |
-
-当前部署目标约定如下：前端先上传到 `/home/evelyn.zou/apps/cms-dashboard/frontend`，再由 sudo 清理并移动到 `/var/www/mcl`；Nginx 配置为 `/etc/nginx/conf.d/cms_dashboard_dev.conf`；证书为 `/etc/nginx/ssl/fullchain.crt` 和 `/etc/nginx/ssl/cms-dashboard.ocf.fulfillment.maersk.com.cn.key`；后端 systemd 服务为 `cms_dashboard_backend`。
-
-后端环境文件由流水线从 `/home/evelyn.zou/apps/cms-dashboard/backend/.env` 同步到 `/etc/cms-dashboard/backend.env`，并执行 `chown root:root`、`chmod 600`。部署用户需要允许无交互执行前端文件切换、SELinux `restorecon`、环境文件复制和 systemd/Nginx 管理命令。
-
-部署用户需要具备后端目录和 `/var/www/mcl` 写权限，并允许无交互执行 `sudo systemctl restart cms_dashboard_backend`、`sudo systemctl is-active cms_dashboard_backend`、`sudo nginx -t` 和 `sudo systemctl reload nginx`。服务器上的 `.env`、`uploads`、日志和调试目录不会被流水线覆盖。
-      Ports `3001` (backend) and `3000` (frontend) are free
-- [ ] 前后端依赖已安装完成
-      Frontend & backend dependencies installed
-- [ ] Oracle 用户具备 `SELECT` 权限（BAS_CODES / TSK_LIST_TASK / DOC_COMPLAINT）
-      Oracle user has `SELECT` permission on required tables
-
 ---
 
 ## ⚙️ 环境配置| Environment Configuration
-
-### 后端配置 (`backend/.env`)
-
-```env
-# ==================== 环境配置 ====================
-NODE_ENV=development
-# ==================== 数据库配置 ====================
-ORACLE_CONNECT_STRING=yourdatabase:1521/severname
-ORACLE_USER=yourusername
-ORACLE_PASSWORD=yourpassword
-ORACLE_POOL_MIN=2
-ORACLE_POOL_MAX=10
-ORACLE_POOL_INCREMENT=2
-ORACLE_POOL_TIMEOUT=60
-# ==================== 服务器配置 ====================
-API_PORT=3001
-HOST=0.0.0.0
-CORS_ORIGIN=http://localhost:3000
-# ==================== JWT配置 ====================
-JWT_SECRET=xxxxxxxxxxxxx
-JWT_REFRESH_SECRET=xxxxxxxxxxxxxx
-JWT_EXPIRES_IN=15m
-JWT_REFRESH_EXPIRES_IN=7d
-
-# ==================== 防暴力破解配置 ====================
-MAX_LOGIN_ATTEMPTS=5
-LOGIN_LOCK_TIME=900000
-ATTEMPT_WINDOW=900000
-
-# ==================== HTTPS配置 ====================
-FORCE_HTTPS=false         # 开发环境不强制HTTPS
-HTTPS_REDIRECT=false
-# ==================== 日志级别 ====================
-LOG_LEVEL=debug
-
-# ==================== DIFY配置 ====================
-VITE_DIFY_API_KEY =your_key
-VITE_DIFY_API_URL=https://service-dify-devs.maersk-digital.net/v1
-
-# ==================== Redis配置 ====================
-REDIS_ENABLED=true
-REDIS_URL=redis://127.0.0.1:6379/0
-REDIS_KEY_PREFIX=dev:auth
-API_RATE_LIMIT_MAX=1000
-API_RATE_LIMIT_WINDOW_MS=900000
-
-
----
+******
 
 ## 🧩 功能特性| Features
 
@@ -325,7 +249,7 @@ API_RATE_LIMIT_WINDOW_MS=900000
 ---
 
 ## 🌐 访问地址
-
+local版：
 | 服务         | 地址                              |
 | ------------ | --------------------------------- |
 | 前端应用     | http://localhost:3000             |
@@ -418,66 +342,6 @@ kill -9 <PID>
 ```bash
 npm run build
 ```
-
----
-
-## 🚀 生产部署 | Production Deployment
-
-### 前端（Vite Build + Nginx）
-
-```bash
-cd frontend
-npm install
-npm run build
-```
-
-构建产物在 `frontend/build`，由 Nginx 托管静态文件，并将 `/api` 反向代理到后端 3001。
-
-建议域名：
-- PROD: `cms.dashboard.ocf.fulfillment.maersk.com.cn`
-- DEV: `stage-cms.dashboard.ocf.fulfillment.maersk.com.cn`
-
-Nginx 示例配置文件：`docs/deploy/nginx/mcl-ct.conf`
-
-HTTPS(443) 完整配置文件：`docs/deploy/nginx/mcl-ct-https.conf`
-
-
-> 重要：后端程序默认读取 `backend/.env`。
->
-> 部署时请将对应环境文件复制为 `.env`：
->
-> - PROD: `cp backend/.env.prod.example backend/.env`
-> - STAGE: `cp backend/.env.stage.example backend/.env`
-
-
-### 后端守护（PM2）
-
-```bash
-cd backend
-npm install
-pm2 start ../docs/deploy/pm2/ecosystem.config.cjs --env production
-pm2 save
-pm2 startup
-```
-
-PM2 配置文件：`docs/deploy/pm2/ecosystem.config.cjs`
-
-后端生产环境变量建议：
-- `HOST=0.0.0.0`
-- `API_PORT=3001`
-- `CORS_ORIGIN=https://cms.dashboard.ocf.fulfillment.maersk.com.cn`
-- Stage 环境可设置：`CORS_ORIGIN=https://stage-cms.dashboard.ocf.fulfillment.maersk.com.cn`
-
-### 后端守护（systemd）
-
-```bash
-sudo cp docs/deploy/systemd/mcl-ct-backend.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now mcl-ct-backend
-sudo systemctl status mcl-ct-backend
-```
-
-systemd 配置文件：`docs/deploy/systemd/mcl-ct-backend.service`
 
 ---
 
