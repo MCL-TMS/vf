@@ -1,0 +1,22 @@
+[Unit]
+Description=CMS Dashboard Backend Service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=evelyn.zou
+WorkingDirectory=/home/evelyn.zou/apps/cms-dashboard/backend
+ExecStart=/usr/bin/node src/api-server.js
+Restart=on-failure
+RestartSec=5
+Environment=NODE_ENV=production
+EnvironmentFile=/etc/cms-dashboard/backend.env
+NoNewPrivileges=true
+PrivateTmp=true
+UMask=0027
+TimeoutStopSec=30
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target

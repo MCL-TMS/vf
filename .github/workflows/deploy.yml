@@ -1,15 +1,12 @@
 name: Deploy
 
 on:
+  push:
+    branches: [main, develop]
   workflow_dispatch:
     inputs:
-      ref:
-        description: Git ref to deploy
-        required: true
-        default: main
-        type: string
       dry_run:
-        description: Only verify SSH, paths, sudo, systemd and Nginx; do not deploy
+        description: Verify the target server only; do not deploy files
         required: true
         default: true
         type: boolean
@@ -18,33 +15,34 @@ permissions:
   contents: read
 
 concurrency:
-  group: production-deploy
+  group: deploy-${{ github.ref == 'refs/heads/main' && 'production' || 'test' }}
   cancel-in-progress: false
 
 jobs:
   build:
     name: Build release
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     env:
-      NODE_VERSION: 20
+      NODE_VERSION: 22
+      VITE_API_BASE_URL: /api
     steps:
-      - name: Checkout selected ref
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.ref }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
 
-      - name: Install frontend dependencies
+      - name: Install and build frontend
         working-directory: frontend
-        run: npm ci
-
-      - name: Build frontend
-        working-directory: frontend
-        run: npm run build
+        run: |
+          npm ci
+          npm run build
 
       - name: Install backend dependencies
         working-directory: backend
@@ -56,145 +54,92 @@ jobs:
           set -euo pipefail
           find backend/src -type f -name '*.js' -print0 | xargs -0 -n1 node --check
 
+      - name: Audit backend dependencies
+        working-directory: backend
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Validate deployment script
+        run: |
+          bash -n deploy/deploy.sh
+          shellcheck deploy/deploy.sh
+
       - name: Package release
         run: |
-          tar -czf release-${{ github.sha }}.tgz \
-            --exclude='./backend/node_modules' \
-            --exclude='./backend/.env' \
-            --exclude='./backend/debug' \
-            --exclude='./backend/logs' \
-            --exclude='./backend/uploads' \
-            --exclude='./frontend/node_modules' \
-            --exclude='./frontend/build' \
-            backend frontend
+          rm -rf frontend/build/.env*
+          tar -czf release.tgz \
+            --exclude='backend/node_modules' \
+            --exclude='backend/.env' \
+            --exclude='backend/.env.*' \
+            --exclude='backend/debug' \
+            --exclude='backend/logs' \
+            --exclude='backend/uploads' \
+            backend frontend/build deploy/deploy.sh
 
       - name: Upload release artifact
         uses: actions/upload-artifact@v4
         with:
           name: release-${{ github.sha }}
-          path: release-${{ github.sha }}.tgz
+          path: release.tgz
           if-no-files-found: error
           retention-days: 7
 
   deploy:
-    name: Deploy to server
+    name: Deploy ${{ github.ref == 'refs/heads/main' && 'production' || 'test' }}
     needs: build
-    runs-on: ubuntu-latest
-    environment: production
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop'
+    runs-on: [self-hosted, linux, x64, "${{ github.ref == 'refs/heads/main' && 'prod' || 'test' }}"]
+    environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'test' }}
+    timeout-minutes: 30
     env:
-      SSH_PORT: ${{ secrets.SSH_PORT || '22' }}
-      SYSTEMD_SERVICE: cms_dashboard_backend
-      FRONTEND_STAGE_ROOT: /home/evelyn.zou/apps/cms-dashboard/frontend
-      NGINX_WEB_ROOT: /var/www/mcl
-      NGINX_CONF_PATH: /etc/nginx/conf.d/cms_dashboard_dev.conf
-      SSL_CERT_PATH: /etc/nginx/ssl/fullchain.crt
-      SSL_KEY_PATH: /etc/nginx/ssl/cms-dashboard.ocf.fulfillment.maersk.com.cn.key
-      BACKEND_ENV_SOURCE: /home/evelyn.zou/apps/cms-dashboard/backend/.env
-      BACKEND_ENV_TARGET: /etc/cms-dashboard/backend.env
+      DEPLOY_ENVIRONMENT: ${{ github.ref == 'refs/heads/main' && 'prod' || 'test' }}
+      APP_ROOT: ${{ vars.APP_ROOT || vars.DEPLOY_PATH || '/home/evelyn.zou/apps/cms-dashboard' }}
+      DEPLOY_PATH: ${{ vars.DEPLOY_PATH || vars.APP_ROOT || '/home/evelyn.zou/apps/cms-dashboard' }}
+      FRONTEND_STAGE_ROOT: ${{ vars.FRONTEND_STAGE_ROOT || vars.NGINX_WEB_ROOT || '/home/evelyn.zou/apps/cms-dashboard/frontend/build' }}
+      FRONTEND_DIR: ${{ vars.NGINX_WEB_ROOT || vars.FRONTEND_DIR || '/var/www/mcl' }}
+      SYSTEMD_SERVICE: ${{ vars.SYSTEMD_SERVICE || vars.BACKEND_SERVICE || 'cms_dashboard_backend' }}
+      BACKEND_SERVICE: ${{ vars.SYSTEMD_SERVICE || vars.BACKEND_SERVICE || 'cms_dashboard_backend' }}
+      BACKEND_ENV_FILE: ${{ vars.BACKEND_ENV_TARGET || vars.BACKEND_ENV_FILE || '/etc/cms-dashboard/backend.env' }}
+      BACKEND_ENV_TARGET: ${{ vars.BACKEND_ENV_TARGET || vars.BACKEND_ENV_FILE || '/etc/cms-dashboard/backend.env' }}
+      HEALTH_URL: ${{ vars.HEALTH_URL || 'http://127.0.0.1:3001/api/health' }}
     steps:
-      - name: Checkout selected ref
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.ref }}
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-
-      - name: Build frontend for deployment
-        working-directory: frontend
-        run: |
-          npm ci
-          npm run build
-
-      - name: Install SSH key
-        env:
-          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-          SSH_PRIVATE_KEY_B64: ${{ secrets.SSH_PRIVATE_KEY_B64 }}
-          SSH_HOST: ${{ secrets.SSH_HOST }}
+      - name: Prepare isolated release directory
+        id: release
+        shell: bash
         run: |
           set -euo pipefail
-          install -m 700 -d ~/.ssh
-          if [ -n "$SSH_PRIVATE_KEY_B64" ]; then
-            printf '%s' "$SSH_PRIVATE_KEY_B64" | base64 --decode > ~/.ssh/deploy_key
-          elif [ -n "$SSH_PRIVATE_KEY" ]; then
-            printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/deploy_key
-          else
-            echo "SSH_PRIVATE_KEY_B64 or SSH_PRIVATE_KEY is missing in the production environment secrets"
-            exit 1
+          release_dir=$(mktemp -d "${RUNNER_TEMP}/cms-release.XXXXXXXX")
+          echo "RELEASE_DIR=${release_dir}" >> "$GITHUB_ENV"
+          echo "path=${release_dir}" >> "$GITHUB_OUTPUT"
+
+      - name: Download release artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: release-${{ github.sha }}
+          path: ${{ steps.release.outputs.path }}
+
+      - name: Extract release artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar -xzf "${RELEASE_DIR}/release.tgz" -C "$RELEASE_DIR"
+
+      - name: Verify server prerequisites
+        shell: bash
+        run: |
+          bash "${RELEASE_DIR}/deploy/deploy.sh" "$DEPLOY_ENVIRONMENT" "$RELEASE_DIR" --dry-run
+
+      - name: Install script and deploy
+        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -m 0755 "${RELEASE_DIR}/deploy/deploy.sh" /home/evelyn.zou/deploy.sh
+          bash /home/evelyn.zou/deploy.sh "$DEPLOY_ENVIRONMENT" "$RELEASE_DIR"
+
+      - name: Remove temporary release
+        if: always()
+        shell: bash
+        run: |
+          if [[ -n "${RELEASE_DIR:-}" && "$RELEASE_DIR" == "$RUNNER_TEMP"/cms-release.* ]]; then
+            rm -rf -- "$RELEASE_DIR"
           fi
-          test -n "$SSH_HOST" || {
-            echo "SSH_HOST is missing in the production environment secrets"
-            exit 1
-          }
-          test -n "$SSH_PORT" || {
-            echo "SSH_PORT is empty"
-            exit 1
-          }
-          chmod 600 ~/.ssh/deploy_key
-          ssh-keygen -y -f ~/.ssh/deploy_key >/dev/null || {
-            echo "SSH_PRIVATE_KEY is not a valid private key"
-            exit 1
-          }
-          ssh-keyscan -T 10 -p "$SSH_PORT" -H "$SSH_HOST" >> ~/.ssh/known_hosts || {
-            echo "Unable to reach SSH_HOST=$SSH_HOST on SSH_PORT=$SSH_PORT"
-            exit 1
-          }
-
-      - name: Upload application files
-        if: ${{ !inputs.dry_run }}
-        env:
-          SSH_HOST: ${{ secrets.SSH_HOST }}
-          SSH_USER: ${{ secrets.SSH_USER }}
-          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
-        run: |
-          set -euo pipefail
-          test -n "$SSH_HOST"
-          test -n "$SSH_USER"
-          test -n "$DEPLOY_PATH"
-          ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" "mkdir -p '$DEPLOY_PATH' '$FRONTEND_STAGE_ROOT' '$NGINX_WEB_ROOT'"
-          rsync -az --delete \
-            --exclude='.env' \
-            --exclude='node_modules/' \
-            --exclude='debug/' \
-            --exclude='logs/' \
-            --exclude='uploads/' \
-            -e "ssh -i ~/.ssh/deploy_key -p $SSH_PORT" \
-            backend/ "$SSH_USER@$SSH_HOST:$DEPLOY_PATH/"
-          rsync -az --delete \
-            -e "ssh -i ~/.ssh/deploy_key -p $SSH_PORT" \
-            frontend/build/ "$SSH_USER@$SSH_HOST:$FRONTEND_STAGE_ROOT/"
-
-      - name: Install backend and restart service
-        if: ${{ !inputs.dry_run }}
-        env:
-          SSH_HOST: ${{ secrets.SSH_HOST }}
-          SSH_USER: ${{ secrets.SSH_USER }}
-          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
-        run: |
-          set -euo pipefail
-          ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" \
-            "test -f '$NGINX_CONF_PATH' && test -f '$SSL_CERT_PATH' && test -f '$SSL_KEY_PATH' && test -f '$BACKEND_ENV_SOURCE' && cd '$DEPLOY_PATH' && npm ci --omit=dev && sudo mkdir -p /etc/cms-dashboard && sudo cp '$BACKEND_ENV_SOURCE' '$BACKEND_ENV_TARGET' && sudo chown root:root '$BACKEND_ENV_TARGET' && sudo chmod 600 '$BACKEND_ENV_TARGET' && sudo rm -rf '$NGINX_WEB_ROOT'/* && sudo mv '$FRONTEND_STAGE_ROOT'/* '$NGINX_WEB_ROOT'/ && sudo chmod -R 755 '$NGINX_WEB_ROOT' && sudo restorecon -Rv '$NGINX_WEB_ROOT' && sudo systemctl restart '$SYSTEMD_SERVICE' && sudo systemctl is-active --quiet '$SYSTEMD_SERVICE' && sudo nginx -t && sudo systemctl reload nginx"
-
-      - name: Verify server prerequisites (dry run)
-        if: ${{ inputs.dry_run }}
-        env:
-          SSH_HOST: ${{ secrets.SSH_HOST }}
-          SSH_USER: ${{ secrets.SSH_USER }}
-          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
-        run: |
-          set -euo pipefail
-          ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" \
-            "test -d '$DEPLOY_PATH' && test -d '$FRONTEND_STAGE_ROOT' && test -d '$NGINX_WEB_ROOT' && test -f '$BACKEND_ENV_SOURCE' && test -f '$NGINX_CONF_PATH' && test -f '$SSL_CERT_PATH' && test -f '$SSL_KEY_PATH' && cd '$DEPLOY_PATH' && sudo -n -v && sudo systemctl is-active --quiet '$SYSTEMD_SERVICE' && sudo nginx -t"
-
-      - name: Verify deployment health endpoint
-        env:
-          SSH_HOST: ${{ secrets.SSH_HOST }}
-          SSH_USER: ${{ secrets.SSH_USER }}
-        run: |
-          set -euo pipefail
-          ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" \
-            "curl --fail --silent --show-error --max-time 20 http://127.0.0.1:3001/api/health >/dev/null"

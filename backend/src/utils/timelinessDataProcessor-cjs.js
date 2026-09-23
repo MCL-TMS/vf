@@ -51,6 +51,48 @@ function saveDebugSnapshot(debugDir, prefix, debugData) {
   return debugFilePath;
 }
 
+function getActualWithinPlanCount(planHours, actual24h, actual48h, actual72h, actualOver72h) {
+  if (planHours <= 24) return actual24h;
+  if (planHours <= 48) return actual24h + actual48h;
+  if (planHours <= 72) return actual24h + actual48h + actual72h;
+  return actual24h + actual48h + actual72h + actualOver72h;
+}
+
+function findMatchedTimeliness(timelinessMap, brandCode, carrierId, serviceTypeName, orderTypeName, cityName) {
+  if (!brandCode || !carrierId || !cityName) {
+    return { matchKey: null, matchedTimeValue: null };
+  }
+
+  const serviceName = serviceTypeName || '';
+  const orderName = (orderTypeName || '').toString().trim();
+  const orderTypeCandidates = orderName && orderName !== '*' ? [orderName, '*'] : ['*'];
+  const buildKeys = (brand, service) => orderTypeCandidates.map((orderType) => `${brand}|${carrierId}|${service}|${orderType}|${cityName}`);
+  const shouldUseWildcardBrand = brandCode !== '*' && orderName === '电商发货';
+  const candidateKeys = [
+    ...buildKeys(brandCode, serviceName)
+  ];
+
+  if (serviceName) {
+    candidateKeys.push(...buildKeys(brandCode, ''));
+  }
+
+  if (shouldUseWildcardBrand) {
+    candidateKeys.push(...buildKeys('*', serviceName));
+    if (serviceName) {
+      candidateKeys.push(...buildKeys('*', ''));
+    }
+  }
+
+  for (const key of candidateKeys) {
+    const matchedTimeValue = timelinessMap.get(key);
+    if (matchedTimeValue) {
+      return { matchKey: key, matchedTimeValue };
+    }
+  }
+
+  return { matchKey: candidateKeys[0], matchedTimeValue: null };
+}
+
 /**
  * S2D时效分析（Ship to Delivery）
  * 对比Plan时效目标 vs Actual实际表现
@@ -64,6 +106,8 @@ function saveDebugSnapshot(debugDir, prefix, debugData) {
  * @returns {Promise<Object>} 分析结果
  */
 async function analyzeTimelinessPerformance(options = {}) {
+  const analysisTypeForError = options.analysisType || 'S2D';
+
   try {
     const {
       dateRange,
@@ -99,7 +143,7 @@ async function analyzeTimelinessPerformance(options = {}) {
       return await analyzeS2DPerformance(options);
     }
   } catch (error) {
-    console.error(`❌ ${analysisType || 'S2D'}时效分析失败:`, error);
+    console.error(`❌ ${analysisTypeForError}时效分析失败:`, error);
     throw error;
   }
 }
@@ -166,26 +210,23 @@ async function analyzeS2DPerformance(options = {}) {
       console.warn(`   时效文件仅包含: ${uniqueBrands.join(', ')}`);
     }
 
-    // ✅ 步骤2: 创建时效匹配Map（优化：按区域ID匹配 > 按城市名匹配）
-    const timelinessMap = new Map();          // 按城市名匹配: brand|carrier|cityName → timeValue
-    const timelinessMapByAreaId = new Map();  // 按区域ID匹配: brand|carrier|areaId → timeValue
+    // ✅ 步骤2: 创建时效匹配Map（按城市名匹配 VIEW_TSK_LIST_TASK.DEST_CITY_NAME）
+    const timelinessMap = new Map();          // 按城市名匹配: brand|carrier|serviceType|orderType|cityName → timeValue
+    const exactSlaBrands = new Set();
     
     timelinessData.forEach(item => {
-      // 按区域ID建立索引（优先使用）
-      if (item.areaId) {
-        const keyByAreaId = `${item.brand}|${item.carrier}|${item.areaId}`;
-        timelinessMapByAreaId.set(keyByAreaId, item.timeValue);
+      const serviceTypeName = item.serviceTypeName || '';
+      const orderTypeName = item.orderTypeName || '*';
+      if (item.brand && item.brand !== '*') {
+        exactSlaBrands.add(item.brand);
       }
-      
-      // 按城市名建立索引（备选）
       if (item.cityName) {
-        const keyByCityName = `${item.brand}|${item.carrier}|${item.cityName}`;
+        const keyByCityName = `${item.brand}|${item.carrier}|${serviceTypeName}|${orderTypeName}|${item.cityName}`;
         timelinessMap.set(keyByCityName, item.timeValue);
       }
     });
 
     console.log(`✅ 时效匹配索引已建立:`);
-    console.log(`   - 按区域ID: ${timelinessMapByAreaId.size}条记录`);
     console.log(`   - 按城市名: ${timelinessMap.size}条记录`);
 
     // ✅ 步骤3: 查询订单数据（不JOIN时效表）
@@ -377,7 +418,9 @@ async function analyzeS2DPerformance(options = {}) {
         bc.COMPANY_ABNAME as BRAND_CODE,
         t.CARRIERID,
         bc_carrier.COMPANY_ABNAME as CARRIER_NAME,
-        ba.AREA_NAME as CITY_NAME,
+        v.TRSERVICE_TYPE_NAME as SERVICE_TYPE_NAME,
+        v.ORDER_TYPE_NAME as ORDER_TYPE_NAME,
+        v.DEST_CITY_NAME as CITY_NAME,
         t.DEST_CITY as AREA_ID,
         
         -- ✅ Plan统计：所有订单（不限制状态，用于Plan时效统计）
@@ -385,6 +428,7 @@ async function analyzeS2DPerformance(options = {}) {
         
         -- ✅ Actual统计：总数不做限制（与Plan一致）
         COUNT(*) as TOTAL_S2D_ORDERS,
+        COUNT(CASE WHEN v.DELIVERY_TIMES IS NOT NULL AND v.DELIVERY_TIMES >= 0 THEN 1 END) as ACTUAL_MEASURED_COUNT,
         
            COUNT(CASE WHEN v.DELIVERY_TIMES IS NOT NULL 
              AND v.DELIVERY_TIMES >= 0
@@ -418,7 +462,9 @@ async function analyzeS2DPerformance(options = {}) {
         bc.COMPANY_ABNAME,
         t.CARRIERID,
         bc_carrier.COMPANY_ABNAME,
-        ba.AREA_NAME, 
+        v.TRSERVICE_TYPE_NAME,
+        v.ORDER_TYPE_NAME,
+        v.DEST_CITY_NAME, 
         t.DEST_CITY
       ORDER BY TOTAL_S2D_ORDERS DESC
     `;
@@ -463,6 +509,7 @@ async function analyzeS2DPerformance(options = {}) {
 
     let totalS2DTime = 0;
     let totalS2DCount = 0;
+    let achievedOrderCount = 0;
 
     let matchedCount = 0;
     let unmatchedCount = 0;
@@ -475,6 +522,8 @@ async function analyzeS2DPerformance(options = {}) {
       const brandCode = row.BRAND_CODE;
       const carrierId = row.CARRIERID;
       const carrierName = row.CARRIER_NAME || carrierId;
+      const serviceTypeName = row.SERVICE_TYPE_NAME || '';
+      const orderTypeName = row.ORDER_TYPE_NAME || '';
       const cityName = row.CITY_NAME;
       const areaId = row.AREA_ID;
       
@@ -484,6 +533,7 @@ async function analyzeS2DPerformance(options = {}) {
       const actual48h = parseInt(row.ACTUAL_48H_COUNT) || 0;
       const actual72h = parseInt(row.ACTUAL_72H_COUNT) || 0;
       const actualOver72h = parseInt(row.ACTUAL_OVER72H_COUNT) || 0;
+      const actualMeasuredCount = parseInt(row.ACTUAL_MEASURED_COUNT) || 0;
       const avgS2DTime = parseFloat(row.AVG_S2D_TIME) || 0;
 
       // 🔍 打印第一条匹配的数据，供调试
@@ -501,44 +551,46 @@ async function analyzeS2DPerformance(options = {}) {
         console.log('   🏷️  分组维度:');
         console.log(`      - brandCode: ${brandCode}`);
         console.log(`      - carrierId: ${carrierId}`);
+        console.log(`      - serviceTypeName: ${serviceTypeName || 'N/A'}`);
+        console.log(`      - orderTypeName: ${orderTypeName || 'N/A'}`);
         console.log(`      - cityName: ${cityName}`);
         console.log(`      - areaId: ${areaId}`);
       }
 
-      // Actual统计（基于DELIVERY_TIMES的实际表现）
-      actualStats.total += totalOrders;
-      actualStats.within24h += actual24h;
-      actualStats.within48h += actual48h;
-      actualStats.within72h += actual72h;
-      actualStats.over72h += actualOver72h;
-
-      if (totalOrders > 0 && avgS2DTime > 0) {
-        totalS2DTime += avgS2DTime * totalOrders;
-        totalS2DCount += totalOrders;
-      }
-
       // Plan统计（匹配时效表）
-      // ✅ 优先按区域ID匹配（更准确）
-      let matchKey = areaId ? `${brandCode}|${carrierId}|${areaId}` : null;
-      let matchedTimeValue = matchKey ? timelinessMapByAreaId.get(matchKey) : null;
+      // ✅ 直接按视图DEST_CITY_NAME匹配SLA City字段
+      const { matchKey, matchedTimeValue } = findMatchedTimeliness(
+        timelinessMap,
+        brandCode,
+        carrierId,
+        serviceTypeName,
+        orderTypeName,
+        cityName
+      );
       
       // 🔍 打印前3条匹配尝试
       if (statsResult.rows.indexOf(row) < 3) {
         console.log(`🔍 匹配尝试 [${statsResult.rows.indexOf(row) + 1}]: Key="${matchKey || 'N/A'}" → ${matchedTimeValue ? `匹配成功(${matchedTimeValue}h)` : '未匹配'}`);
       }
-      
-      // 如果区域ID未匹配，尝试按城市名匹配（备选）
-      if (!matchedTimeValue && cityName) {
-        matchKey = `${brandCode}|${carrierId}|${cityName}`;
-        matchedTimeValue = timelinessMap.get(matchKey);
-        
-        if (statsResult.rows.indexOf(row) < 3) {
-          console.log(`   └─ 尝试城市名匹配: Key="${matchKey}" → ${matchedTimeValue ? `匹配成功(${matchedTimeValue}h)` : '未匹配'}`);
-        }
-      }
 
       if (matchedTimeValue) {
         matchedCount++;
+        actualStats.total += actualMeasuredCount;
+        actualStats.within24h += actual24h;
+        actualStats.within48h += actual48h;
+        actualStats.within72h += actual72h;
+        actualStats.over72h += actualOver72h;
+        if (actualMeasuredCount > 0 && avgS2DTime > 0) {
+          totalS2DTime += avgS2DTime * actualMeasuredCount;
+          totalS2DCount += actualMeasuredCount;
+        }
+        achievedOrderCount += getActualWithinPlanCount(
+          matchedTimeValue,
+          actual24h,
+          actual48h,
+          actual72h,
+          actualOver72h
+        );
         
         // ✅ 根据Plan时效值分配到对应区间（使用所有订单数planTotalOrders）
         // 注意：Plan统计使用所有订单，Actual统计基于DELIVERY_TIMES（不限制订单状态）
@@ -557,6 +609,8 @@ async function analyzeS2DPerformance(options = {}) {
         matchedRecords.push({
           brandCode,
           carrierId,
+          serviceTypeName,
+          orderTypeName,
           cityName,
           areaId,
           planTotalOrders,  // ✅ 改为planTotalOrders
@@ -565,16 +619,23 @@ async function analyzeS2DPerformance(options = {}) {
         });
       } else {
         unmatchedCount++;
+        const usesWildcardBrandScope = !exactSlaBrands.has(brandCode);
+        const isEcommerceShipment = orderTypeName === '电商发货';
 
         // 🔍 收集未匹配记录
         unmatchedRecords.push({
           brandCode,
           carrierId,
+          serviceTypeName,
+          orderTypeName,
           cityName,
           areaId,
           planTotalOrders,  // ✅ 改为planTotalOrders
           actualTotalOrders: totalOrders  // ✅ 新增：Actual订单数
         });
+        if (usesWildcardBrandScope && !isEcommerceShipment) {
+          return;
+        }
       }
 
       // 按品牌汇总
@@ -801,9 +862,9 @@ async function analyzeS2DPerformance(options = {}) {
     // 计算平均时效
     const avgS2DTime = totalS2DCount > 0 ? (totalS2DTime / totalS2DCount).toFixed(2) : 0;
 
-    // 计算时效达成率（简化版：实际≤48h的订单数 / Plan总订单数）
-    const achievementRate = planStats.total > 0 
-      ? ((actualStats.within24h + actualStats.within48h) / planStats.total * 100).toFixed(2)
+    // 达成率只比较已匹配SLA且已取得实际时长的订单：Actual <= Plan。
+    const achievementRate = actualStats.total > 0
+      ? (achievedOrderCount / actualStats.total * 100).toFixed(2)
       : 0;
 
     // 转换Map为数组
@@ -854,6 +915,7 @@ async function analyzeS2DPerformance(options = {}) {
         actualStats,
         avgS2DTime: parseFloat(avgS2DTime),
         achievementRate: parseFloat(achievementRate),
+        achievedOrderCount,
         byBrand,
         byCourier,
         byBrandCourier
@@ -870,8 +932,8 @@ async function analyzeS2DPerformance(options = {}) {
  * C2D时效分析（Customer to Delivery）
  * 从客户付款到签收的时间分析
  * 
- * ✅ 2025-01-17修复：使用 PAYMENTDATE_D 和 DELIVERY_TIME 计算C2D时效
- * 计算公式：(DELIVERY_TIME - PAYMENTDATE_D) * 24 小时
+ * ✅ 使用 VIEW_TSK_LIST_TASK.CO_PAY_TIME 和 DELIVERY_TIME_C 计算C2D时效
+ * 计算公式：(DELIVERY_TIME_C - CO_PAY_TIME) * 24 小时
  */
 async function analyzeC2DPerformance(options = {}) {
   try {
@@ -931,26 +993,23 @@ async function analyzeC2DPerformance(options = {}) {
       console.warn(`   时效文件仅包含: ${uniqueBrands.join(', ')}`);
     }
 
-    // ✅ 步骤2: 创建时效匹配Map（优化：按区域ID匹配 > 按城市名匹配）
-    const timelinessMap = new Map();          // 按城市名匹配: brand|carrier|cityName → timeValue
-    const timelinessMapByAreaId = new Map();  // 按区域ID匹配: brand|carrier|areaId → timeValue
+    // ✅ 步骤2: 创建时效匹配Map（按城市名匹配 VIEW_TSK_LIST_TASK.DEST_CITY_NAME）
+    const timelinessMap = new Map();          // 按城市名匹配: brand|carrier|serviceType|orderType|cityName → timeValue
+    const exactSlaBrands = new Set();
     
     timelinessData.forEach(item => {
-      // 按区域ID建立索引（优先使用）
-      if (item.areaId) {
-        const keyByAreaId = `${item.brand}|${item.carrier}|${item.areaId}`;
-        timelinessMapByAreaId.set(keyByAreaId, item.timeValue);
+      const serviceTypeName = item.serviceTypeName || '';
+      const orderTypeName = item.orderTypeName || '*';
+      if (item.brand && item.brand !== '*') {
+        exactSlaBrands.add(item.brand);
       }
-      
-      // 按城市名建立索引（备选）
       if (item.cityName) {
-        const keyByCityName = `${item.brand}|${item.carrier}|${item.cityName}`;
+        const keyByCityName = `${item.brand}|${item.carrier}|${serviceTypeName}|${orderTypeName}|${item.cityName}`;
         timelinessMap.set(keyByCityName, item.timeValue);
       }
     });
 
     console.log(`✅ 时效匹配索引已建立:`);
-    console.log(`   - 按区域ID: ${timelinessMapByAreaId.size}条记录`);
     console.log(`   - 按城市名: ${timelinessMap.size}条记录`);
 
     // ✅ 步骤3: 查询订单数据（不JOIN时效表）
@@ -1128,50 +1187,59 @@ async function analyzeC2DPerformance(options = {}) {
     console.log('📊 SQL查询参数:', { params, whereClause: whereClause.substring(0, 200) + '...' });
 
     // ✅ 查询订单统计（按品牌+快递商+城市分组）
-    // ✅ C2D时效 = (DELIVERY_TIME - PAYMENTDATE_D) * 24小时
+    // ✅ C2D时效 = (DELIVERY_TIME_C - CO_PAY_TIME) * 24小时
     // 🔥 使用JOIN BAS_COMPANY表动态获取品牌名称
+    const coPayTimeExpr = `TO_DATE(v.CO_PAY_TIME, 'YYYY-MM-DD HH24:MI:SS')`;
+    const deliveryTimeExpr = `TO_DATE(v.DELIVERY_TIME_C, 'YYYY-MM-DD HH24:MI:SS')`;
+    const c2dHoursExpr = `(${deliveryTimeExpr} - ${coPayTimeExpr}) * 24`;
+
     const statsQuery = `
       SELECT 
         bc.COMPANY_ABNAME as BRAND_CODE,
         t.CARRIERID,
         bc_carrier.COMPANY_ABNAME as CARRIER_NAME,
-        ba.AREA_NAME as CITY_NAME,
+        v.TRSERVICE_TYPE_NAME as SERVICE_TYPE_NAME,
+        v.ORDER_TYPE_NAME as ORDER_TYPE_NAME,
+        v.DEST_CITY_NAME as CITY_NAME,
         t.DEST_CITY as AREA_ID,
         
         -- ✅ Plan统计：所有订单（不限制状态，用于Plan时效统计）
         COUNT(*) as PLAN_TOTAL_ORDERS,
         
         -- ✅ C2D Actual统计：总数不做限制（与Plan一致）
-        -- C2D时效 = (DELIVERY_TIME - PAYMENTDATE_D) * 24小时
+           -- C2D时效 = (DELIVERY_TIME_C - CO_PAY_TIME) * 24小时
         COUNT(*) as TOTAL_C2D_ORDERS,
+           COUNT(CASE WHEN v.CO_PAY_TIME IS NOT NULL
+             AND v.DELIVERY_TIME_C IS NOT NULL
+             AND ${deliveryTimeExpr} >= ${coPayTimeExpr} THEN 1 END) as ACTUAL_MEASURED_COUNT,
         
-        COUNT(CASE WHEN t.PAYMENTDATE_D IS NOT NULL 
-             AND t.DELIVERY_TIME IS NOT NULL 
-             AND t.DELIVERY_TIME >= t.PAYMENTDATE_D
-             AND (t.DELIVERY_TIME - t.PAYMENTDATE_D) * 24 <= 24 THEN 1 END) as ACTUAL_24H_COUNT,
+           COUNT(CASE WHEN v.CO_PAY_TIME IS NOT NULL 
+             AND v.DELIVERY_TIME_C IS NOT NULL 
+             AND ${deliveryTimeExpr} >= ${coPayTimeExpr}
+             AND ${c2dHoursExpr} <= 24 THEN 1 END) as ACTUAL_24H_COUNT,
         
-        COUNT(CASE WHEN t.PAYMENTDATE_D IS NOT NULL 
-             AND t.DELIVERY_TIME IS NOT NULL 
-             AND t.DELIVERY_TIME >= t.PAYMENTDATE_D
-             AND (t.DELIVERY_TIME - t.PAYMENTDATE_D) * 24 > 24 
-             AND (t.DELIVERY_TIME - t.PAYMENTDATE_D) * 24 <= 48 THEN 1 END) as ACTUAL_48H_COUNT,
+           COUNT(CASE WHEN v.CO_PAY_TIME IS NOT NULL 
+             AND v.DELIVERY_TIME_C IS NOT NULL 
+             AND ${deliveryTimeExpr} >= ${coPayTimeExpr}
+             AND ${c2dHoursExpr} > 24 
+             AND ${c2dHoursExpr} <= 48 THEN 1 END) as ACTUAL_48H_COUNT,
         
-        COUNT(CASE WHEN t.PAYMENTDATE_D IS NOT NULL 
-             AND t.DELIVERY_TIME IS NOT NULL 
-             AND t.DELIVERY_TIME >= t.PAYMENTDATE_D
-             AND (t.DELIVERY_TIME - t.PAYMENTDATE_D) * 24 > 48 
-             AND (t.DELIVERY_TIME - t.PAYMENTDATE_D) * 24 <= 72 THEN 1 END) as ACTUAL_72H_COUNT,
+           COUNT(CASE WHEN v.CO_PAY_TIME IS NOT NULL 
+             AND v.DELIVERY_TIME_C IS NOT NULL 
+             AND ${deliveryTimeExpr} >= ${coPayTimeExpr}
+             AND ${c2dHoursExpr} > 48 
+             AND ${c2dHoursExpr} <= 72 THEN 1 END) as ACTUAL_72H_COUNT,
         
-        COUNT(CASE WHEN t.PAYMENTDATE_D IS NOT NULL 
-             AND t.DELIVERY_TIME IS NOT NULL 
-             AND t.DELIVERY_TIME >= t.PAYMENTDATE_D
-             AND (t.DELIVERY_TIME - t.PAYMENTDATE_D) * 24 > 72 THEN 1 END) as ACTUAL_OVER72H_COUNT,
+           COUNT(CASE WHEN v.CO_PAY_TIME IS NOT NULL 
+             AND v.DELIVERY_TIME_C IS NOT NULL 
+             AND ${deliveryTimeExpr} >= ${coPayTimeExpr}
+             AND ${c2dHoursExpr} > 72 THEN 1 END) as ACTUAL_OVER72H_COUNT,
         
-        AVG(CASE WHEN t.PAYMENTDATE_D IS NOT NULL 
-           AND t.DELIVERY_TIME IS NOT NULL 
-           AND t.DELIVERY_TIME >= t.PAYMENTDATE_D
-           AND (t.DELIVERY_TIME - t.PAYMENTDATE_D) * 24 <= 1000 
-           THEN (t.DELIVERY_TIME - t.PAYMENTDATE_D) * 24 END) as AVG_C2D_TIME
+           AVG(CASE WHEN v.CO_PAY_TIME IS NOT NULL 
+           AND v.DELIVERY_TIME_C IS NOT NULL 
+           AND ${deliveryTimeExpr} >= ${coPayTimeExpr}
+           AND ${c2dHoursExpr} <= 1000 
+           THEN ${c2dHoursExpr} END) as AVG_C2D_TIME
         
       FROM APP_CMS.TSK_LIST_TASK t
       LEFT JOIN APP_CMS.VIEW_TSK_LIST_TASK v ON t.TSK_MERGE_NO = v.TSK_MERGE_NO
@@ -1183,7 +1251,9 @@ async function analyzeC2DPerformance(options = {}) {
         bc.COMPANY_ABNAME,
         t.CARRIERID,
         bc_carrier.COMPANY_ABNAME,
-        ba.AREA_NAME, 
+        v.TRSERVICE_TYPE_NAME,
+        v.ORDER_TYPE_NAME,
+        v.DEST_CITY_NAME, 
         t.DEST_CITY
       ORDER BY TOTAL_C2D_ORDERS DESC
     `;
@@ -1228,6 +1298,7 @@ async function analyzeC2DPerformance(options = {}) {
 
     let totalC2DTime = 0;  // ✅ 改为C2D
     let totalC2DCount = 0; // ✅ 改为C2D
+    let achievedOrderCount = 0;
 
     let matchedCount = 0;
     let unmatchedCount = 0;
@@ -1240,6 +1311,8 @@ async function analyzeC2DPerformance(options = {}) {
       const brandCode = row.BRAND_CODE;
       const carrierId = row.CARRIERID;
       const carrierName = row.CARRIER_NAME || carrierId;
+      const serviceTypeName = row.SERVICE_TYPE_NAME || '';
+      const orderTypeName = row.ORDER_TYPE_NAME || '';
       const cityName = row.CITY_NAME;
       const areaId = row.AREA_ID;
       
@@ -1249,6 +1322,7 @@ async function analyzeC2DPerformance(options = {}) {
       const actual48h = parseInt(row.ACTUAL_48H_COUNT) || 0;
       const actual72h = parseInt(row.ACTUAL_72H_COUNT) || 0;
       const actualOver72h = parseInt(row.ACTUAL_OVER72H_COUNT) || 0;
+      const actualMeasuredCount = parseInt(row.ACTUAL_MEASURED_COUNT) || 0;
       const avgC2DTime = parseFloat(row.AVG_C2D_TIME) || 0;  // ✅ 改为C2D
 
       // 🔍 打印第一条匹配的数据，供调试
@@ -1266,41 +1340,45 @@ async function analyzeC2DPerformance(options = {}) {
         console.log('   🏷️  分组维度:');
         console.log(`      - brandCode: ${brandCode}`);
         console.log(`      - carrierId: ${carrierId}`);
+        console.log(`      - serviceTypeName: ${serviceTypeName || 'N/A'}`);
+        console.log(`      - orderTypeName: ${orderTypeName || 'N/A'}`);
         console.log(`      - cityName: ${cityName}`);
         console.log(`      - areaId: ${areaId}`);
       }
 
-      // Actual统计（基于付款+签收时间的实际表现）
-      actualStats.total += totalOrders;
-      actualStats.within24h += actual24h;
-      actualStats.within48h += actual48h;
-      actualStats.within72h += actual72h;
-      actualStats.over72h += actualOver72h;
-
-      if (totalOrders > 0 && avgC2DTime > 0) {  // ✅ 改为C2D
-        totalC2DTime += avgC2DTime * totalOrders;  // ✅ 改为C2D
-        totalC2DCount += totalOrders;  // ✅ 改为C2D
-      }
-
       // Plan统计（匹配时效表）
-      let matchKey = areaId ? `${brandCode}|${carrierId}|${areaId}` : null;
-      let matchedTimeValue = matchKey ? timelinessMapByAreaId.get(matchKey) : null;
+      // ✅ 直接按视图DEST_CITY_NAME匹配SLA City字段
+      const { matchKey, matchedTimeValue } = findMatchedTimeliness(
+        timelinessMap,
+        brandCode,
+        carrierId,
+        serviceTypeName,
+        orderTypeName,
+        cityName
+      );
       
       if (statsResult.rows.indexOf(row) < 3) {
         console.log(`🔍 匹配尝试 [${statsResult.rows.indexOf(row) + 1}]: Key="${matchKey || 'N/A'}" → ${matchedTimeValue ? `匹配成功(${matchedTimeValue}h)` : '未匹配'}`);
       }
-      
-      if (!matchedTimeValue && cityName) {
-        matchKey = `${brandCode}|${carrierId}|${cityName}`;
-        matchedTimeValue = timelinessMap.get(matchKey);
-        
-        if (statsResult.rows.indexOf(row) < 3) {
-          console.log(`   └─ 尝试城市名匹配: Key="${matchKey}" → ${matchedTimeValue ? `匹配成功(${matchedTimeValue}h)` : '未匹配'}`);
-        }
-      }
 
       if (matchedTimeValue) {
         matchedCount++;
+        actualStats.total += actualMeasuredCount;
+        actualStats.within24h += actual24h;
+        actualStats.within48h += actual48h;
+        actualStats.within72h += actual72h;
+        actualStats.over72h += actualOver72h;
+        if (actualMeasuredCount > 0 && avgC2DTime > 0) {
+          totalC2DTime += avgC2DTime * actualMeasuredCount;
+          totalC2DCount += actualMeasuredCount;
+        }
+        achievedOrderCount += getActualWithinPlanCount(
+          matchedTimeValue,
+          actual24h,
+          actual48h,
+          actual72h,
+          actualOver72h
+        );
         
         if (matchedTimeValue <= 24) {
           planStats.within24h += planTotalOrders;
@@ -1316,6 +1394,8 @@ async function analyzeC2DPerformance(options = {}) {
         matchedRecords.push({
           brandCode,
           carrierId,
+          serviceTypeName,
+          orderTypeName,
           cityName,
           areaId,
           planTotalOrders,
@@ -1324,14 +1404,21 @@ async function analyzeC2DPerformance(options = {}) {
         });
       } else {
         unmatchedCount++;
+        const usesWildcardBrandScope = !exactSlaBrands.has(brandCode);
+        const isEcommerceShipment = orderTypeName === '电商发货';
         unmatchedRecords.push({
           brandCode,
           carrierId,
+          serviceTypeName,
+          orderTypeName,
           cityName,
           areaId,
           planTotalOrders,
           actualTotalOrders: totalOrders
         });
+        if (usesWildcardBrandScope && !isEcommerceShipment) {
+          return;
+        }
       }
 
       // 按品牌汇总
@@ -1548,8 +1635,8 @@ async function analyzeC2DPerformance(options = {}) {
     const avgC2DTime = totalC2DCount > 0 ? (totalC2DTime / totalC2DCount).toFixed(2) : 0;  // ✅ 改为C2D
 
     // 计算时效达成率
-    const achievementRate = planStats.total > 0 
-      ? ((actualStats.within24h + actualStats.within48h) / planStats.total * 100).toFixed(2)
+    const achievementRate = actualStats.total > 0
+      ? (achievedOrderCount / actualStats.total * 100).toFixed(2)
       : 0;
 
     // 转换Map为数组
@@ -1599,6 +1686,7 @@ async function analyzeC2DPerformance(options = {}) {
         actualStats,
         avgC2DTime: parseFloat(avgC2DTime),  // ✅ 改为C2D
         achievementRate: parseFloat(achievementRate),
+        achievedOrderCount,
         byBrand,
         byCourier,
         byBrandCourier

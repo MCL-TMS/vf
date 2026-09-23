@@ -598,6 +598,8 @@ function getLatestTimelinessData() {
       brand: item.BRAND_CODE || item.brand,
       carrier: item.CARRIER_NAME || item.carrier,
       cityName: item.CITY_NAME || item.cityName,
+      serviceTypeName: item.TRSERVICE_TYPE_NAME || item.SERVICE_TYPE_NAME || item.serviceTypeName,
+      orderTypeName: item.ORDER_TYPE_NAME || item.orderTypeName || '*',
       areaId: item.AREA_ID || item.areaId,
       timeValue: item.TIME_VALUE || item.timeValue
     }));
