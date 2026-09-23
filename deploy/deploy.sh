@@ -59,9 +59,12 @@ if [[ "${MODE}" == --dry-run ]]; then
 fi
 
 health_check() {
-  curl --fail --silent --show-error \
-    --connect-timeout 3 --max-time 10 --retry 12 --retry-delay 2 \
-    --retry-connrefused --retry-all-errors "${HEALTH_URL}" | node -e '
+  local attempt
+  local response
+  for attempt in $(seq 1 12); do
+    if response="$(curl --fail --silent --show-error \
+      --connect-timeout 3 --max-time 10 "${HEALTH_URL}")" && \
+      printf '%s' "${response}" | node -e '
       let body = "";
       process.stdin.setEncoding("utf8");
       process.stdin.on("data", chunk => { body += chunk; });
@@ -72,7 +75,12 @@ health_check() {
         } catch {
           process.exit(1);
         }
-      });'
+      });'; then
+      return 0
+    fi
+    [[ "${attempt}" -eq 12 ]] || sleep 2
+  done
+  return 1
 }
 
 rollback() {
