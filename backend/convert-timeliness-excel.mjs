@@ -3,13 +3,12 @@
 /**
  * 🚀 时效表Excel一键转换工具
  * 
- * 功能：将时效Excel文件转换为JSON缓存，自动完成areaId映射
- * 用法：node convert-timeliness-excel.js [excel-filename]
+ * 功能：将时效Excel文件转换为JSON缓存，按城市名称匹配计划时效
+ * 用法：node convert-timeliness-excel.mjs [excel-filename]
  * 
  * 整合了以下三个脚本的功能：
  * 1. parse-timeliness-excel-to-json.js - Excel解析
- * 2. map-city-to-areaid-wrapper.js + mapCityToAreaId.js - areaId映射
- * 3. diagnose-72plus-issue-v2.cjs - 72+识别优化
+ * 2. diagnose-72plus-issue-v2.cjs - 72+识别优化
  */
 
 import fs from 'fs';
@@ -29,7 +28,7 @@ if (fs.existsSync(envPath)) {
   dotenv.config({ path: envPath });
 } else {
   console.log('\n⚠️  未找到.env文件:', envPath);
-  console.log('💡 数据库连接将不可用，areaId映射将被跳过\n');
+  console.log('💡 未找到.env文件，不影响转换；计划时效按城市名称匹配\n');
 }
 
 console.log('='.repeat(80));
@@ -110,17 +109,19 @@ try {
   const carrierIndex = headers.findIndex(h => h && h.toString().toLowerCase().includes('carrier'));
   const cityIndex = headers.findIndex(h => h && h.toString().toLowerCase().includes('city'));
   const brandIndex = headers.findIndex(h => h && h.toString().toLowerCase().includes('brand'));
+  const serviceTypeIndex = headers.findIndex(h => h && h.toString().trim().toLowerCase() === 'trservice_type_name');
   const slaIndex = headers.findIndex(h => h && h.toString().toLowerCase().includes('sla'));
   
   console.log('🔍 列索引检查:');
   console.log(`  - Carrier列: ${carrierIndex >= 0 ? '✅ 索引' + carrierIndex : '❌ 未找到'}`);
   console.log(`  - City列: ${cityIndex >= 0 ? '✅ 索引' + cityIndex : '❌ 未找到'}`);
   console.log(`  - Brand列: ${brandIndex >= 0 ? '✅ 索引' + brandIndex : '❌ 未找到'}`);
+  console.log(`  - TRSERVICE_TYPE_NAME列: ${serviceTypeIndex >= 0 ? '✅ 索引' + serviceTypeIndex : '❌ 未找到'}`);
   console.log(`  - SLA列: ${slaIndex >= 0 ? '✅ 索引' + slaIndex : '❌ 未找到'}\n`);
   
-  if (carrierIndex === -1 || cityIndex === -1 || brandIndex === -1 || slaIndex === -1) {
+  if (carrierIndex === -1 || cityIndex === -1 || brandIndex === -1 || serviceTypeIndex === -1 || slaIndex === -1) {
     console.log('❌ Excel缺少必需的列！');
-    console.log('必需列：Carrier, City, Brand, SLA\n');
+    console.log('必需列：Carrier, City, Brand, TRSERVICE_TYPE_NAME, SLA\n');
     process.exit(1);
   }
   
@@ -135,6 +136,7 @@ try {
       const carrier = row[carrierIndex];
       const cityName = row[cityIndex];
       const brand = row[brandIndex];
+      const serviceTypeName = row[serviceTypeIndex];
       const slaValue = row[slaIndex];
       
       // 统计SLA值
@@ -171,6 +173,7 @@ try {
           carrier: carrier.toString().trim(),
           cityName: cityName.toString().trim(),
           brand: brand.toString().trim(),
+          serviceTypeName: serviceTypeName ? serviceTypeName.toString().trim() : null,
           timeValue: timeValue,
           areaId: null  // 稍后映射
         });
@@ -203,7 +206,7 @@ try {
   // 显示数据样本
   console.log('📊 数据样本（前5条）：');
   parsedData.slice(0, 5).forEach((item, index) => {
-    console.log(`  [${index + 1}] ${item.brand} | ${item.carrier} | ${item.cityName} | ${item.timeValue}h`);
+    console.log(`  [${index + 1}] ${item.brand} | ${item.carrier} | ${item.serviceTypeName} | ${item.cityName} | ${item.timeValue}h`);
   });
   console.log('');
   
@@ -248,125 +251,11 @@ try {
   process.exit(1);
 }
 
-// ==================== 步骤3: 映射areaId ====================
-console.log('🗺️ 步骤3: 映射城市areaId\n');
+// ==================== 步骤3: 跳过areaId映射 ====================
+console.log('🗺️ 步骤3: 跳过areaId映射，后续按VIEW_TSK_LIST_TASK.DEST_CITY_NAME匹配SLA City字段\n');
 
-let cityMappingCache = new Map();
-let mappedCount = 0;
-let failedCount = 0;
-const unmappedCities = new Set();
-
-try {
-  // 动态导入数据库模块（CommonJS）
-  console.log('📡 连接数据库...');
-  
-  // 使用require加载CommonJS模块
-  const dbConfigPath = path.join(__dirname, 'src', 'config', 'database.js');
-  const { initializeDatabase, executeQuery, closeDatabase } = require(dbConfigPath);
-  
-  // 初始化数据库连接池
-  await initializeDatabase();
-  console.log('✅ 数据库连接成功\n');
-  
-  // 查询所有城市映射
-  console.log('🔍 查询BAS_AREA表...');
-  const cityMappingQuery = `
-    SELECT AREA_ID, AREA_NAME 
-    FROM APP_CMS.BAS_AREA 
-    ORDER BY AREA_ID
-  `;
-  
-  const result = await executeQuery(cityMappingQuery, {});
-  
-  if (!result || !result.rows || result.rows.length === 0) {
-    throw new Error('查询结果为空');
-  }
-  
-  console.log(`✅ 查询成功: ${result.rows.length}个城市\n`);
-  
-  // 构建映射缓存（支持多种格式）
-  console.log('🔨 构建映射缓存...');
-  result.rows.forEach(row => {
-    const areaId = row.AREA_ID;
-    const areaName = row.AREA_NAME;
-    
-    if (areaName) {
-      // 原始名称
-      cityMappingCache.set(areaName, areaId);
-      
-      // 去掉常见后缀
-      const suffixes = ['市', '区', '县', '自治州', '地区', '盟'];
-      suffixes.forEach(suffix => {
-        if (areaName.includes(suffix)) {
-          cityMappingCache.set(areaName.replace(suffix, ''), areaId);
-        }
-      });
-    }
-  });
-  
-  console.log(`✅ 缓存构建完成: ${cityMappingCache.size}个映射键\n`);
-  
-  // 执行映射
-  console.log('🔄 执行areaId映射...');
-  
-  parsedData.forEach((item, index) => {
-    const cityName = item.cityName;
-    
-    // 尝试多种匹配方式
-    const areaId = cityMappingCache.get(cityName) ||
-                   cityMappingCache.get(cityName.replace('市', '')) ||
-                   cityMappingCache.get(cityName.replace('区', '')) ||
-                   cityMappingCache.get(cityName.replace('县', '')) ||
-                   cityMappingCache.get(cityName.replace('自治州', '')) ||
-                   cityMappingCache.get(cityName.replace('地区', '')) ||
-                   cityMappingCache.get(cityName.replace('盟', '')) ||
-                   null;
-    
-    if (areaId) {
-      item.areaId = areaId;
-      mappedCount++;
-    } else {
-      failedCount++;
-      unmappedCities.add(cityName);
-    }
-  });
-  
-  console.log('✅ 映射完成：');
-  console.log(`  - 成功映射: ${mappedCount}条`);
-  console.log(`  - 映射失败: ${failedCount}条`);
-  console.log(`  - 总计: ${parsedData.length}条\n`);
-  
-  const mappingRate = ((mappedCount / parsedData.length) * 100).toFixed(2);
-  console.log(`📊 映射率: ${mappedCount}/${parsedData.length} (${mappingRate}%)\n`);
-  
-  if (unmappedCities.size > 0) {
-    console.log('⚠️ 未能映射的城市（前10个）：');
-    const unmappedArray = Array.from(unmappedCities).slice(0, 10);
-    unmappedArray.forEach((city, index) => {
-      console.log(`  [${index + 1}] ${city}`);
-    });
-    if (unmappedCities.size > 10) {
-      console.log(`  ... 还有${unmappedCities.size - 10}个\n`);
-    } else {
-      console.log('');
-    }
-  }
-  
-  // 关闭数据库连接
-  console.log('🔄 关闭数据库连接...');
-  await closeDatabase();
-  console.log('✅ 数据库连接已关闭\n');
-  
-} catch (dbError) {
-  console.log('⚠️ 数据库连接失败:', dbError.message);
-  console.log('\n💡 可能的原因：');
-  console.log('  1. 数据库未启动或不可访问');
-  console.log('  2. backend/.env 配置不正确');
-  console.log('  3. Oracle客户端未正确安装\n');
-  console.log('💡 继续处理（使用城市名称匹配）...\n');
-  
-  // 不中断流程，继续生成JSON（areaId为null）
-}
+const mappedCount = parsedData.length;
+const failedCount = 0;
 
 // ==================== 步骤4: 生成JSON文件 ====================
 console.log('💾 步骤4: 生成JSON文件\n');
@@ -403,7 +292,7 @@ try {
   console.log('📊 最终数据样本（前5条）：');
   parsedData.slice(0, 5).forEach((item, index) => {
     const areaIdDisplay = item.areaId ? `areaId:${item.areaId}` : 'areaId:无';
-    console.log(`  [${index + 1}] ${item.brand} | ${item.carrier} | ${item.cityName} | ${item.timeValue}h | ${areaIdDisplay}`);
+    console.log(`  [${index + 1}] ${item.brand} | ${item.carrier} | ${item.serviceTypeName} | ${item.cityName} | ${item.timeValue}h | ${areaIdDisplay}`);
   });
   console.log('');
   
@@ -488,15 +377,15 @@ console.log(`  - 元数据: ${metadataPath}\n`);
 
 console.log('📊 数据统计：');
 console.log(`  - 总记录数: ${parsedData.length}`);
-console.log(`  - 已映射areaId: ${mappedCount}条 (${((mappedCount / parsedData.length) * 100).toFixed(1)}%)`);
-console.log(`  - 未映射areaId: ${failedCount}条 (${((failedCount / parsedData.length) * 100).toFixed(1)}%)\n`);
+console.log(`  - 可用于城市名匹配: ${mappedCount}条 (${((mappedCount / parsedData.length) * 100).toFixed(1)}%)`);
+console.log(`  - 城市名无效记录: ${failedCount}条 (${((failedCount / parsedData.length) * 100).toFixed(1)}%)\n`);
 
 if (mappedCount / parsedData.length >= 0.9) {
-  console.log('✅ 映射率优秀（≥90%），可以直接使用\n');
+  console.log('✅ 城市名匹配数据完整，可以直接使用\n');
 } else if (mappedCount / parsedData.length >= 0.7) {
-  console.log('⚠️ 映射率一般（70-90%），建议检查未映射的城市\n');
+  console.log('⚠️ 城市名匹配数据一般，建议检查城市名称是否与视图DEST_CITY_NAME一致\n');
 } else {
-  console.log('❌ 映射率较低（<70%），建议手动补充映射\n');
+  console.log('❌ 城市名匹配数据较低，建议检查SLA表City列\n');
 }
 
 console.log('🚀 下一步：');
@@ -505,7 +394,7 @@ console.log('  2. 启动API服务: cd backend && npm start');
 console.log('  3. 执行时效分析: 前端选择日期范围后点击"分析"\n');
 
 console.log('💡 提示：');
-console.log('  - 未映射areaId的城市将使用城市名称匹配（匹配率可能较低）');
+console.log('  - Plan时效将按SLA表City列与VIEW_TSK_LIST_TASK.DEST_CITY_NAME匹配');
 console.log('  - 如需重新转换，直接再次运行本脚本即可\n');
 
 console.log('='.repeat(80) + '\n');

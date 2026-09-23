@@ -2,9 +2,8 @@ name: CI
 
 on:
   push:
-    branches: [main, cmsupdate0902, feature/cms-update]
+    branches: [main, develop]
   pull_request:
-    branches: [main, cmsupdate0902, feature/cms-update]
 
 permissions:
   contents: read
@@ -24,12 +23,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Setup Node.js with cache
+        if: github.event_name == 'push'
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+
+      - name: Setup Node.js
+        if: github.event_name != 'push'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
 
       - name: Install dependencies
         run: npm ci
@@ -47,12 +53,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Setup Node.js with cache
+        if: github.event_name == 'push'
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
           cache-dependency-path: backend/package-lock.json
+
+      - name: Setup Node.js
+        if: github.event_name != 'push'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
 
       - name: Install dependencies
         run: npm ci

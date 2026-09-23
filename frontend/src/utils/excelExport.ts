@@ -398,7 +398,7 @@ export function exportBrandLogisticsData(data: BrandLogisticsExportData) {
 export function exportTimelinessRawData(
   rawData: any[],
   filterInfo: {
-    selectedBrand?: string;
+    selectedBrand?: string | string[] | null;
     analysisType?: string;
     dateRange?: { from: string; to: string };
   }
@@ -411,17 +411,14 @@ export function exportTimelinessRawData(
     return;
   }
 
-  // 生成文件名
+  // 生成文件名：时效分析类型 + 品牌名 + 导出时间
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-').substring(0, 19);
-  const brandText = filterInfo.selectedBrand && filterInfo.selectedBrand !== 'all' 
-    ? `_${filterInfo.selectedBrand}` 
-    : '';
   const analysisText = filterInfo.analysisType || 'S2D';
-  const dateRangeText = filterInfo.dateRange 
-    ? `_${filterInfo.dateRange.from}_to_${filterInfo.dateRange.to}`
-    : '';
-  
-  const filename = `时效分析RawData_${analysisText}${brandText}${dateRangeText}_${timestamp}`;
+  const brandText = Array.isArray(filterInfo.selectedBrand)
+    ? (filterInfo.selectedBrand.length > 0 ? filterInfo.selectedBrand.join('+') : '全部品牌')
+    : (filterInfo.selectedBrand && filterInfo.selectedBrand !== 'all' ? filterInfo.selectedBrand : '全部品牌');
+  const safeBrandText = brandText.replace(/[\\/:*?"<>|]/g, '_');
+  const filename = `${analysisText}_${safeBrandText}_${timestamp}`;
 
   // Excel表头（根据后端返回的字段顺序）
   const headers = [
@@ -430,7 +427,7 @@ export function exportTimelinessRawData(
     '目的地省份', '目的地城市', '收件人', '收件人电话', '目的地区县',
     '目的地地址', '始发省份', '始发城市', '是否超时', '预计送达时间',
     '签收时间', '超时天数', '最后跟踪时间', '最后描述', '是否自管',
-    '订单类型', '快递单类型', '配送时长H', '一级警告原因', '二级警告原因',
+    '订单类型', '快递单类型', '快递产品', '配送时长H', '一级警告原因', '二级警告原因',
     '超时级别', '超24H未揽收', '超48H未更新', '首派时间',
     '时效分析类型', '实际时效区间', '计划时效区间', '实际时效小时', '计划时效小时'
   ];
@@ -474,6 +471,7 @@ export function exportTimelinessRawData(
       order['是否自管'] || '',
       order['订单类型'] || '',
       order['快递单类型'] || '',
+      order['快递产品'] || '',
       order['配送时长H'] || '',
       order['一级警告原因'] || '',
       order['二级警告原因'] || '',

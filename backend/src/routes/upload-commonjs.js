@@ -133,7 +133,7 @@ async function getCityAreaMapping() {
 /**
  * 解析Excel文件中的时效数据
  */
-function parseTimelinessExcel(filePath, cityMapping, selectedBrand = null) {
+function parseTimelinessExcel(filePath, cityMapping = {}, selectedBrand = null) {
   try {
     const workbook = XLSX.readFile(filePath);
     const sheetName = workbook.SheetNames[0];
@@ -159,6 +159,25 @@ function parseTimelinessExcel(filePath, cityMapping, selectedBrand = null) {
     const cityIndex = headers.findIndex(h => 
       h && h.toString().toLowerCase().includes('city')
     );
+    const serviceTypeIndex = headers.findIndex(h => {
+      if (!h) return false;
+      const normalizedHeader = h.toString().trim().toLowerCase();
+      return normalizedHeader.includes('trservice_type_name')
+        || normalizedHeader.includes('service')
+        || normalizedHeader.includes('product')
+        || h.toString().includes('快递产品')
+        || h.toString().includes('产品类型')
+        || h.toString().includes('快递服务');
+    });
+    const orderTypeIndex = headers.findIndex(h =>
+      h && h.toString().trim().toLowerCase() === 'order_type_name'
+    );
+    const brandIndex = headers.findIndex(h =>
+      h && ['brand', '品牌'].includes(h.toString().trim().toLowerCase())
+    );
+    const slaIndex = headers.findIndex(h =>
+      h && ['sla', '时效', '计划时效'].includes(h.toString().trim().toLowerCase())
+    );
     
     if (carrierIndex === -1 || cityIndex === -1) {
       throw new Error('Excel文件缺少必要的列：Carrier 和 City');
@@ -179,6 +198,11 @@ function parseTimelinessExcel(filePath, cityMapping, selectedBrand = null) {
         });
       }
     });
+
+    const isLongFormat = brandIndex >= 0 && slaIndex >= 0;
+    if (!isLongFormat && brandColumns.length === 0) {
+      throw new Error('Excel文件缺少品牌时效列：请提供 Brand 和 SLA 列，或提供各品牌时效列');
+    }
     
     // 解析数据行
     const parsedData = [];
@@ -189,62 +213,45 @@ function parseTimelinessExcel(filePath, cityMapping, selectedBrand = null) {
       try {
         const carrier = row[carrierIndex]?.toString().trim();
         const cityName = row[cityIndex]?.toString().trim();
+        const serviceTypeName = serviceTypeIndex >= 0
+          ? row[serviceTypeIndex]?.toString().trim() || null
+          : null;
+        const orderTypeName = orderTypeIndex >= 0
+          ? row[orderTypeIndex]?.toString().trim() || '*'
+          : '*';
         
         if (!carrier || !cityName) {
           errorRows++;
           return;
         }
         
-        // 智能城市匹配：支持"地区"、"盟"、"自治州"等行政区划名称
-        let areaId = cityMapping[cityName];
-        
-        // 如果直接匹配失败，尝试智能匹配
-        if (!areaId && cityName) {
-          // 方法1: 去掉常见的行政区划后缀
-          const simplifiedName = cityName
-            .replace(/地区$/, '')
-            .replace(/盟$/, '')
-            .replace(/自治州$/, '')
-            .replace(/自治县$/, '')
-            .replace(/特别行政区$/, '');
-          
-          // 尝试用简化后的名称匹配
-          areaId = cityMapping[simplifiedName];
-          
-          // 方法2: 如果还找不到，尝试添加"市"后缀
-          if (!areaId && !simplifiedName.endsWith('市')) {
-            areaId = cityMapping[simplifiedName + '市'];
-          }
-          
-          // 方法3: 如果还找不到，尝试去掉所有后缀再添加"市"
-          if (!areaId) {
-            const baseName = simplifiedName.replace(/市$/, '');
-            areaId = cityMapping[baseName + '市'];
-          }
+        const appendTimelinessRecord = (brand, timeValue) => {
+          if (!brand || !timeValue || timeValue === '-') return;
+          const parsedTime = parseTimeValue(timeValue);
+          if (parsedTime === null) return;
+
+          parsedData.push({
+            carrier,
+            serviceTypeName,
+            orderTypeName,
+            cityName,
+            areaId: null,
+            brand: getBrandCode(brand.toString()),
+            timeValue: parsedTime,
+            isOvertime: timeValue.toString().includes('+'),
+            rawValue: timeValue.toString(),
+            rowIndex: rowIndex + 2
+          });
+        };
+
+        if (isLongFormat) {
+          appendTimelinessRecord(row[brandIndex], row[slaIndex]);
+        } else {
+          const optimizedBrandColumns = optimizeBrandColumns(brandColumns, selectedBrand);
+          optimizedBrandColumns.forEach(brandCol => {
+            appendTimelinessRecord(brandCol.brandCode, row[brandCol.index]);
+          });
         }
-        
-        // 根据选择的品牌优化处理顺序
-        const optimizedBrandColumns = optimizeBrandColumns(brandColumns, selectedBrand);
-        
-        // 解析各品牌的时效数据
-        optimizedBrandColumns.forEach(brandCol => {
-          const timeValue = row[brandCol.index];
-          if (timeValue && timeValue !== '-') {
-            const parsedTime = parseTimeValue(timeValue);
-            if (parsedTime !== null) {
-              parsedData.push({
-                carrier: carrier,
-                cityName: cityName,
-                areaId: areaId || null,
-                brand: brandCol.brandCode,
-                timeValue: parsedTime,
-                isOvertime: timeValue.toString().includes('+'),
-                rawValue: timeValue.toString(),
-                rowIndex: rowIndex + 2 // Excel行号（从1开始，加上表头）
-              });
-            }
-          }
-        });
         
         validRows++;
         
@@ -260,10 +267,7 @@ function parseTimelinessExcel(filePath, cityMapping, selectedBrand = null) {
       errorRows,
       parsedData,
       brandColumns: brandColumns.map(col => col.name),
-      unmappedCities: parsedData
-        .filter(item => !item.areaId)
-        .map(item => item.cityName)
-        .filter((city, index, arr) => arr.indexOf(city) === index)
+      unmappedCities: []
     };
     
   } catch (error) {
@@ -328,6 +332,41 @@ function optimizeBrandColumns(brandColumns, selectedBrand) {
   const otherBrandColumns = brandColumns.filter(col => col.brandCode !== selectedBrand);
   
   return [...selectedBrandColumns, ...otherBrandColumns];
+}
+
+function findTimelinessMatch(timelinessMap, brandName, carrierId, serviceTypeName, orderTypeName, cityName) {
+  if (!brandName || !carrierId || !cityName) {
+    return { matchKey: null, timelinessMatch: null };
+  }
+
+  const serviceName = serviceTypeName || '';
+  const orderName = (orderTypeName || '').toString().trim();
+  const orderTypeCandidates = orderName && orderName !== '*' ? [orderName, '*'] : ['*'];
+  const buildKeys = (brand, service) => orderTypeCandidates.map((orderType) => `${brand}|${carrierId}|${service}|${orderType}|${cityName}`);
+  const shouldUseWildcardBrand = brandName !== '*' && orderName === '电商发货';
+  const candidateKeys = [
+    ...buildKeys(brandName, serviceName)
+  ];
+
+  if (serviceName) {
+    candidateKeys.push(...buildKeys(brandName, ''));
+  }
+
+  if (shouldUseWildcardBrand) {
+    candidateKeys.push(...buildKeys('*', serviceName));
+    if (serviceName) {
+      candidateKeys.push(...buildKeys('*', ''));
+    }
+  }
+
+  for (const key of candidateKeys) {
+    const timelinessMatch = timelinessMap.get(key);
+    if (timelinessMatch) {
+      return { matchKey: key, timelinessMatch };
+    }
+  }
+
+  return { matchKey: candidateKeys[0], timelinessMatch: null };
 }
 
 // 配置multer用于文件上传
@@ -400,18 +439,12 @@ router.post('/timeliness-excel', globalRateLimiter, upload.single('file'), async
     });
 
     let parseResult = null;
-    let cityMapping = {};
 
     try {
-      // 1. 获取城市区域映射
-      console.log('🗺️ 获取城市区域映射...');
-      cityMapping = await getCityAreaMapping();
-      console.log(`✅ 获取到${Object.keys(cityMapping).length}个城市映射`);
-
-      // 2. 解析Excel文件
+      // 1. 解析Excel文件（按SLA City列与视图DEST_CITY_NAME匹配，不再映射areaId）
       console.log('📊 解析Excel文件...', brand ? `优先处理品牌: ${brand}` : '');
       if (file.mimetype.includes('spreadsheet') || file.mimetype.includes('excel')) {
-        parseResult = parseTimelinessExcel(file.path, cityMapping, brand);
+        parseResult = parseTimelinessExcel(file.path, {}, brand);
       } else {
         throw new Error('暂不支持CSV格式，请上传Excel文件');
       }
@@ -441,11 +474,7 @@ router.post('/timeliness-excel', globalRateLimiter, upload.single('file'), async
           (dataQuality.carrierDistribution[item.carrier] || 0) + 1;
       });
 
-      // 计算城市映射率
-      const mappedCities = parseResult.parsedData.filter(item => item.areaId).length;
-      dataQuality.cityMappingRate = parseResult.parsedData.length > 0 
-        ? Math.round((mappedCities / parseResult.parsedData.length) * 100) 
-        : 0;
+      dataQuality.cityMappingRate = 100;
 
       // 4. TODO: 在生产环境中将解析的数据保存到数据库
       // await saveTimelinessDataToDatabase(parseResult.parsedData);
@@ -770,11 +799,8 @@ router.post('/validate-format', globalRateLimiter, upload.single('file'), async 
     const file = req.file;
     
     try {
-      // 获取城市映射
-      const cityMapping = await getCityAreaMapping();
-      
-      // 解析文件但不保存数据
-      const parseResult = parseTimelinessExcel(file.path, cityMapping);
+      // 解析文件但不保存数据（按城市名称匹配，不再映射areaId）
+      const parseResult = parseTimelinessExcel(file.path, {});
       
       // 返回格式验证结果
       const validationResult = {
@@ -1172,6 +1198,8 @@ router.post('/save-to-file', async (req, res) => {
       BRAND_CODE: item.brand || item.BRAND_CODE,
       CARRIER_NAME: item.carrier || item.CARRIER_NAME,
       CITY_NAME: item.cityName || item.CITY_NAME,
+      SERVICE_TYPE_NAME: item.serviceTypeName || item.SERVICE_TYPE_NAME || item.TRSERVICE_TYPE_NAME || null,
+      ORDER_TYPE_NAME: item.orderTypeName || item.ORDER_TYPE_NAME || '*',
       AREA_ID: item.areaId || item.AREA_ID || null,
       TIME_VALUE: parseFloat(item.timeValue || item.TIME_VALUE)
     }));
@@ -1351,14 +1379,9 @@ router.post('/load-default-timeliness', globalRateLimiter, async (req, res) => {
     console.log(`📊 找到预置时效表: ${selectedFile}`);
     console.log(`📍 文件路径: ${filePath}`);
     
-    // 获取城市映射
-    console.log('🗺️ 获取城市区域映射...');
-    const cityMapping = await getCityAreaMapping();
-    console.log(`✅ 获取到${Object.keys(cityMapping).length}个城市映射`);
-    
-    // 解析Excel文件
+    // 解析Excel文件（按城市名称匹配，不再映射areaId）
     console.log('📊 解析Excel文件...');
-    const parseResult = parseTimelinessExcel(filePath, cityMapping);
+    const parseResult = parseTimelinessExcel(filePath, {});
     
     console.log('✅ Excel解析完成:', {
       totalRows: parseResult.totalRows,
@@ -1473,6 +1496,22 @@ router.post('/export-timeliness-rawdata', async (req, res) => {
     
     const timelinessData = timelinessResult.data;  // ✅ 获取实际的数据数组
     console.log(`📊 加载了 ${timelinessData.length} 条时效数据`);
+
+    const timelinessMap = new Map();
+    const exactSlaBrands = new Set();
+    timelinessData.forEach(item => {
+      const serviceTypeName = item.serviceTypeName || '';
+      const orderTypeName = item.orderTypeName || '*';
+      if (item.brand && item.brand !== '*') {
+        exactSlaBrands.add(item.brand);
+      }
+      if (item.cityName) {
+        timelinessMap.set(
+          `${item.brand}|${item.carrier}|${serviceTypeName}|${orderTypeName}|${item.cityName}`,
+          item
+        );
+      }
+    });
     
     // 🔍 打印时效数据的前10条样本（包含完整信息）
     console.log('🔍 时效数据样本（前10条）:');
@@ -1482,9 +1521,10 @@ router.post('/export-timeliness-rawdata', async (req, res) => {
       const cityName = item.cityName;
       const courierCode = item.carrier;
       const timeValue = item.timeValue;
-      const itemKey = `${brandName}|${courierCode}|${cityName}`;  // ✅ 使用|分隔符，与timelinessDataProcessor保持一致
+      const orderTypeName = item.orderTypeName || '*';
+      const itemKey = `${brandName}|${courierCode}|${item.serviceTypeName || ''}|${orderTypeName}|${item.areaId || cityName}`;
       
-      console.log(`  ${index + 1}. 原始数据:`, { brandName, cityName, courierCode, timeValue });
+      console.log(`  ${index + 1}. 原始数据:`, { brandName, cityName, courierCode, orderTypeName, timeValue });
       console.log(`     生成的Key: "${itemKey}"`);
     });
     
@@ -1747,7 +1787,8 @@ router.post('/export-timeliness-rawdata', async (req, res) => {
         -- 🆕 新增字段：用于时效计算
         v.DIS_STATUS as dis_status,
         v.DELIVERY_TIMES as s2d_actual_hours,
-        v.DEST_CITY_NAME as dest_city_for_plan
+        v.DEST_CITY_NAME as dest_city_for_plan,
+        v.TRSERVICE_TYPE_NAME as service_type_name
         
       FROM APP_CMS.VIEW_TSK_LIST_TASK v
       ${QueryUtils.getBrandJoin('v')}
@@ -1830,21 +1871,28 @@ router.post('/export-timeliness-rawdata', async (req, res) => {
       let planTimeZone = '';
       let planHours = null;
       let matchDebug = null;  // 🔍 调试信息
+      const orderTypeName = order.ORDER_TYPE_NAME || order.order_type_name || '';
       
-      if (order.COMPANY_NAME && order.CARRIER_ID && order.DEST_CITY_FOR_PLAN) {
-        const matchKey = `${order.COMPANY_NAME}|${order.CARRIER_ID}|${order.DEST_CITY_FOR_PLAN}`;  // ✅ 使用|分隔符
-        const timelinessMatch = timelinessData.find(item => {
-          // ✅ 使用小写字段名（已被timelinessFileStore标准化）
-          const itemKey = `${item.brand}|${item.carrier}|${item.cityName}`;
-          return itemKey === matchKey;
-        });
+      if (order.COMPANY_NAME && order.CARRIER_ID) {
+        const serviceTypeName = order.SERVICE_TYPE_NAME || '';
+        const cityName = order.DEST_CITY_FOR_PLAN;
+        const { matchKey, timelinessMatch } = findTimelinessMatch(
+          timelinessMap,
+          order.COMPANY_NAME,
+          order.CARRIER_ID,
+          serviceTypeName,
+          orderTypeName,
+          cityName
+        );
         
         matchDebug = {
           matchKey,
           found: !!timelinessMatch,
           companyName: order.COMPANY_NAME,
-          city: order.DEST_CITY_FOR_PLAN,
-          carrier: order.CARRIER_ID
+          city: cityName,
+          carrier: order.CARRIER_ID,
+          serviceTypeName,
+          orderTypeName
         };
         
         if (timelinessMatch) {
@@ -1868,6 +1916,12 @@ router.post('/export-timeliness-rawdata', async (req, res) => {
         console.log(`\n🔍 订单 #${processedCount} 匹配结果:`, matchDebug);
         console.log(`  - Plan时效区间: ${planTimeZone || '未匹配'}`);
         console.log(`  - Plan时效小时: ${planHours || '未匹配'}`);
+      }
+
+      const usesWildcardBrandScope = !exactSlaBrands.has(order.COMPANY_NAME);
+      const isEcommerceShipment = orderTypeName === '电商发货';
+      if (usesWildcardBrandScope && !isEcommerceShipment) {
+        return null;
       }
       
       return {
@@ -1896,8 +1950,9 @@ router.post('/export-timeliness-rawdata', async (req, res) => {
         最后跟踪时间: order.TRACKING_TIME || '',
         最后描述: order.TR_DESCR || '',
         是否自管: order.SELF_FLAG || '',
-        订单类型: order.ORDER_TYPE_NAME || '',
+        订单类型: orderTypeName,
         快递单类型: order.DIS_TYPE_NAME || '',
+        快递产品: order.SERVICE_TYPE_NAME || '',
         配送时长H: order.DELIVERY_TIMES_H || '',
         一级警告原因: order.PATCH_REASON1 || '',
         二级警告原因: order.PATCH_REASON2 || '',
@@ -1911,7 +1966,7 @@ router.post('/export-timeliness-rawdata', async (req, res) => {
         实际时效小时: actualHours !== null ? actualHours : '',
         计划时效小时: planHours !== null ? planHours : ''
       };
-    });
+    }).filter(Boolean);
     
     console.log(`✅ 数据处理完成，共 ${enrichedData.length} 条记录`);
     
