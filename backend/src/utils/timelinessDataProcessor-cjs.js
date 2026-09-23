@@ -143,7 +143,7 @@ async function analyzeTimelinessPerformance(options = {}) {
       return await analyzeS2DPerformance(options);
     }
   } catch (error) {
-    console.error(`❌ ${analysisTypeForError}时效分析失败:`, error);
+    console.error('%s时效分析失败:', analysisTypeForError, error);
     throw error;
   }
 }
