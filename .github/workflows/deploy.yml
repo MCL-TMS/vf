@@ -126,6 +126,11 @@ jobs:
       - name: Verify server prerequisites
         shell: bash
         run: |
+          echo "Runner host: $(hostname -f 2>/dev/null || hostname)"
+          echo "Runner user: $(id -un) ($(id -u))"
+          ls -ld /etc/cms-dashboard || true
+          ls -l /etc/cms-dashboard/deploy-target || true
+          test -r /etc/cms-dashboard/deploy-target
           bash "${RELEASE_DIR}/deploy/deploy.sh" "$DEPLOY_ENVIRONMENT" "$RELEASE_DIR" --dry-run
 
       - name: Install script and deploy
