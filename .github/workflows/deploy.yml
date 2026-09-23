@@ -25,7 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      NODE_VERSION: 22
+      NODE_VERSION: 20
       VITE_API_BASE_URL: /api
     steps:
       - name: Checkout
@@ -46,7 +46,7 @@ jobs:
 
       - name: Install backend dependencies
         working-directory: backend
-        run: npm ci
+        run: npm ci --omit=dev
 
       - name: Check backend syntax
         shell: bash
@@ -67,7 +67,6 @@ jobs:
         run: |
           rm -rf frontend/build/.env*
           tar -czf release.tgz \
-            --exclude='backend/node_modules' \
             --exclude='backend/.env' \
             --exclude='backend/.env.*' \
             --exclude='backend/debug' \

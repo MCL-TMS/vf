@@ -30,7 +30,7 @@ fail() {
 
 [[ "${DEPLOY_ENVIRONMENT}" == test || "${DEPLOY_ENVIRONMENT}" == prod ]] || fail 'Environment must be test or prod'
 [[ -z "${MODE}" || "${MODE}" == --dry-run ]] || fail 'Unknown option'
-for command_name in node npm rsync curl flock systemctl nginx sudo; do
+for command_name in node rsync curl flock systemctl nginx sudo; do
   command -v "${command_name}" >/dev/null || fail "Missing command: ${command_name}"
 done
 [[ -r "${DEPLOY_TARGET_FILE}" ]] || fail "Missing server identity: ${DEPLOY_TARGET_FILE}"
@@ -42,6 +42,7 @@ case "${SOURCE_ROOT}/" in
   "$(realpath "${APP_ROOT}")/"*|"$(realpath "${FRONTEND_DIR}")/"*) fail 'Release source must be outside deployed directories' ;;
 esac
 [[ -f "${SOURCE_ROOT}/backend/package-lock.json" && -f "${SOURCE_ROOT}/backend/src/api-server.js" ]] || fail 'Backend release is incomplete'
+[[ -d "${SOURCE_ROOT}/backend/node_modules" ]] || fail 'Offline backend dependencies are missing from the release'
 [[ -s "${SOURCE_ROOT}/frontend/build/index.html" ]] || fail 'Frontend release is incomplete'
 [[ -f "${BACKEND_ENV_FILE}" ]] || fail "Missing backend environment file: ${BACKEND_ENV_FILE}"
 [[ "$(systemctl show "${BACKEND_SERVICE}" --property=LoadState --value)" == loaded ]] || fail 'Backend systemd service is not installed'
@@ -105,11 +106,8 @@ trap 'rollback 143' TERM
 
 echo "Preparing ${DEPLOY_ENVIRONMENT} release from ${SOURCE_ROOT}"
 mkdir -p "${RELEASE_DIR}" "${BACKEND_DIR}" "${FRONTEND_STAGING_DIR}"
-rsync -a --delete "${STATE_EXCLUDES[@]}" --exclude='node_modules/' \
+rsync -a --delete "${STATE_EXCLUDES[@]}" \
   "${SOURCE_ROOT}/backend/" "${RELEASE_DIR}/"
-pushd "${RELEASE_DIR}" >/dev/null
-npm ci --omit=dev
-popd >/dev/null
 
 mkdir -p "${BACKEND_BACKUP}" "${FRONTEND_BACKUP}"
 rsync -a "${STATE_EXCLUDES[@]}" "${BACKEND_DIR}/" "${BACKEND_BACKUP}/"
