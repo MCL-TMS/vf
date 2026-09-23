@@ -94,8 +94,8 @@ jobs:
       DEPLOY_ENVIRONMENT: ${{ github.ref == 'refs/heads/main' && 'prod' || 'test' }}
       APP_ROOT: ${{ vars.APP_ROOT || vars.DEPLOY_PATH || '/home/evelyn.zou/apps/cms-dashboard' }}
       DEPLOY_PATH: ${{ vars.DEPLOY_PATH || vars.APP_ROOT || '/home/evelyn.zou/apps/cms-dashboard' }}
-      FRONTEND_STAGE_ROOT: ${{ vars.FRONTEND_STAGE_ROOT || vars.NGINX_WEB_ROOT || '/home/evelyn.zou/apps/cms-dashboard/frontend/build' }}
-      FRONTEND_DIR: ${{ vars.NGINX_WEB_ROOT || vars.FRONTEND_DIR || '/var/www/mcl' }}
+      FRONTEND_STAGE_ROOT: ${{ vars.FRONTEND_STAGE_ROOT || '/var/www/mcl' }}
+      FRONTEND_DIR: ${{ vars.FRONTEND_STAGE_ROOT || vars.FRONTEND_DIR || '/var/www/mcl' }}
       SYSTEMD_SERVICE: ${{ vars.SYSTEMD_SERVICE || vars.BACKEND_SERVICE || 'cms_dashboard_backend' }}
       BACKEND_SERVICE: ${{ vars.SYSTEMD_SERVICE || vars.BACKEND_SERVICE || 'cms_dashboard_backend' }}
       BACKEND_ENV_FILE: ${{ vars.BACKEND_ENV_TARGET || vars.BACKEND_ENV_FILE || '/etc/cms-dashboard/backend.env' }}
