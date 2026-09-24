@@ -21,7 +21,7 @@ RELEASE_DIR="${APP_ROOT}/.release.${TIMESTAMP}"
 BACKEND_READY=false
 FRONTEND_READY=false
 PUBLISH_STARTED=false
-STATE_EXCLUDES=(--exclude='.env' --exclude='.env.*' --exclude='logs/' --exclude='uploads/' --exclude='debug/')
+STATE_EXCLUDES=(--exclude='.env' --exclude='.env.*' --exclude='/logs/' --exclude='/uploads/' --exclude='/debug/')
 
 fail() {
   echo "$*" >&2
