@@ -1,4 +1,5 @@
 const { createClient } = require('redis');
+const fs = require('fs');
 
 let redisClient = null;
 let redisConnectPromise = null;
@@ -66,13 +67,23 @@ function buildRedisUrl() {
   const port = process.env.REDIS_PORT || '6379';
   const password = process.env.REDIS_PASSWORD;
   const database = process.env.REDIS_DB || '0';
-
+  const protocol = parseBooleanEnv(process.env.REDIS_TLS) ? 'rediss' : 'redis';
 
   if (password) {
-    return `redis://:${encodeURIComponent(password)}@${host}:${port}/${database}${tlsParam}`;
+    return `${protocol}://:${encodeURIComponent(password)}@${host}:${port}/${database}`;
   }
 
-  return `redis://${host}:${port}/${database}${tlsParam}`;
+  return `${protocol}://${host}:${port}/${database}`;
+}
+
+function getRedisCa() {
+  const caPath = String(process.env.REDIS_CA_PATH || '').trim();
+  if (caPath) {
+    return fs.readFileSync(caPath, 'utf8');
+  }
+
+  const ca = String(process.env.REDIS_CA || process.env.REDIS_TLS_CA || '').trim();
+  return ca || undefined;
 }
 
 function logRedisUnavailable(error) {
@@ -124,9 +135,11 @@ async function getRedisClient() {
   }
 
   if (!redisClient) {
+    const ca = getRedisCa();
     redisClient = createClient({
       url: buildRedisUrl(),
       socket: {
+        ...(ca ? { ca } : {}),
         reconnectStrategy(retries) {
           return Math.min(retries * 200, 2000);
         }
