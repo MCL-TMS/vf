@@ -48,6 +48,10 @@ jobs:
         working-directory: backend
         run: npm ci --omit=dev
 
+      - name: Verify packaged backend dependencies
+        working-directory: backend
+        run: node -e "require('express'); require('finalhandler'); require('debug'); console.log('backend dependency closure passed')"
+
       - name: Check backend syntax
         shell: bash
         run: |
@@ -99,7 +103,7 @@ jobs:
       BACKEND_SERVICE: ${{ vars.SYSTEMD_SERVICE || vars.BACKEND_SERVICE || 'cms_dashboard_backend' }}
       BACKEND_ENV_FILE: ${{ vars.BACKEND_ENV_TARGET || vars.BACKEND_ENV_FILE || '/etc/cms-dashboard/backend.env' }}
       BACKEND_ENV_TARGET: ${{ vars.BACKEND_ENV_TARGET || vars.BACKEND_ENV_FILE || '/etc/cms-dashboard/backend.env' }}
-      HEALTH_URL: ${{ vars.HEALTH_URL || 'http://127.0.0.1:3001/api/health' }}
+      HEALTH_URL: ${{ vars.HEALTH_URL || 'https://127.0.0.1:3001/api/health' }}
     steps:
       - name: Prepare isolated release directory
         id: release

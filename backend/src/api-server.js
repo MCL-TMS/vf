@@ -7,6 +7,7 @@
 
 const path = require('path');
 const fs = require('fs');
+const https = require('https');
 const dotenv = require('dotenv');
 
 // 优先加载 backend 根目录 .env；随后兜底当前工作目录 .env。
@@ -50,6 +51,9 @@ if (authRoutes && authRoutes.stack) {
 const app = express();
 const PORT = process.env.API_PORT || 3001;
 const HOST = process.env.HOST || '0.0.0.0';
+const BACKEND_HTTPS_ENABLED = process.env.BACKEND_HTTPS_ENABLED === 'true';
+const SSL_CERT_PATH = process.env.SSL_CERT_PATH || '/etc/nginx/ssl/fullchain.crt';
+const SSL_KEY_PATH = process.env.SSL_KEY_PATH || '/etc/nginx/ssl/cms-dashboard.ocf.fulfillment.maersk.com.cn.key';
 let httpServer = null;
 
 const logsDir = path.resolve(__dirname, '../logs');
@@ -443,7 +447,7 @@ app.get('/api/health', async (req, res) => {
     const dbStatus = await testConnection();
 
     const healthPayload = {
-      status: 'healthy',
+      status: dbStatus ? 'healthy' : 'unhealthy',
       timestamp: new Date().toISOString(),
       version: '1.0.0',
       database: dbStatus ? 'connected' : 'disconnected',
@@ -456,7 +460,7 @@ app.get('/api/health', async (req, res) => {
       healthPayload.environment = process.env.NODE_ENV || 'development';
     }
 
-    res.json(healthPayload);
+    return res.status(dbStatus ? 200 : 503).json(healthPayload);
   } catch (error) {
     console.error('健康检查失败:', error);
     return sendError(res, req, {
@@ -630,16 +634,26 @@ async function startServer() {
     }
     console.log('================================================================================');
     
-    httpServer = app.listen(PORT, HOST, () => {
+    const serverOptions = BACKEND_HTTPS_ENABLED
+      ? {
+          key: fs.readFileSync(SSL_KEY_PATH),
+          cert: fs.readFileSync(SSL_CERT_PATH)
+        }
+      : undefined;
+    const createServer = BACKEND_HTTPS_ENABLED
+      ? https.createServer
+      : (options, handler) => require('http').createServer(handler);
+    httpServer = createServer(serverOptions, app).listen(PORT, HOST, () => {
       console.log('🚀 VF物流数据分析平台API服务器启动成功');
-      console.log(`📡 监听地址: http://${HOST}:${PORT}`);
-      console.log(`📊 API文档: http://${HOST}:${PORT}/api/info`);
+      const protocol = BACKEND_HTTPS_ENABLED ? 'https' : 'http';
+      console.log(`📡 监听地址: ${protocol}://${HOST}:${PORT}`);
+      console.log(`📊 API文档: ${protocol}://${HOST}:${PORT}/api/info`);
       console.log(`🔒 HTTPS强制: ${shouldEnforceHttps ? 'enabled' : 'disabled'}`);
       console.log(`🔀 HTTPS重定向: ${shouldRedirectToHttps ? 'enabled' : 'disabled'}`);
       console.log(`🛡️ HSTS: max-age=${Number.isFinite(hstsMaxAge) && hstsMaxAge > 0 ? hstsMaxAge : 31536000}; includeSubDomains=${hstsIncludeSubDomains}; preload=${hstsPreload}`);
       console.log(`🌐 trust proxy: ${trustProxySetting === false ? 'disabled' : trustProxySetting}`);
       console.log(`🌍 CORS Origins: ${allowedOrigins.join(', ')}`);
-      console.log(`💓 健康检查: http://${HOST}:${PORT}/api/health`);
+      console.log(`💓 健康检查: ${protocol}://${HOST}:${PORT}/api/health`);
       console.log(`🔍 环境: ${process.env.NODE_ENV || 'development'}`);
       console.log(`📦 版本: 1.0.0`);
       console.log('================================================================================');
