@@ -333,8 +333,8 @@ export function useAPIData(options: UseAPIDataOptions = {}) {
           brand: selectedBrand,
           platform: selectedPlatform,
           selfFlag: selectedSelfFlag,
-          preferLite: false,
-          requireCrossAnalysis: true,
+          preferLite: true,
+          requireCrossAnalysis: false,
           signal: abortControllerRef.current.signal
         });
         
