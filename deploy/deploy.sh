@@ -13,7 +13,7 @@ FRONTEND_DIR="${FRONTEND_DIR:-${FRONTEND_STAGE_ROOT:-/var/www/mcl}}"
 BACKEND_SERVICE="${BACKEND_SERVICE:-${SYSTEMD_SERVICE:-cms_dashboard_backend}}"
 BACKEND_ENV_FILE="${BACKEND_ENV_FILE:-${BACKEND_ENV_TARGET:-/etc/cms-dashboard/backend.env}}"
 DEPLOY_TARGET_FILE="${DEPLOY_TARGET_FILE:-/etc/cms-dashboard/deploy-target}"
-HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:3001/api/health}"
+HEALTH_URL="${HEALTH_URL:-https://127.0.0.1:3001/api/health}"
 TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ).$$"
 BACKEND_BACKUP="${APP_ROOT}/backend.bak.${TIMESTAMP}"
 FRONTEND_BACKUP="${APP_ROOT}/frontend.bak.${TIMESTAMP}"
@@ -43,6 +43,9 @@ case "${SOURCE_ROOT}/" in
 esac
 [[ -f "${SOURCE_ROOT}/backend/package-lock.json" && -f "${SOURCE_ROOT}/backend/src/api-server.js" ]] || fail 'Backend release is incomplete'
 [[ -d "${SOURCE_ROOT}/backend/node_modules" ]] || fail 'Offline backend dependencies are missing from the release'
+pushd "${SOURCE_ROOT}/backend" >/dev/null
+node -e "require('express'); require('finalhandler'); require('debug')"
+popd >/dev/null
 [[ -s "${SOURCE_ROOT}/frontend/build/index.html" ]] || fail 'Frontend release is incomplete'
 [[ -f "${BACKEND_ENV_FILE}" ]] || fail "Missing backend environment file: ${BACKEND_ENV_FILE}"
 [[ "$(systemctl show "${BACKEND_SERVICE}" --property=LoadState --value)" == loaded ]] || fail 'Backend systemd service is not installed'
@@ -62,7 +65,9 @@ health_check() {
   local attempt
   local response
   for attempt in $(seq 1 12); do
-    if response="$(curl --fail --silent --show-error \
+    local curl_options=()
+    [[ "${HEALTH_URL}" == https://* ]] && curl_options+=(--insecure)
+    if response="$(curl "${curl_options[@]}" --fail --silent --show-error \
       --connect-timeout 3 --max-time 10 "${HEALTH_URL}")" && \
       printf '%s' "${response}" | node -e '
       let body = "";
