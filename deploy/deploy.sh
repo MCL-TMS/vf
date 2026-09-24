@@ -6,8 +6,8 @@ umask 022
 DEPLOY_ENVIRONMENT="${1:?Usage: deploy.sh <test|prod> <release-path> [--dry-run]}"
 SOURCE_ROOT="$(realpath "${2:?Release path is required}")"
 MODE="${3:-}"
-APP_ROOT="${APP_ROOT:-${DEPLOY_PATH:-/home/evelyn.zou/apps/cms-dashboard}}"
-BACKEND_DIR="${BACKEND_DIR:-${APP_ROOT}/backend}"
+BACKEND_DIR="${BACKEND_DIR:-${DEPLOY_PATH:-/home/evelyn.zou/apps/cms-dashboard/backend}}"
+APP_ROOT="${APP_ROOT:-$(dirname "${BACKEND_DIR}")}"
 FRONTEND_STAGING_DIR="${FRONTEND_STAGING_DIR:-${APP_ROOT}/frontend/build}"
 FRONTEND_DIR="${FRONTEND_DIR:-${FRONTEND_STAGE_ROOT:-/var/www/mcl}}"
 BACKEND_SERVICE="${BACKEND_SERVICE:-${SYSTEMD_SERVICE:-cms_dashboard_backend}}"
@@ -89,6 +89,10 @@ rollback() {
   trap - ERR INT TERM
   set +e
   echo 'Deployment failed.' >&2
+  echo 'Backend service status:' >&2
+  systemctl status "${BACKEND_SERVICE}" --no-pager >&2 || true
+  echo 'Recent backend journal:' >&2
+  journalctl -u "${BACKEND_SERVICE}" -n 80 --no-pager -o cat >&2 || true
   if [[ "${PUBLISH_STARTED}" == true ]]; then
     sudo -n /usr/bin/systemctl stop "${BACKEND_SERVICE}" || rollback_failed=true
     if [[ "${BACKEND_READY}" == true ]]; then
