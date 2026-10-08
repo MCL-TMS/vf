@@ -77,7 +77,9 @@ function buildRedisUrl() {
 }
 
 function getRedisCa() {
-  const caPath = String(process.env.REDIS_CA_PATH || '').trim();
+  const caPath = String(
+    process.env.REDIS_CA_PATH || process.env.REDIS_TLS_CA_PATH || ''
+  ).trim();
   if (caPath) {
     return fs.readFileSync(caPath, 'utf8');
   }

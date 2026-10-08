@@ -13,7 +13,7 @@ const dbConfig = {
   user: process.env.ORACLE_USER,
   password: process.env.ORACLE_PASSWORD,
   connectString: process.env.ORACLE_CONNECT_STRING,
-  poolMin: parseNumberEnv(process.env.ORACLE_POOL_MIN, 2),
+  poolMin: parseNumberEnv(process.env.ORACLE_POOL_MIN, 0),
   poolMax: parseNumberEnv(process.env.ORACLE_POOL_MAX, 30),
   poolIncrement: parseNumberEnv(process.env.ORACLE_POOL_INCREMENT, 2),
   poolTimeout: parseNumberEnv(process.env.ORACLE_POOL_TIMEOUT, 60),

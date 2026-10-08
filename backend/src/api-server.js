@@ -21,7 +21,7 @@ const compression = require('compression');
 const { randomUUID } = require('crypto');
 const { testConnection, initializeDatabase } = require('./config/database-api');
 const { ERROR_CODES, normalizeError, sendError } = require('./utils/apiError');
-const { getRedisStatus, getRedisKeyPrefix } = require('./utils/redisStore');
+const { getRedisClient, getRedisStatus, getRedisKeyPrefix } = require('./utils/redisStore');
 
 // 路由导入
 const overviewRoutes = require('./routes/overview');
@@ -633,6 +633,12 @@ async function startServer() {
       console.log('✅ 数据库连接成功');
     }
     console.log('================================================================================');
+
+    // Establish the Redis connection during service startup so failures are visible immediately.
+    if (process.env.REDIS_ENABLED !== 'false') {
+      const redisClient = await getRedisClient();
+      console.log(redisClient ? '✅ Redis启动连接成功' : '⚠️ Redis启动连接失败，继续使用内存回退');
+    }
     
     const serverOptions = BACKEND_HTTPS_ENABLED
       ? {
