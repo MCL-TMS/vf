@@ -54,7 +54,10 @@
   },
   "overrides": {
     "busboy": "^1.6.0",
-    "qs": "^6.16.0"
+    "qs": "^6.16.0",
+    "nodemon": {
+      "chokidar": "^4.0.3"
+    }
   },
   "devDependencies": {
     "@types/jsonwebtoken": "^9.0.10",
