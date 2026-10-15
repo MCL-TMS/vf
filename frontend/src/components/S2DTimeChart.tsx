@@ -362,7 +362,7 @@ export function S2DTimeChart({ selectedBrand, apiData, isLoading = false, access
               <CardContent className="p-4">
                 <div className="flex items-center space-x-2">
                   <Target className="h-4 w-4 text-orange-500" />
-                  <span className="text-sm text-muted-foreground">Completion Rate</span>
+                  <span className="text-sm text-muted-foreground">TimeEfficiency Rate</span>
                 </div>
                 <div className="mt-2">
                   <div className="text-2xl font-bold">{totalStats.avgtimeEfficiencyRate.toFixed(1)}%</div>
