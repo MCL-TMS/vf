@@ -28,6 +28,13 @@ function formatNumber(value: number | string | null | undefined): string {
   return Number.isFinite(numericValue) ? numericValue.toLocaleString() : String(value || 0);
 }
 
+function formatLocalDate(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 function formatTooltipValue(value: number | string, name: string) {
   const numericValue = Number(value || 0);
   if (String(name).includes('率')) {
@@ -93,14 +100,14 @@ export function TrendsPage({ data: _data, selectedBrand, selectedPlatform, selec
   };
 
   function getDefaultSixMonthsRange(anchorTo?: string): DateRange {
-    const anchorDate = anchorTo ? new Date(anchorTo) : new Date();
+    const anchorDate = anchorTo ? new Date(`${anchorTo.slice(0, 10)}T00:00:00`) : new Date();
     const safeAnchor = Number.isNaN(anchorDate.getTime()) ? new Date() : anchorDate;
     const end = new Date(safeAnchor.getFullYear(), safeAnchor.getMonth() + 1, 0);
     const start = new Date(safeAnchor.getFullYear(), safeAnchor.getMonth() - 5, 1);
 
     return {
-      from: start.toISOString().split('T')[0],
-      to: end.toISOString().split('T')[0]
+      from: formatLocalDate(start),
+      to: formatLocalDate(end)
     };
   }
 

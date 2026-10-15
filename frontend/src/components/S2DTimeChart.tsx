@@ -25,7 +25,7 @@ interface CourierS2DData {
   "72H+": number;
   totalOrders: number;
   avgTime: number;
-  completionRate: number;
+  timeEfficiencyRate: number;
 }
 
 export function S2DTimeChart({ selectedBrand, apiData, isLoading = false, accessibleBrandCodes }: S2DTimeChartProps) {
@@ -65,8 +65,8 @@ export function S2DTimeChart({ selectedBrand, apiData, isLoading = false, access
 
       const courierName = carrierStat.carrierName || CARRIER_NAME_MAP[carrierId] || carrierId;
 
-      // 计算完成率（Plan / Actual * 100，Plan是目标，Actual是实际）
-      const completionRate = avgActualHours > 0 ? (avgPlanHours / avgActualHours) * 100 : 100;
+      // 计算时效达成率（Plan / Actual * 100，Plan是目标，Actual是实际）
+      const timeEfficiencyRate = avgActualHours > 0 ? (avgPlanHours / avgActualHours) * 100 : 100;
 
       courierData.push({
         courier: courierName,
@@ -76,7 +76,7 @@ export function S2DTimeChart({ selectedBrand, apiData, isLoading = false, access
         "72H+": actualCats['72H+'] || 0,
         totalOrders,
         avgTime: avgActualHours,  // ✅ 已确保是数字
-        completionRate: Math.min(completionRate, 150) // 限制最大值为150%
+        timeEfficiencyRate: Math.min(timeEfficiencyRate, 150) // 限制最大值为150%
       });
     });
 
@@ -158,7 +158,7 @@ export function S2DTimeChart({ selectedBrand, apiData, isLoading = false, access
 
       const avgActualHours = parseFloat(stat.avgActualHours) || 0;
       const avgPlanHours = parseFloat(stat.avgPlanHours) || 0;
-      const completionRate = avgActualHours > 0 ? (avgPlanHours / avgActualHours) * 100 : 100;
+      const timeEfficiencyRate = avgActualHours > 0 ? (avgPlanHours / avgActualHours) * 100 : 100;
 
       if (!brandData[brandName]) {
         brandData[brandName] = [];
@@ -173,7 +173,7 @@ export function S2DTimeChart({ selectedBrand, apiData, isLoading = false, access
         "72H+": actualCats['72H+'] || 0,
         totalOrders,
         avgTime: avgActualHours,
-        completionRate: Math.min(completionRate, 150)
+        timeEfficiencyRate: Math.min(timeEfficiencyRate, 150)
       });
     });
 
@@ -239,7 +239,7 @@ export function S2DTimeChart({ selectedBrand, apiData, isLoading = false, access
           const totalOrders = courierOrders.length;
           const avgTime = courierOrders.reduce((sum, order) => sum + order.actualS2D!, 0) / totalOrders;
           const avgPlanTime = courierOrders.reduce((sum, order) => sum + order.planS2D!, 0) / totalOrders;
-          const completionRate = avgPlanTime > 0 ? (avgPlanTime / avgTime) * 100 : 100;
+          const timeEfficiencyRate = avgPlanTime > 0 ? (avgPlanTime / avgTime) * 100 : 100;
 
           brandCourierData.push({
             courier,
@@ -250,7 +250,7 @@ export function S2DTimeChart({ selectedBrand, apiData, isLoading = false, access
             "72H+": time72Plus,
             totalOrders,
             avgTime,
-            completionRate: Math.min(completionRate, 150)
+            timeEfficiencyRate: Math.min(timeEfficiencyRate, 150)
           });
         }
       });
@@ -279,20 +279,20 @@ export function S2DTimeChart({ selectedBrand, apiData, isLoading = false, access
       return {
         totalOrders: 0,
         avgS2DTime: 0,
-        avgCompletionRate: 0
+        avgtimeEfficiencyRate: 0
       };
     }
     
     const totalOrders = courierS2DStats.reduce((sum, courier) => sum + courier.totalOrders, 0);
     const weightedAvgTime = totalOrders > 0 ? 
       courierS2DStats.reduce((sum, courier) => sum + courier.avgTime * courier.totalOrders, 0) / totalOrders : 0;
-    const avgCompletionRate = totalOrders > 0 ?
-      courierS2DStats.reduce((sum, courier) => sum + courier.completionRate * courier.totalOrders, 0) / totalOrders : 0;
+    const avgtimeEfficiencyRate = totalOrders > 0 ?
+      courierS2DStats.reduce((sum, courier) => sum + courier.timeEfficiencyRate * courier.totalOrders, 0) / totalOrders : 0;
     
     return {
       totalOrders,
       avgS2DTime: weightedAvgTime,
-      avgCompletionRate
+      avgtimeEfficiencyRate
     };
   }, [courierS2DStats]);
 
@@ -365,8 +365,8 @@ export function S2DTimeChart({ selectedBrand, apiData, isLoading = false, access
                   <span className="text-sm text-muted-foreground">Completion Rate</span>
                 </div>
                 <div className="mt-2">
-                  <div className="text-2xl font-bold">{totalStats.avgCompletionRate.toFixed(1)}%</div>
-                  <div className="text-xs text-muted-foreground">平均完成率</div>
+                  <div className="text-2xl font-bold">{totalStats.avgtimeEfficiencyRate.toFixed(1)}%</div>
+                  <div className="text-xs text-muted-foreground">时效达成率</div>
                 </div>
               </CardContent>
             </Card>
@@ -553,27 +553,27 @@ export function S2DTimeChart({ selectedBrand, apiData, isLoading = false, access
 
                       {/* 表现评级 */}
                       <div className="flex items-center justify-between pt-2 border-t">
-                        <span className="text-sm font-medium">完成率:</span>
+                        <span className="text-sm font-medium">时效达成率:</span>
                         <div className="flex items-center space-x-2">
                           <span className={`font-bold ${
-                            courier.completionRate >= 100 ? 'text-green-600' : 
-                            courier.completionRate >= 90 ? 'text-blue-600' : 
-                            courier.completionRate >= 80 ? 'text-yellow-600' : 'text-red-600'
+                            courier.timeEfficiencyRate >= 100 ? 'text-green-600' : 
+                            courier.timeEfficiencyRate >= 90 ? 'text-blue-600' : 
+                            courier.timeEfficiencyRate >= 80 ? 'text-yellow-600' : 'text-red-600'
                           }`}>
-                            {courier.completionRate.toFixed(1)}%
+                            {courier.timeEfficiencyRate.toFixed(1)}%
                           </span>
                           <Badge 
                             variant="outline" 
                             className={`text-xs ${
-                              courier.completionRate >= 100 ? 'bg-green-50 text-green-700 border-green-300' : 
-                              courier.completionRate >= 90 ? 'bg-blue-50 text-blue-700 border-blue-300' : 
-                              courier.completionRate >= 80 ? 'bg-yellow-50 text-yellow-700 border-yellow-300' : 
+                              courier.timeEfficiencyRate >= 100 ? 'bg-green-50 text-green-700 border-green-300' : 
+                              courier.timeEfficiencyRate >= 90 ? 'bg-blue-50 text-blue-700 border-blue-300' : 
+                              courier.timeEfficiencyRate >= 80 ? 'bg-yellow-50 text-yellow-700 border-yellow-300' : 
                               'bg-red-50 text-red-700 border-red-300'
                             }`}
                           >
-                            {courier.completionRate >= 100 ? '优秀' : 
-                             courier.completionRate >= 90 ? '良好' : 
-                             courier.completionRate >= 80 ? '一般' : '待改进'}
+                            {courier.timeEfficiencyRate >= 100 ? '优秀' : 
+                             courier.timeEfficiencyRate >= 90 ? '良好' : 
+                             courier.timeEfficiencyRate >= 80 ? '一般' : '待改进'}
                           </Badge>
                         </div>
                       </div>

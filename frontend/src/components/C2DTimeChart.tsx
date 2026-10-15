@@ -24,7 +24,7 @@ interface CourierC2DData {
   "3+d": number;
   totalOrders: number;
   avgTime: number;
-  completionRate: number;
+  timeEfficiencyRate: number;
 }
 
 export function C2DTimeChart({ selectedBrand, apiData, isLoading = false, accessibleBrandCodes }: C2DTimeChartProps) {
@@ -74,10 +74,10 @@ export function C2DTimeChart({ selectedBrand, apiData, isLoading = false, access
         const avgTimeHours = parseFloat(carrierStat.avgActualHours) || 0;
         const avgTime = avgTimeHours / 24; // 转换为天数
         
-        // 计算完成率（实际时间相对于计划时间的比例）
+        // 计算时效达成率（实际时间相对于计划时间的比例）
         const totalActualOrders = time1d + time2d + time3d + time3Plus;
         const totalPlanOrders = (planCats['24H'] || 0) + (planCats['48H'] || 0) + (planCats['72H'] || 0) + (planCats['72H+'] || 0);
-        const completionRate = totalPlanOrders > 0 ? (totalActualOrders / totalPlanOrders) * 100 : 100;
+        const timeEfficiencyRate = totalPlanOrders > 0 ? (totalActualOrders / totalPlanOrders) * 100 : 100;
         
         console.log(`  ✅ 快递商 ${carrierId} - C2D数据:`, {
           totalOrders,
@@ -86,7 +86,7 @@ export function C2DTimeChart({ selectedBrand, apiData, isLoading = false, access
           time3d,
           time3Plus,
           avgTime: avgTime.toFixed(2) + '天',
-          completionRate: completionRate.toFixed(1) + '%'
+          timeEfficiencyRate: timeEfficiencyRate.toFixed(1) + '%'
         });
         
         courierData.push({
@@ -97,7 +97,7 @@ export function C2DTimeChart({ selectedBrand, apiData, isLoading = false, access
           "3+d": time3Plus,
           totalOrders,
           avgTime,
-          completionRate: Math.min(completionRate, 150) // 限制最大值为150%
+          timeEfficiencyRate: Math.min(timeEfficiencyRate, 150) // 限制最大值为150%
         });
       }
     });
@@ -136,7 +136,7 @@ export function C2DTimeChart({ selectedBrand, apiData, isLoading = false, access
         const totalOrders = courierOrders.length;
         const avgTime = courierOrders.reduce((sum, order) => sum + order.actualC2D!, 0) / totalOrders;
         const avgPlanTime = courierOrders.reduce((sum, order) => sum + order.planC2D!, 0) / totalOrders;
-        const completionRate = avgPlanTime > 0 ? (avgPlanTime / avgTime) * 100 : 100;
+        const timeEfficiencyRate = avgPlanTime > 0 ? (avgPlanTime / avgTime) * 100 : 100;
 
         courierData.push({
           courier,
@@ -146,7 +146,7 @@ export function C2DTimeChart({ selectedBrand, apiData, isLoading = false, access
           "3+d": time3Plus,
           totalOrders,
           avgTime: avgTime / 24, // 转换为天数
-          completionRate: Math.min(completionRate, 150) // 限制最大值为150%
+          timeEfficiencyRate: Math.min(timeEfficiencyRate, 150) // 限制最大值为150%
         });
       }
     });
@@ -225,7 +225,7 @@ export function C2DTimeChart({ selectedBrand, apiData, isLoading = false, access
       const avgActualHours = parseFloat(stat.avgActualHours) || 0;
       const avgPlanHours = parseFloat(stat.avgPlanHours) || 0;
       const avgTime = avgActualHours / 24; // 转换为天数
-      const completionRate = avgActualHours > 0 ? (avgPlanHours / avgActualHours) * 100 : 100;
+      const timeEfficiencyRate = avgActualHours > 0 ? (avgPlanHours / avgActualHours) * 100 : 100;
 
       if (!brandData[brandName]) {
         brandData[brandName] = [];
@@ -240,7 +240,7 @@ export function C2DTimeChart({ selectedBrand, apiData, isLoading = false, access
         "3+d": time3Plus,
         totalOrders,
         avgTime,
-        completionRate: Math.min(completionRate, 150)
+        timeEfficiencyRate: Math.min(timeEfficiencyRate, 150)
       });
     });
 
@@ -298,7 +298,7 @@ export function C2DTimeChart({ selectedBrand, apiData, isLoading = false, access
           const totalOrders = courierOrders.length;
           const avgTime = courierOrders.reduce((sum, order) => sum + order.actualC2D!, 0) / totalOrders;
           const avgPlanTime = courierOrders.reduce((sum, order) => sum + order.planC2D!, 0) / totalOrders;
-          const completionRate = avgPlanTime > 0 ? (avgPlanTime / avgTime) * 100 : 100;
+          const timeEfficiencyRate = avgPlanTime > 0 ? (avgPlanTime / avgTime) * 100 : 100;
 
           brandCourierData.push({
             courier,
@@ -309,7 +309,7 @@ export function C2DTimeChart({ selectedBrand, apiData, isLoading = false, access
             "3+d": time3Plus,
             totalOrders,
             avgTime: avgTime / 24, // 转换为天数
-            completionRate: Math.min(completionRate, 150)
+            timeEfficiencyRate: Math.min(timeEfficiencyRate, 150)
           });
         }
       });
@@ -327,12 +327,12 @@ export function C2DTimeChart({ selectedBrand, apiData, isLoading = false, access
     
     const totalOrders = courierStats.reduce((sum, courier) => sum + courier.totalOrders, 0);
     const weightedAvgTime = courierStats.reduce((sum, courier) => sum + courier.avgTime * courier.totalOrders, 0) / totalOrders || 0;
-    const avgCompletionRate = courierStats.reduce((sum, courier) => sum + courier.completionRate * courier.totalOrders, 0) / totalOrders || 0;
+    const avgtimeEfficiencyRate = courierStats.reduce((sum, courier) => sum + courier.timeEfficiencyRate * courier.totalOrders, 0) / totalOrders || 0;
     
     return {
       totalOrders,
       avgC2DTime: weightedAvgTime,
-      avgCompletionRate
+      avgtimeEfficiencyRate
     };
   }, [courierC2DStatsFromAPI, courierC2DStatsMock]);
 
@@ -421,11 +421,11 @@ export function C2DTimeChart({ selectedBrand, apiData, isLoading = false, access
           <CardContent className="p-4">
             <div className="flex items-center space-x-2">
               <Target className="h-4 w-4 text-orange-500" />
-              <span className="text-sm text-muted-foreground">Completion Rate</span>
+              <span className="text-sm text-muted-foreground">TimeEfficiency Rate</span>
             </div>
             <div className="mt-2">
-              <div className="text-2xl font-bold">{totalStats.avgCompletionRate.toFixed(1)}%</div>
-              <div className="text-xs text-muted-foreground">平均完成率</div>
+              <div className="text-2xl font-bold">{totalStats.avgtimeEfficiencyRate.toFixed(1)}%</div>
+              <div className="text-xs text-muted-foreground">时效达成率</div>
             </div>
           </CardContent>
         </Card>
@@ -598,27 +598,27 @@ export function C2DTimeChart({ selectedBrand, apiData, isLoading = false, access
 
                   {/* 表现评级 */}
                   <div className="flex items-center justify-between pt-2 border-t">
-                    <span className="text-sm font-medium">完成率:</span>
+                    <span className="text-sm font-medium">时效达成率:</span>
                     <div className="flex items-center space-x-2">
                       <span className={`font-bold ${
-                        courier.completionRate >= 100 ? 'text-green-600' : 
-                        courier.completionRate >= 90 ? 'text-blue-600' : 
-                        courier.completionRate >= 80 ? 'text-yellow-600' : 'text-red-600'
+                        courier.timeEfficiencyRate >= 100 ? 'text-green-600' : 
+                        courier.timeEfficiencyRate >= 90 ? 'text-blue-600' : 
+                        courier.timeEfficiencyRate >= 80 ? 'text-yellow-600' : 'text-red-600'
                       }`}>
-                        {courier.completionRate.toFixed(1)}%
+                        {courier.timeEfficiencyRate.toFixed(1)}%
                       </span>
                       <Badge 
                         variant="outline" 
                         className={`text-xs ${
-                          courier.completionRate >= 100 ? 'bg-green-50 text-green-700 border-green-300' : 
-                          courier.completionRate >= 90 ? 'bg-blue-50 text-blue-700 border-blue-300' : 
-                          courier.completionRate >= 80 ? 'bg-yellow-50 text-yellow-700 border-yellow-300' : 
+                          courier.timeEfficiencyRate >= 100 ? 'bg-green-50 text-green-700 border-green-300' : 
+                          courier.timeEfficiencyRate >= 90 ? 'bg-blue-50 text-blue-700 border-blue-300' : 
+                          courier.timeEfficiencyRate >= 80 ? 'bg-yellow-50 text-yellow-700 border-yellow-300' : 
                           'bg-red-50 text-red-700 border-red-300'
                         }`}
                       >
-                        {courier.completionRate >= 100 ? '优秀' : 
-                         courier.completionRate >= 90 ? '良好' : 
-                         courier.completionRate >= 80 ? '一般' : '待改进'}
+                        {courier.timeEfficiencyRate >= 100 ? '优秀' : 
+                         courier.timeEfficiencyRate >= 90 ? '良好' : 
+                         courier.timeEfficiencyRate >= 80 ? '一般' : '待改进'}
                       </Badge>
                     </div>
                   </div>
