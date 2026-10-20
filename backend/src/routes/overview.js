@@ -428,7 +428,8 @@ router.get('/kpi', async (req, res) => {
       });
     }
 
-    if (!DateHelper.isValidDateString(dateFrom) || !DateHelper.isValidDateString(dateTo)) {
+    if (typeof dateFrom !== 'string' || typeof dateTo !== 'string' ||
+        !DateHelper.isValidDateString(dateFrom) || !DateHelper.isValidDateString(dateTo)) {
       return sendError(res, req, {
         status: 400,
         code: ERROR_CODES.VALIDATION_ERROR,
