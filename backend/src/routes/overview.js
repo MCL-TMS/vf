@@ -410,6 +410,15 @@ router.get('/kpi', async (req, res) => {
     console.log('🔄 [KPI查询] 收到请求参数:', { dateFrom, dateTo, brand, platform, selfFlag, liteModeRequested, liteMode, authorizedCustomerNos });
     
     // 参数验证
+    if (typeof dateFrom !== 'string' || typeof dateTo !== 'string') {
+      return sendError(res, req, {
+        status: 400,
+        code: ERROR_CODES.VALIDATION_ERROR,
+        error: '日期参数类型无效',
+        details: { expectedTypes: { dateFrom: 'string', dateTo: 'string' } }
+      });
+    }
+
     if (!dateFrom || !dateTo) {
       return sendError(res, req, {
         status: 400,
