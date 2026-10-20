@@ -1,3 +1,4 @@
+const { dateBoundarySql, dateEndExclusiveSql, validateRequestDateRange } = require('../utils/dateRange');
  /**
  * VF物流数据分析平台 - 地域分析API路由
  * 
@@ -6,6 +7,7 @@
 
 const express = require('express');
 const router = express.Router();
+router.use(validateRequestDateRange);
 const { getConnection, DateHelper } = require('../config/database-api');
 const { getBrandMapping } = require('../utils/brandMapping');
 const { buildScopedBrandFilter, getAuthorizedCustomerNos } = require('../utils/brandScope');
@@ -105,8 +107,8 @@ router.get('/provinces', async (req, res) => {
         ) as exception_rate
       FROM APP_CMS.TSK_LIST_TASK t
       LEFT JOIN APP_CMS.VIEW_TSK_LIST_TASK v ON t.TSK_MERGE_NO = v.TSK_MERGE_NO
-      WHERE to_char(t.WMS_OUTBOUND_TIME,'yyyy-mm-dd') >= :dateFrom
-        AND to_char(t.WMS_OUTBOUND_TIME,'yyyy-mm-dd') <= :dateTo
+      WHERE t.WMS_OUTBOUND_TIME >= ${dateBoundarySql('dateFrom')}
+        AND t.WMS_OUTBOUND_TIME < ${dateEndExclusiveSql('dateTo')}
         AND t.WMS_OUTBOUND_TIME IS NOT NULL
         AND t.DEST_PROVINCE IS NOT NULL
         AND t.TSK_MERGE_NO IS NOT NULL
@@ -248,8 +250,8 @@ router.get('/cities', async (req, res) => {
         ) as exception_rate
       FROM APP_CMS.TSK_LIST_TASK t
       LEFT JOIN APP_CMS.VIEW_TSK_LIST_TASK v ON t.TSK_MERGE_NO = v.TSK_MERGE_NO
-      WHERE to_char(t.WMS_OUTBOUND_TIME,'yyyy-mm-dd') >= :dateFrom
-        AND to_char(t.WMS_OUTBOUND_TIME,'yyyy-mm-dd') <= :dateTo
+      WHERE t.WMS_OUTBOUND_TIME >= ${dateBoundarySql('dateFrom')}
+        AND t.WMS_OUTBOUND_TIME < ${dateEndExclusiveSql('dateTo')}
         AND t.WMS_OUTBOUND_TIME IS NOT NULL
         AND t.DEST_PROVINCE IS NOT NULL
         AND t.DEST_CITY IS NOT NULL

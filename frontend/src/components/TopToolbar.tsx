@@ -556,7 +556,7 @@ export function TopToolbar({
           <Label className="text-sm text-functional-mid-grey whitespace-nowrap">时间范围:</Label>
           <DatePickerWithRange 
             onDateRangeChange={handleDateRangeChange}
-            className="w-72"
+            className="w-[370px]"
             initialDateRange={currentDateRange}
           />
         </div>

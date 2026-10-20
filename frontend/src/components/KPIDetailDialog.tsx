@@ -1,4 +1,4 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "./ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { Badge } from "./ui/badge";
@@ -6,6 +6,9 @@ import { Package, TrendingUp, TrendingDown, X, Maximize2, Minimize2 } from "luci
 import { OrderKPIData } from "../data/orderData";
 import { platformsData } from "../data/platformData";
 import { CrossAnalysisChart } from "./CrossAnalysisChart";
+import { ApiService } from "../services/apiService";
+import { DataLoadingState } from "./DataLoadingState";
+import type { DateRange } from "../data/types";
 
 interface KPIDetailDialogProps {
   selectedKPI: OrderKPIData | null;
@@ -18,6 +21,9 @@ interface KPIDetailDialogProps {
   filteredData: any;
   rawApiData?: any;
   usingApiData?: boolean;
+  dateRange?: DateRange;
+  selectedPlatform?: string | string[] | null;
+  selectedSelfFlag?: string | null;
 }
 
 export const KPIDetailDialog: React.FC<KPIDetailDialogProps> = ({
@@ -30,11 +36,73 @@ export const KPIDetailDialog: React.FC<KPIDetailDialogProps> = ({
   brandKPIData,
   filteredData,
   rawApiData,
-  usingApiData = false
+  usingApiData = false,
+  dateRange,
+  selectedPlatform,
+  selectedSelfFlag
 }) => {
+  const [crossResult, setCrossResult] = useState<{
+    key: string;
+    data: { crossAnalysisData: unknown[] };
+  } | null>(null);
+  const [crossError, setCrossError] = useState<{ key: string; message: string } | null>(null);
+  const [crossRetry, setCrossRetry] = useState(0);
+  const crossRequestKey = JSON.stringify({
+    dateRange, brand: selectedBrand, platform: selectedPlatform, selfFlag: selectedSelfFlag
+  });
+  const isCrossOpen = Boolean(selectedKPI) && activeKPITab === 'cross';
+  const hasCrossData = Array.isArray(rawApiData?.data?.crossAnalysisData) &&
+    (rawApiData.data.crossAnalysisData.length > 0 ||
+      rawApiData.filters?.crossAnalysisIncluded === true ||
+      rawApiData.filters?.mode === 'full');
+  const crossLoaded = crossResult?.key === crossRequestKey;
+  const crossErrorMessage = crossError?.key === crossRequestKey ? crossError.message : null;
 
-  // 安全检查：确保所有必要的数据都存在
-  if (!selectedKPI) return null;
+  useEffect(() => {
+    if (!isCrossOpen || !usingApiData || hasCrossData || crossLoaded) return;
+    const controller = new AbortController();
+    setCrossError(null);
+    const loadCrossAnalysis = async () => {
+      try {
+        if (!dateRange?.from || !dateRange?.to) {
+          throw new Error('缺少查询日期范围，请重新选择时间范围');
+        }
+        const result = await ApiService.getOverviewData({
+          dateRange,
+          brand: selectedBrand,
+          platform: selectedPlatform,
+          selfFlag: selectedSelfFlag,
+          preferLite: true,
+          requireCrossAnalysis: true,
+          signal: controller.signal
+        });
+        if (!controller.signal.aborted) {
+          setCrossResult({ key: crossRequestKey, data: result.data });
+        }
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        console.error('交叉分析数据加载失败:', error);
+        setCrossError({
+          key: crossRequestKey,
+          message: error instanceof Error ? error.message : '交叉分析数据加载失败'
+        });
+      }
+    };
+    loadCrossAnalysis();
+    return () => controller.abort();
+  }, [isCrossOpen, usingApiData, hasCrossData, crossLoaded, crossRequestKey, crossRetry,
+    dateRange, selectedBrand, selectedPlatform, selectedSelfFlag]);
+
+  useEffect(() => {
+    if (!selectedKPI) {
+      setCrossResult(null);
+      setCrossError(null);
+    }
+  }, [selectedKPI]);
+
+  const crossApiData = crossLoaded
+    ? { ...rawApiData, data: { ...rawApiData?.data, ...crossResult.data } }
+    : rawApiData;
   
   // 为防止运行时错误，提供默认的filteredData结构
   const safeFilteredData = filteredData || {
@@ -171,6 +239,8 @@ export const KPIDetailDialog: React.FC<KPIDetailDialogProps> = ({
       }
     }
   }, [usingApiData, rawApiData, selectedKPI]);
+
+  if (!selectedKPI) return null;
 
   // 从API数据中获取当前KPI值
   const getKPIValueFromAPI = (kpiLabel: string | undefined): number | null => {
@@ -549,14 +619,24 @@ export const KPIDetailDialog: React.FC<KPIDetailDialogProps> = ({
           </div>
           <div className="flex-1 overflow-hidden bg-functional-bright-grey">
             <div className="h-full p-4">
-              <CrossAnalysisChart 
+              {usingApiData && !hasCrossData && !crossLoaded ? (
+                <DataLoadingState
+                  loading={!crossErrorMessage}
+                  error={crossErrorMessage}
+                  dataType="品牌×平台交叉分析"
+                  onRetry={() => {
+                    setCrossError(null);
+                    setCrossRetry(value => value + 1);
+                  }}
+                />
+              ) : <CrossAnalysisChart
                 selectedBrand={selectedBrand}
                 selectedKPI={selectedKPI?.label}
-                rawApiData={rawApiData}
+                rawApiData={crossApiData}
                 usingApiData={usingApiData}
                 brandKPIData={brandKPIData}
                 platformKPIData={platformKPIData}
-              />
+              />}
             </div>
           </div>
           <div className="flex-shrink-0 bg-functional-bright-grey border-t border-functional-light-grey px-4 py-2">

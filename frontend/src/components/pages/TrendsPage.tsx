@@ -122,8 +122,8 @@ export function TrendsPage({ data: _data, selectedBrand, selectedPlatform, selec
     const start = new Date(now.getFullYear(), now.getMonth(), 1);
     const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
     return {
-      from: start.toISOString().split('T')[0],
-      to: end.toISOString().split('T')[0]
+      from: formatLocalDate(start),
+      to: formatLocalDate(end)
     };
   }
 
@@ -131,8 +131,8 @@ export function TrendsPage({ data: _data, selectedBrand, selectedPlatform, selec
   function getRecentDaysRangeWithin(baseRange: DateRange | undefined, days: number): DateRange {
     const today = new Date();
 
-    const baseFrom = baseRange?.from ? new Date(baseRange.from) : null;
-    const baseTo = baseRange?.to ? new Date(baseRange.to) : null;
+    const baseFrom = baseRange?.from ? new Date(baseRange.from.replace(' ', 'T')) : null;
+    const baseTo = baseRange?.to ? new Date(baseRange.to.replace(' ', 'T')) : null;
 
     const endCandidate = baseTo && !Number.isNaN(baseTo.getTime()) ? baseTo : today;
     const end = endCandidate > today ? today : endCandidate;
@@ -146,8 +146,8 @@ export function TrendsPage({ data: _data, selectedBrand, selectedPlatform, selec
     }
 
     return {
-      from: start.toISOString().split('T')[0],
-      to: end.toISOString().split('T')[0]
+      from: baseRange?.from && baseFrom === start ? baseRange.from : formatLocalDate(start),
+      to: baseRange?.to && baseTo === end ? baseRange.to : formatLocalDate(end)
     };
   }
 

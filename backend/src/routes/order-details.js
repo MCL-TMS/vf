@@ -1,10 +1,12 @@
+const { dateBoundarySql, dateEndExclusiveSql, validateRequestDateRange } = require('../utils/dateRange');
 const express = require('express');
 const router = express.Router();
+router.use(validateRequestDateRange);
 const { getBrandMapping } = require('../utils/brandMapping');
 const { buildScopedBrandFilter, getAuthorizedCustomerNos } = require('../utils/brandScope');
 const { ERROR_CODES, sendError, sendRouteError } = require('../utils/apiError');
 
-const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const { isValidDateTime, normalizeDateTime } = require('../utils/dateRange');
 const BRAND_CODE_PATTERN = /^[A-Za-z0-9_-]+$/;
 const SELF_FLAG_VALUES = new Set(['Y', 'N', 'all']);
 const NO_UPDATE_48H_EXCLUDED_STATUSES = "('40','90','93','94','95','99','100','105','110')";
@@ -14,12 +16,7 @@ function buildNoUpdate48hCondition(flagExpr, statusExpr) {
 }
 
 function isValidDateValue(value) {
-  if (!DATE_PATTERN.test(value)) {
-    return false;
-  }
-
-  const date = new Date(`${value}T00:00:00Z`);
-  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
+  return isValidDateTime(value);
 }
 
 function parsePositiveInteger(value, defaultValue, { min = 0, max = Number.MAX_SAFE_INTEGER } = {}) {
@@ -74,8 +71,8 @@ const QueryUtils = {
   // 基础WHERE条件 - 与overview.js保持一致（⚡ 性能优化：使用TRUNC代替to_char）
   BASE_WHERE_CONDITIONS_VIEW: `
     WHERE (v.WMS_OUTBOUND_TIME IS NOT NULL 
-           AND TRUNC(v.WMS_OUTBOUND_TIME) >= TO_DATE(:dateFrom, 'YYYY-MM-DD')
-           AND TRUNC(v.WMS_OUTBOUND_TIME) <= TO_DATE(:dateTo, 'YYYY-MM-DD'))
+           AND v.WMS_OUTBOUND_TIME >= ${dateBoundarySql('dateFrom')}
+           AND v.WMS_OUTBOUND_TIME < ${dateEndExclusiveSql('dateTo')})
       AND v.CUSTOMERNO IN ('18405', '18405-1', '18405-2', '18405-3', '18405-4', '18405-5')
       AND v.TSK_MERGE_NO IS NOT NULL`,
 
@@ -265,7 +262,8 @@ router.get('/export', async (req, res) => {
       platform, 
       selfFlag = 'Y',
       limit = '10000',
-      offset = '0' // 🔥 新增：偏移量
+      offset = '0', // 🔥 新增：偏移量
+      exceptionsOnly = 'false'
     } = req.query;
     const authorizedCustomerNos = getAuthorizedCustomerNos(req.user);
     
@@ -294,12 +292,12 @@ router.get('/export', async (req, res) => {
       return sendError(res, req, {
         status: 400,
         code: ERROR_CODES.VALIDATION_ERROR,
-        error: '日期格式无效，请使用 YYYY-MM-DD',
-        details: { expectedFormat: 'YYYY-MM-DD' }
+        error: '日期格式无效，请使用 YYYY-MM-DD HH:mm:ss',
+        details: { expectedFormat: 'YYYY-MM-DD 或 YYYY-MM-DD HH:mm:ss' }
       });
     }
 
-    if (new Date(`${startDate}T00:00:00Z`) > new Date(`${endDate}T00:00:00Z`)) {
+    if (normalizeDateTime(startDate) > normalizeDateTime(endDate, true)) {
       return sendError(res, req, {
         status: 400,
         code: ERROR_CODES.VALIDATION_ERROR,
@@ -331,10 +329,21 @@ router.get('/export', async (req, res) => {
         error: 'selfFlag 参数无效，仅支持 Y、N、all'
       });
     }
+
+    if (!['true', 'false'].includes(exceptionsOnly)) {
+      return sendError(res, req, {
+        status: 400,
+        code: ERROR_CODES.VALIDATION_ERROR,
+        error: 'exceptionsOnly 参数无效，仅支持 true、false'
+      });
+    }
     
     // 导出数量限制
     const exportLimit = parsePositiveInteger(limit, 10000, { min: 1, max: 50000 });
-    const exportOffset = parsePositiveInteger(offset, 0, { min: 0, max: 1000000 });
+    const exportOffset = parsePositiveInteger(offset, 0, {
+      min: 0,
+      max: exceptionsOnly === 'true' ? Number.MAX_SAFE_INTEGER : 1000000
+    });
 
     if (exportLimit === null || exportOffset === null) {
       return sendError(res, req, {
@@ -362,11 +371,25 @@ router.get('/export', async (req, res) => {
     );
     
     console.log('🔍 SQL参数:', queryParams);
+
+    const includeExceptions = exceptionsOnly === 'true';
+    const exceptionConditions = QueryUtils.EXCEPTION_SQL_FRAGMENTS;
+    const exceptionColumns = includeExceptions ? `
+          v.CUSTOMERNO as brand_code,
+          CASE WHEN ${exceptionConditions.PICKUP_TIMEOUT} THEN 'Y' ELSE 'N' END as pickup_timeout,
+          CASE WHEN ${exceptionConditions.SHIPPING_TIMEOUT} THEN 'Y' ELSE 'N' END as shipping_timeout,
+          CASE WHEN ${exceptionConditions.DELIVERY_TIMEOUT} THEN 'Y' ELSE 'N' END as delivery_timeout,
+          CASE WHEN ${exceptionConditions.NO_UPDATE_48H} THEN 'Y' ELSE 'N' END as no_update_48h,
+    ` : '';
+    const exceptionFilter = includeExceptions
+      ? `AND (${Object.values(exceptionConditions).join(' OR ')})`
+      : '';
     
     // 🔥 订单明细查询SQL（支持分页）
     const orderDetailsQuery = `
       SELECT * FROM (
         SELECT 
+          ${exceptionColumns}
           -- 快递商信息
           v.CARRIERID as carrier_id,
           v.COMPANY_NAME as company_name,
@@ -432,16 +455,18 @@ router.get('/export', async (req, res) => {
           v.PATCH_REASON2 as patch_reason2,
           
           -- 🔥 行号（用于分页）
-          ROWNUM as rnum
+          ROW_NUMBER() OVER (ORDER BY v.WMS_OUTBOUND_TIME DESC, v.TSK_MERGE_NO, v.BL_ORDER_NO) as rnum
           
         FROM APP_CMS.view_TSK_LIST_TASK v
+        ${includeExceptions ? 'INNER JOIN APP_CMS.TSK_LIST_TASK t ON t.TSK_MERGE_NO = v.TSK_MERGE_NO' : ''}
         ${QueryUtils.getBrandJoin('v')}
         ${QueryUtils.BASE_WHERE_CONDITIONS_VIEW}
           ${brandFilter}
           ${platformFilter}
           ${selfFlagFilter}
-        ORDER BY v.WMS_OUTBOUND_TIME DESC
+          ${exceptionFilter}
       ) WHERE rnum > :offset AND rnum <= (:offset + :exportLimit)
+      ORDER BY rnum
     `;
     
     console.log('🔍 执行查询...');
@@ -462,6 +487,15 @@ router.get('/export', async (req, res) => {
     
     // 转换为对象数组（使用别名访问，不是数组索引）
     const orderDetails = result.rows.map(row => ({
+      ...(includeExceptions ? {
+        brandCode: row.BRAND_CODE ?? row.brand_code,
+        exceptionTypes: [
+          (row.PICKUP_TIMEOUT ?? row.pickup_timeout) === 'Y' ? '超时未揽收' : null,
+          (row.SHIPPING_TIMEOUT ?? row.shipping_timeout) === 'Y' ? '超时未发运' : null,
+          (row.DELIVERY_TIMEOUT ?? row.delivery_timeout) === 'Y' ? '超时未签收' : null,
+          (row.NO_UPDATE_48H ?? row.no_update_48h) === 'Y' ? '超48h未更新' : null
+        ].filter(Boolean)
+      } : {}),
       carrierId: row.CARRIER_ID || row.carrier_id,
       companyName: row.COMPANY_NAME || row.company_name,
       tskMergeNo: row.TSK_MERGE_NO || row.tsk_merge_no,

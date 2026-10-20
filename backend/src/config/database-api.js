@@ -238,6 +238,8 @@ process.on('SIGTERM', async () => {
 /**
  * 日期处理工具函数 - 解决时区和跨月计算问题
  */
+const { isValidDateTime, normalizeDateTime } = require('../utils/dateRange');
+
 class DateHelper {
   /**
    * 安全的本地日期格式化，避免时区偏移问题
@@ -304,15 +306,15 @@ class DateHelper {
    * @returns {object} 包含lastMonthFrom和lastMonthTo的对象
    */
   static calculateMoMDateRange(dateFrom, dateTo) {
-    const fromDate = new Date(dateFrom);
-    const toDate = new Date(dateTo);
+    const fromDate = new Date(normalizeDateTime(dateFrom).replace(' ', 'T'));
+    const toDate = new Date(normalizeDateTime(dateTo, true).replace(' ', 'T'));
     
     const lastMonthFrom = this.subtractMonthsSafe(fromDate, 1);
     const lastMonthTo = this.subtractMonthsSafe(toDate, 1);
     
     return {
-      lastMonthFrom: this.formatDateSafe(lastMonthFrom),
-      lastMonthTo: this.formatDateSafe(lastMonthTo)
+      lastMonthFrom: this.formatDateSafe(lastMonthFrom) + (dateFrom.length > 10 ? normalizeDateTime(dateFrom).slice(10) : ''),
+      lastMonthTo: this.formatDateSafe(lastMonthTo) + (dateTo.length > 10 ? normalizeDateTime(dateTo).slice(10) : '')
     };
   }
 
@@ -323,15 +325,15 @@ class DateHelper {
    * @returns {object} 包含lastYearFrom和lastYearTo的对象
    */
   static calculateYoYDateRange(dateFrom, dateTo) {
-    const fromDate = new Date(dateFrom);
-    const toDate = new Date(dateTo);
+    const fromDate = new Date(normalizeDateTime(dateFrom).replace(' ', 'T'));
+    const toDate = new Date(normalizeDateTime(dateTo, true).replace(' ', 'T'));
     
     const lastYearFrom = this.subtractYearsSafe(fromDate, 1);
     const lastYearTo = this.subtractYearsSafe(toDate, 1);
     
     return {
-      lastYearFrom: this.formatDateSafe(lastYearFrom),
-      lastYearTo: this.formatDateSafe(lastYearTo)
+      lastYearFrom: this.formatDateSafe(lastYearFrom) + (dateFrom.length > 10 ? normalizeDateTime(dateFrom).slice(10) : ''),
+      lastYearTo: this.formatDateSafe(lastYearTo) + (dateTo.length > 10 ? normalizeDateTime(dateTo).slice(10) : '')
     };
   }
 
@@ -341,11 +343,7 @@ class DateHelper {
    * @returns {boolean} 是否为有效的YYYY-MM-DD格式
    */
   static isValidDateString(dateStr) {
-    const regex = /^\d{4}-\d{2}-\d{2}$/;
-    if (!regex.test(dateStr)) return false;
-    
-    const date = new Date(dateStr);
-    return date instanceof Date && !isNaN(date) && this.formatDateSafe(date) === dateStr;
+    return isValidDateTime(dateStr);
   }
 
   /**

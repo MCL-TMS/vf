@@ -1,3 +1,4 @@
+const { dateBoundarySql, dateEndExclusiveSql, validateRequestDateRange } = require('../utils/dateRange');
 /**
  * VF物流数据分析平台 - 文件上传API路由 (CommonJS版本)
  * 
@@ -19,6 +20,7 @@ const { ERROR_CODES, sendError, sendRouteError } = require('../utils/apiError');
 const UPLOAD_ROOT = path.resolve(__dirname, '../../uploads');
 
 const router = express.Router();
+router.use(validateRequestDateRange);
 
 /**
  * DEST_CITY代码到真实城市名称的映射查询
@@ -1536,8 +1538,8 @@ router.post('/export-timeliness-rawdata', async (req, res) => {
       
       BASE_WHERE_CONDITIONS_VIEW: `
         WHERE (v.WMS_OUTBOUND_TIME IS NOT NULL 
-               AND TRUNC(v.WMS_OUTBOUND_TIME) >= TO_DATE(:dateFrom, 'YYYY-MM-DD')
-               AND TRUNC(v.WMS_OUTBOUND_TIME) <= TO_DATE(:dateTo, 'YYYY-MM-DD'))
+               AND v.WMS_OUTBOUND_TIME >= ${dateBoundarySql('dateFrom')}
+               AND v.WMS_OUTBOUND_TIME < ${dateEndExclusiveSql('dateTo')})
           AND v.TSK_MERGE_NO IS NOT NULL`,
       
       async buildFiltersAsync(queryParams, brand, platform, selfFlag, userBrands, carrierid) {

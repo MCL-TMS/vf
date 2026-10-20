@@ -5,6 +5,8 @@
 
 const express = require('express');
 const router = express.Router();
+const { normalizeDateTime, validateRequestDateRange } = require('../utils/dateRange');
+router.use(validateRequestDateRange);
 const { executeQuery } = require('../config/database-api');
 
 function normalizeBrandArray(brand) {
@@ -31,12 +33,12 @@ function buildPlatformFilters(queryParams) {
 
   if (startDate) {
     whereConditions.push("WMS_OUTBOUND_TIME >= TO_DATE(:startDate, 'YYYY-MM-DD HH24:MI:SS')");
-    bindParams.startDate = `${startDate} 00:00:00`;
+    bindParams.startDate = normalizeDateTime(startDate);
   }
 
   if (endDate) {
-    whereConditions.push("WMS_OUTBOUND_TIME <= TO_DATE(:endDate, 'YYYY-MM-DD HH24:MI:SS')");
-    bindParams.endDate = `${endDate} 23:59:59`;
+    whereConditions.push("WMS_OUTBOUND_TIME < TO_DATE(:endDate, 'YYYY-MM-DD HH24:MI:SS') + INTERVAL '1' SECOND");
+    bindParams.endDate = normalizeDateTime(endDate, true);
   }
 
   if (selfFlag && selfFlag !== 'all') {

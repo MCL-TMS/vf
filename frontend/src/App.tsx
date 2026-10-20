@@ -436,6 +436,9 @@ function AppContent() {
 
       {/* KPI Detail Dialog */}
       <KPIDetailDialog
+        dateRange={dateRange}
+        selectedPlatform={selectedPlatform}
+        selectedSelfFlag={selectedSelfFlag}
         selectedKPI={selectedKPI}
         activeKPITab={activeKPITab}
         setActiveKPITab={setActiveKPITab}

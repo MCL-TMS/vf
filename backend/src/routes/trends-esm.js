@@ -1,3 +1,4 @@
+const { dateBoundarySql, dateEndExclusiveSql, validateRequestDateRange } = require('../utils/dateRange');
 /**
  * VF物流数据分析平台 - 趋势分析API路由 (ES6模块版本)
  * 
@@ -13,20 +14,18 @@
 
 const express = require('express');
 const router = express.Router();
+router.use(validateRequestDateRange);
 const { getConnection } = require('../config/database-api');
 const { getBrandMapping } = require('../utils/brandMapping');
 const { buildScopedBrandFilter, getAuthorizedCustomerNos } = require('../utils/brandScope');
+const { isValidDateTime } = require('../utils/dateRange');
 
 /**
  * 日期辅助类
  */
 class DateHelper {
   static isValidDateString(dateStr) {
-    if (!dateStr) return false;
-    const regex = /^\d{4}-\d{2}-\d{2}$/;
-    if (!regex.test(dateStr)) return false;
-    const date = new Date(dateStr);
-    return date instanceof Date && !isNaN(date);
+    return isValidDateTime(dateStr);
   }
   
   static formatDate(date) {
@@ -313,8 +312,8 @@ router.get('/orders', async (req, res) => {
         0 as timeout_rate
       FROM APP_CMS.TSK_LIST_TASK t
       WHERE t.WMS_OUTBOUND_TIME IS NOT NULL
-        AND t.WMS_OUTBOUND_TIME >= TO_DATE(:dateFrom, 'YYYY-MM-DD')
-        AND t.WMS_OUTBOUND_TIME < TO_DATE(:dateTo, 'YYYY-MM-DD') + INTERVAL '1' DAY
+        AND t.WMS_OUTBOUND_TIME >= ${dateBoundarySql('dateFrom')}
+        AND t.WMS_OUTBOUND_TIME < ${dateEndExclusiveSql('dateTo')}
         AND t.TSK_MERGE_NO IS NOT NULL
         ${brandFilter}
         ${platformFilter}
@@ -337,8 +336,8 @@ router.get('/orders', async (req, res) => {
       FROM APP_CMS.TSK_LIST_TASK t
       LEFT JOIN APP_CMS.VIEW_TSK_LIST_TASK v ON t.TSK_MERGE_NO = v.TSK_MERGE_NO
       WHERE t.WMS_OUTBOUND_TIME IS NOT NULL
-        AND t.WMS_OUTBOUND_TIME >= TO_DATE(:dateFrom, 'YYYY-MM-DD')
-        AND t.WMS_OUTBOUND_TIME < TO_DATE(:dateTo, 'YYYY-MM-DD') + INTERVAL '1' DAY
+        AND t.WMS_OUTBOUND_TIME >= ${dateBoundarySql('dateFrom')}
+        AND t.WMS_OUTBOUND_TIME < ${dateEndExclusiveSql('dateTo')}
         AND t.TSK_MERGE_NO IS NOT NULL
         ${brandFilter}
         ${platformFilter}
@@ -485,8 +484,8 @@ router.get('/performance', async (req, res) => {
       FROM APP_CMS.TSK_LIST_TASK t
       LEFT JOIN APP_CMS.VIEW_TSK_LIST_TASK v ON t.TSK_MERGE_NO = v.TSK_MERGE_NO
       WHERE t.WMS_OUTBOUND_TIME IS NOT NULL
-        AND t.WMS_OUTBOUND_TIME >= TO_DATE(:dateFrom, 'YYYY-MM-DD')
-        AND t.WMS_OUTBOUND_TIME < TO_DATE(:dateTo, 'YYYY-MM-DD') + INTERVAL '1' DAY
+        AND t.WMS_OUTBOUND_TIME >= ${dateBoundarySql('dateFrom')}
+        AND t.WMS_OUTBOUND_TIME < ${dateEndExclusiveSql('dateTo')}
         AND t.TSK_MERGE_NO IS NOT NULL
         ${brandFilter}
         ${platformFilter}
@@ -628,8 +627,8 @@ router.get('/carriers', async (req, res) => {
       LEFT JOIN APP_CMS.VIEW_TSK_LIST_TASK v ON t.TSK_MERGE_NO = v.TSK_MERGE_NO
       LEFT JOIN APP_CMS.BAS_COMPANY bc ON t.CARRIERID = bc.COMPANY_SYSID
       WHERE t.WMS_OUTBOUND_TIME IS NOT NULL
-        AND t.WMS_OUTBOUND_TIME >= TO_DATE(:dateFrom, 'YYYY-MM-DD')
-        AND t.WMS_OUTBOUND_TIME < TO_DATE(:dateTo, 'YYYY-MM-DD') + INTERVAL '1' DAY
+        AND t.WMS_OUTBOUND_TIME >= ${dateBoundarySql('dateFrom')}
+        AND t.WMS_OUTBOUND_TIME < ${dateEndExclusiveSql('dateTo')}
         AND t.TSK_MERGE_NO IS NOT NULL
         AND t.CARRIERID IS NOT NULL
         ${brandFilter}
@@ -763,8 +762,8 @@ router.get('/forecast', async (req, res) => {
       FROM APP_CMS.TSK_LIST_TASK t
       LEFT JOIN APP_CMS.VIEW_TSK_LIST_TASK v ON t.TSK_MERGE_NO = v.TSK_MERGE_NO
       WHERE t.WMS_OUTBOUND_TIME IS NOT NULL
-        AND t.WMS_OUTBOUND_TIME >= TO_DATE(:dateFrom, 'YYYY-MM-DD')
-        AND t.WMS_OUTBOUND_TIME < TO_DATE(:dateTo, 'YYYY-MM-DD') + INTERVAL '1' DAY
+        AND t.WMS_OUTBOUND_TIME >= ${dateBoundarySql('dateFrom')}
+        AND t.WMS_OUTBOUND_TIME < ${dateEndExclusiveSql('dateTo')}
         AND t.TSK_MERGE_NO IS NOT NULL
         ${brandFilter}
         ${platformFilter}
@@ -1024,8 +1023,8 @@ router.get('/exceptions', async (req, res) => {
       FROM APP_CMS.TSK_LIST_TASK t
       LEFT JOIN APP_CMS.VIEW_TSK_LIST_TASK v ON t.TSK_MERGE_NO = v.TSK_MERGE_NO
       WHERE t.WMS_OUTBOUND_TIME IS NOT NULL
-        AND t.WMS_OUTBOUND_TIME >= TO_DATE(:dateFrom, 'YYYY-MM-DD')
-        AND t.WMS_OUTBOUND_TIME < TO_DATE(:dateTo, 'YYYY-MM-DD') + INTERVAL '1' DAY
+        AND t.WMS_OUTBOUND_TIME >= ${dateBoundarySql('dateFrom')}
+        AND t.WMS_OUTBOUND_TIME < ${dateEndExclusiveSql('dateTo')}
         AND t.TSK_MERGE_NO IS NOT NULL
         ${brandFilter}
         ${platformFilter}

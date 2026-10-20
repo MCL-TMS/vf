@@ -1,3 +1,4 @@
+const { dateBoundarySql, dateEndExclusiveSql, validateRequestDateRange } = require('../utils/dateRange');
 /**
  * VF物流数据分析平台 - 异常监控分析API路由（CommonJS版本）
  * 
@@ -11,6 +12,7 @@
 
 const express = require('express');
 const router = express.Router();
+router.use(validateRequestDateRange);
 const { getConnection } = require('../config/database-api');
 const oracledb = require('oracledb'); // 🔥 新增：导入 oracledb 以使用 OUT_FORMAT_OBJECT
 const { getBrandMapping } = require('../utils/brandMapping');
@@ -154,8 +156,8 @@ router.get('/overview', globalRateLimiter, async (req, res) => {
       FROM APP_CMS.view_TSK_LIST_TASK t
       WHERE (
         (t.WMS_OUTBOUND_TIME IS NOT NULL 
-         AND to_char(t.WMS_OUTBOUND_TIME,'yyyy-mm-dd') >= :dateFrom 
-         AND to_char(t.WMS_OUTBOUND_TIME,'yyyy-mm-dd') <= :dateTo)
+         AND t.WMS_OUTBOUND_TIME >= ${dateBoundarySql('dateFrom')}
+         AND t.WMS_OUTBOUND_TIME < ${dateEndExclusiveSql('dateTo')})
       )
         AND t.TSK_MERGE_NO IS NOT NULL
         AND t.PATCH_REASON_GS IS NOT NULL
@@ -201,8 +203,8 @@ router.get('/overview', globalRateLimiter, async (req, res) => {
       FROM APP_CMS.view_TSK_LIST_TASK t
       WHERE (
         (t.WMS_OUTBOUND_TIME IS NOT NULL 
-         AND to_char(t.WMS_OUTBOUND_TIME,'yyyy-mm-dd') >= :dateFrom 
-         AND to_char(t.WMS_OUTBOUND_TIME,'yyyy-mm-dd') <= :dateTo)
+         AND t.WMS_OUTBOUND_TIME >= ${dateBoundarySql('dateFrom')}
+         AND t.WMS_OUTBOUND_TIME < ${dateEndExclusiveSql('dateTo')})
       )
         AND t.TSK_MERGE_NO IS NOT NULL
         AND t.PATCH_REASON_GS IS NOT NULL
@@ -233,8 +235,8 @@ router.get('/overview', globalRateLimiter, async (req, res) => {
       LEFT JOIN APP_CMS.BAS_COMPANY bc_carrier ON t.CARRIERID = bc_carrier.COMPANY_SYSID
       WHERE (
         (t.WMS_OUTBOUND_TIME IS NOT NULL 
-         AND to_char(t.WMS_OUTBOUND_TIME,'yyyy-mm-dd') >= :dateFrom 
-         AND to_char(t.WMS_OUTBOUND_TIME,'yyyy-mm-dd') <= :dateTo)
+         AND t.WMS_OUTBOUND_TIME >= ${dateBoundarySql('dateFrom')}
+         AND t.WMS_OUTBOUND_TIME < ${dateEndExclusiveSql('dateTo')})
       )
         AND t.TSK_MERGE_NO IS NOT NULL
         AND t.PATCH_REASON_GS IS NOT NULL
@@ -262,8 +264,8 @@ router.get('/overview', globalRateLimiter, async (req, res) => {
       FROM APP_CMS.view_TSK_LIST_TASK t
       WHERE (
         (t.WMS_OUTBOUND_TIME IS NOT NULL 
-         AND to_char(t.WMS_OUTBOUND_TIME,'yyyy-mm-dd') >= :dateFrom 
-         AND to_char(t.WMS_OUTBOUND_TIME,'yyyy-mm-dd') <= :dateTo)
+         AND t.WMS_OUTBOUND_TIME >= ${dateBoundarySql('dateFrom')}
+         AND t.WMS_OUTBOUND_TIME < ${dateEndExclusiveSql('dateTo')})
       )
         AND t.TSK_MERGE_NO IS NOT NULL
         AND t.PATCH_REASON_GS IS NOT NULL
@@ -293,8 +295,8 @@ router.get('/overview', globalRateLimiter, async (req, res) => {
       LEFT JOIN APP_CMS.BAS_COMPANY bc_carrier ON t.CARRIERID = bc_carrier.COMPANY_SYSID
       WHERE (
         (t.WMS_OUTBOUND_TIME IS NOT NULL 
-         AND to_char(t.WMS_OUTBOUND_TIME,'yyyy-mm-dd') >= :dateFrom 
-         AND to_char(t.WMS_OUTBOUND_TIME,'yyyy-mm-dd') <= :dateTo)
+         AND t.WMS_OUTBOUND_TIME >= ${dateBoundarySql('dateFrom')}
+         AND t.WMS_OUTBOUND_TIME < ${dateEndExclusiveSql('dateTo')})
       )
         AND t.TSK_MERGE_NO IS NOT NULL
         AND t.PATCH_REASON_GS IS NOT NULL
@@ -500,8 +502,8 @@ router.get('/carrier/:carrierName', async (req, res) => {
       LEFT JOIN APP_CMS.BAS_COMPANY bc_carrier ON t.CARRIERID = bc_carrier.COMPANY_SYSID
       WHERE (
         (t.WMS_OUTBOUND_TIME IS NOT NULL 
-         AND to_char(t.WMS_OUTBOUND_TIME,'yyyy-mm-dd') >= :dateFrom 
-         AND to_char(t.WMS_OUTBOUND_TIME,'yyyy-mm-dd') <= :dateTo)
+         AND t.WMS_OUTBOUND_TIME >= ${dateBoundarySql('dateFrom')}
+         AND t.WMS_OUTBOUND_TIME < ${dateEndExclusiveSql('dateTo')})
       )
         AND t.TSK_MERGE_NO IS NOT NULL
         AND (t.CARRIERID = :carrierName OR bc_carrier.COMPANY_ABNAME = :carrierName)

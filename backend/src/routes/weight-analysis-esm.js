@@ -1,3 +1,4 @@
+const { dateBoundarySql, dateEndExclusiveSql, validateRequestDateRange } = require('../utils/dateRange');
 /**
  * VF物流数据分析平台 - 重量分析API路由
  *
@@ -9,6 +10,7 @@
 
 const express = require('express');
 const router = express.Router();
+router.use(validateRequestDateRange);
 const { getConnection, DateHelper } = require('../config/database-api');
 const { getBrandMapping } = require('../utils/brandMapping');
 const { buildScopedBrandFilter, getAuthorizedCustomerNos } = require('../utils/brandScope');
@@ -242,8 +244,8 @@ router.get('/weight-analysis', async (req, res) => {
     // 先定义 baseWhere
     const baseWhere = `
       WHERE t.WMS_OUTBOUND_TIME IS NOT NULL
-        AND t.WMS_OUTBOUND_TIME >= TO_DATE(:dateFrom, 'YYYY-MM-DD')
-        AND t.WMS_OUTBOUND_TIME < TO_DATE(:dateTo, 'YYYY-MM-DD') + 1
+        AND t.WMS_OUTBOUND_TIME >= ${dateBoundarySql('dateFrom')}
+        AND t.WMS_OUTBOUND_TIME < ${dateEndExclusiveSql('dateTo')}
         AND t.TSK_MERGE_NO IS NOT NULL
         AND ${weightColumn} IS NOT NULL
         AND ${weightColumn} > 0

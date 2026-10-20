@@ -88,7 +88,9 @@ export function ShippedTransferDialog({
               <TableBody>
                 {summaryByCarrier.map((row, index) => (
                   <TableRow key={`${row.carrierId || "UNKNOWN"}-${index}`}>
-                    <TableCell className="font-mono text-xs">{row.carrierId || "-"}</TableCell>
+                    <TableCell className="font-mono text-xs">
+                      {row.carrierId || "-"}
+                    </TableCell>
                     <TableCell className="text-right font-medium">{row.orderCount.toLocaleString()}</TableCell>
                   </TableRow>
                 ))}

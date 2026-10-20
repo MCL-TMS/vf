@@ -9,12 +9,16 @@ import { AlertTriangle, CheckCircle, Clock, Package, Truck, Users, TrendingUp, T
 import { getUnifiedExceptionData, formatExceptionStatsForCourier } from "../utils/exceptionDataCalculator";
 import { useAuth } from "../contexts/AuthContext";
 import { exportBrandLogisticsData, exportLogisticsData } from "../utils/excelExport";
+import type { MonitoringExceptionOrder } from "../utils/excelExport";
+import { exportOrderDetails } from "../services/apiService";
+import { toast } from "sonner";
 import { DataLoadingState } from "./DataLoadingState"; // 🔥 新增：统一加载状态组件
 
 interface CourierMonitoringProps {
-  selectedBrand?: string;
-  selectedPlatform?: string;  // ✅ 新增：平台筛选参数
-  selectedSelfFlag?: string;  // ✅ 新增：自管筛选参数
+  selectedBrand?: string | string[] | null;
+  selectedPlatform?: string | string[] | null;
+  selectedSelfFlag?: string | null;
+  dateRange?: { from: string; to: string };
   exceptionFilter?: {
     type?: string;
     brand?: string;
@@ -34,6 +38,7 @@ export function CourierMonitoring({
   selectedBrand,
   selectedPlatform,  // ✅ 新增：接收platform参数
   selectedSelfFlag,  // ✅ 新增：接收selfFlag参数
+  dateRange,
   exceptionFilter, 
   useRealData = false, 
   rawApiData,
@@ -42,6 +47,7 @@ export function CourierMonitoring({
 }: CourierMonitoringProps) {
   // 🔥 获取用户权限信息
   const { user } = useAuth();
+  const [isExporting, setIsExporting] = useState(false);
   
   // 🔥 品牌代码与显示名称的映射
   const BRAND_CODE_MAP: Record<string, string> = {
@@ -677,9 +683,12 @@ export function CourierMonitoring({
   });
   
   // 🔥 应用筛选逻辑（在权限过滤之后）
-  let filteredBrandData = (selectedBrand && selectedBrand !== 'all')
-    ? brandLogisticsData.filter(brand => brand.brand === selectedBrand)
-    : brandLogisticsData; // "all" 时显示用户有权限的所有品牌
+  const selectedBrands = (Array.isArray(selectedBrand) ? selectedBrand : [selectedBrand])
+    .filter((brand): brand is string => Boolean(brand && brand !== 'all'))
+    .map(brand => BRAND_CODE_MAP[brand] || brand);
+  let filteredBrandData = selectedBrands.length > 0
+    ? brandLogisticsData.filter(brand => selectedBrands.includes(brand.brand))
+    : brandLogisticsData;
 
   if (exceptionFilter?.brand) {
     filteredBrandData = brandLogisticsData.filter(brand => brand.brand === exceptionFilter.brand);
@@ -897,75 +906,101 @@ export function CourierMonitoring({
           variant="outline" 
           size="sm"
           className="maersk-button-secondary"
-          onClick={() => {
-            if (activeTab === 'brand') {
-              exportBrandLogisticsData({
-                brandData: filteredBrandData.map(brand => {
-                  const exceptionCount = (brand.exceptions?.pickup || 0) +
-                    (brand.exceptions?.shipping || 0) +
-                    (brand.exceptions?.delivery || 0) +
-                    (brand.exceptions?.noUpdate48h || 0);
-                  const orderCount = brand.orderVolume || 0;
-
-                  return {
-                    brandName: brand.brand,
-                    orderCount,
-                    pickupTimeout: brand.exceptions?.pickup || 0,
-                    shippingTimeout: brand.exceptions?.shipping || 0,
-                    deliveryTimeout: brand.exceptions?.delivery || 0,
-                    noUpdate48h: brand.exceptions?.noUpdate48h || 0,
-                    pickupRate: brand.logistics?.pickupRate || 0,
-                    shippingRate: brand.logistics?.shippingRate || 0,
-                    deliveryRate: brand.logistics?.deliveryRate || 0,
-                    exceptionRate: brand.exceptionRate ?? (orderCount > 0 ? (exceptionCount / orderCount) * 100 : 0)
-                  };
-                }),
-                selectedBrand,
-                selectedPlatform,
-                selectedSelfFlag
+          disabled={isExporting}
+          onClick={async () => {
+            setIsExporting(true);
+            try {
+              if (!dateRange?.from || !dateRange?.to) {
+                throw new Error('请选择导出日期范围');
+              }
+              const exceptionOrders: MonitoringExceptionOrder[] = await exportOrderDetails({
+                startDate: dateRange.from,
+                endDate: dateRange.to,
+                brand: selectedBrand,
+                platform: selectedPlatform,
+                selfFlag: selectedSelfFlag,
+                exceptionsOnly: true
               });
-              return;
-            }
+              const visibleBrands = new Set(filteredBrandData.map(brand => brand.brand));
+              const visibleExceptionOrders = activeTab === 'brand'
+                ? exceptionOrders.filter(order => visibleBrands.has(BRAND_CODE_MAP[order.brandCode] || order.companyName))
+                : exceptionOrders;
+              if (activeTab === 'brand') {
+                exportBrandLogisticsData({
+                  brandData: filteredBrandData.map(brand => {
+                    const exceptionCount = (brand.exceptions?.pickup || 0) +
+                      (brand.exceptions?.shipping || 0) +
+                      (brand.exceptions?.delivery || 0) +
+                      (brand.exceptions?.noUpdate48h || 0);
+                    const orderCount = brand.orderVolume || 0;
 
-            const exportData = {
-              courierData: processedCouriers.map(courier => ({ 
-                courierName: courier.name,
-                orderCount: courier.total || 0,
-                pickedCount: courier.picked || 0,
-                shippedCount: courier.shipped || 0,
-                deliveredCount: courier.delivered || 0,
-                forwardedCount: 0, // TODO: 添加转寄数据
-                returnedCount: 0, // TODO: 添加退货数据
-                cancelledCount: 0, // TODO: 添加取消数据
-                exceptionCount: (courier.exceptions?.pickupTimeout || 0) + 
-                                (courier.exceptions?.shippingTimeout || 0) + 
-                                (courier.exceptions?.deliveryTimeout || 0) + 
-                                (courier.exceptions?.noUpdate48h || 0),
-                pickupTimeout: courier.exceptions?.pickupTimeout || 0,
-                shippingTimeout: courier.exceptions?.shippingTimeout || 0,
-                deliveryTimeout: courier.exceptions?.deliveryTimeout || 0,
-                noUpdate48h: courier.exceptions?.noUpdate48h || 0,
-                pickupRate: courier.pickupRate || 0,
-                shippingRate: courier.shippingRate || 0,
-                deliveryRate: courier.deliveryRate || 0,
-                exceptionRate: courier.total > 0 
-                  ? (((courier.exceptions?.pickupTimeout || 0) + 
-                      (courier.exceptions?.shippingTimeout || 0) + 
-                      (courier.exceptions?.deliveryTimeout || 0) + 
-                      (courier.exceptions?.noUpdate48h || 0)) / courier.total) * 100
-                  : 0,
-                avgDeliveryTime: courier.avgDeliveryTime || 0
-              })),
-              selectedBrand: selectedBrand,
-              selectedPlatform: selectedPlatform,
-              selectedSelfFlag: selectedSelfFlag,
-              dateRange: undefined // TODO: 从props获取dateRange
-            };
-            exportLogisticsData(exportData);
+                    return {
+                      brandName: brand.brand,
+                      orderCount,
+                      pickupTimeout: brand.exceptions?.pickup || 0,
+                      shippingTimeout: brand.exceptions?.shipping || 0,
+                      deliveryTimeout: brand.exceptions?.delivery || 0,
+                      noUpdate48h: brand.exceptions?.noUpdate48h || 0,
+                      pickupRate: brand.logistics?.pickupRate || 0,
+                      shippingRate: brand.logistics?.shippingRate || 0,
+                      deliveryRate: brand.logistics?.deliveryRate || 0,
+                      exceptionRate: brand.exceptionRate ?? (orderCount > 0 ? (exceptionCount / orderCount) * 100 : 0)
+                    };
+                  }),
+                  selectedBrand,
+                  selectedPlatform,
+                  selectedSelfFlag,
+                  dateRange,
+                  exceptionOrders: visibleExceptionOrders
+                });
+              } else {
+                exportLogisticsData({
+                  courierData: processedCouriers.map(courier => ({
+                    courierName: courier.name,
+                    orderCount: courier.total || 0,
+                    pickedCount: courier.picked || 0,
+                    shippedCount: courier.shipped || 0,
+                    deliveredCount: courier.delivered || 0,
+                    forwardedCount: 0, // TODO: 添加转寄数据
+                    returnedCount: 0, // TODO: 添加退货数据
+                    cancelledCount: 0, // TODO: 添加取消数据
+                    exceptionCount: (courier.exceptions?.pickupTimeout || 0) +
+                                    (courier.exceptions?.shippingTimeout || 0) +
+                                    (courier.exceptions?.deliveryTimeout || 0) +
+                                    (courier.exceptions?.noUpdate48h || 0),
+                    pickupTimeout: courier.exceptions?.pickupTimeout || 0,
+                    shippingTimeout: courier.exceptions?.shippingTimeout || 0,
+                    deliveryTimeout: courier.exceptions?.deliveryTimeout || 0,
+                    noUpdate48h: courier.exceptions?.noUpdate48h || 0,
+                    pickupRate: courier.pickupRate || 0,
+                    shippingRate: courier.shippingRate || 0,
+                    deliveryRate: courier.deliveryRate || 0,
+                    exceptionRate: courier.total > 0
+                      ? (((courier.exceptions?.pickupTimeout || 0) +
+                          (courier.exceptions?.shippingTimeout || 0) +
+                          (courier.exceptions?.deliveryTimeout || 0) +
+                          (courier.exceptions?.noUpdate48h || 0)) / courier.total) * 100
+                      : 0,
+                    avgDeliveryTime: courier.avgDeliveryTime || 0
+                  })),
+                  selectedBrand,
+                  selectedPlatform,
+                  selectedSelfFlag,
+                  dateRange,
+                  exceptionOrders: visibleExceptionOrders
+                });
+              }
+              toast.success(`导出成功，包含 ${visibleExceptionOrders.length} 条异常订单明细`);
+            } catch (error) {
+              console.error('全程监控数据导出失败:', error);
+              toast.error(`导出失败: ${error instanceof Error ? error.message : '未知错误'}`);
+            } finally {
+              setIsExporting(false);
+            }
           }}
         >
           <Download className="h-4 w-4 mr-2" />
-          导出数据
+          {isExporting ? '导出中...' : '导出数据'}
         </Button>
 
         {/* 快递商监控 */}

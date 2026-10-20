@@ -1,3 +1,4 @@
+const { dateBoundarySql, dateEndExclusiveSql } = require('./dateRange');
 /**
  * VF物流数据分析平台 - 时效数据处理工具（CommonJS版本）
  * 
@@ -251,7 +252,7 @@ async function analyzeS2DPerformance(options = {}) {
     };
     
     if (startDate && endDate) {
-      whereClauses.push(`t.WMS_OUTBOUND_TIME BETWEEN TO_DATE(:startDate, 'YYYY-MM-DD') AND TO_DATE(:endDate, 'YYYY-MM-DD') + INTERVAL '1' DAY - INTERVAL '1' SECOND`);
+      whereClauses.push(`t.WMS_OUTBOUND_TIME >= ${dateBoundarySql('startDate')} AND t.WMS_OUTBOUND_TIME < ${dateEndExclusiveSql('endDate')}`);
       params.startDate = startDate;
       params.endDate = endDate;
     }
@@ -1034,7 +1035,7 @@ async function analyzeC2DPerformance(options = {}) {
     };
     
     if (startDate && endDate) {
-      whereClauses.push(`t.WMS_OUTBOUND_TIME BETWEEN TO_DATE(:startDate, 'YYYY-MM-DD') AND TO_DATE(:endDate, 'YYYY-MM-DD') + INTERVAL '1' DAY - INTERVAL '1' SECOND`);
+      whereClauses.push(`t.WMS_OUTBOUND_TIME >= ${dateBoundarySql('startDate')} AND t.WMS_OUTBOUND_TIME < ${dateEndExclusiveSql('endDate')}`);
       params.startDate = startDate;
       params.endDate = endDate;
     }

@@ -1,3 +1,5 @@
+import * as XLSX from 'xlsx';
+
 /**
  * Excel导出工具类
  * 提供通用的数据导出功能，支持总览、物流监控、订单明细等多种场景
@@ -96,6 +98,46 @@ export interface OrderDetail {
   billingType?: string;
   patchReason1?: string;
   patchReason2?: string;
+}
+
+export interface MonitoringExceptionOrder extends OrderDetail {
+  brandCode: string;
+  exceptionTypes: string[];
+}
+
+function exportMonitoringWorkbook(
+  summary: ExcelExportOptions,
+  exceptionOrders: MonitoringExceptionOrder[]
+) {
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(
+    workbook,
+    XLSX.utils.aoa_to_sheet([summary.headers, ...summary.data]),
+    summary.sheetName
+  );
+  const headers = [
+    '快递单号', 'WMS订单号', '品牌代码', '项目名称', '快递商', '平台', '是否自管',
+    '异常类型', '快递单状态', '消费者付款时间', '出库时间', '揽收时间',
+    '签收时间', '最后跟踪时间', '预计送达时间', '目的地省份', '目的地城市',
+    '超时天数', '一级警告原因', '二级警告原因'
+  ];
+  const rows = exceptionOrders.map(order => [
+    String(order.tskMergeNo ?? ''), String(order.blOrderNo ?? ''),
+    order.brandCode, order.companyName, order.carrierId, order.dataSource, order.selfFlag,
+    order.exceptionTypes.join('；'), order.disStatusName, order.paymentDate,
+    order.wmsOutboundTime, order.outboundTime, order.deliveryTime, order.trackingTime,
+    order.eta, order.destProvince, order.destCityName, order.delayDays,
+    order.patchReason1, order.patchReason2
+  ]);
+  // Excel worksheets allow 1,048,576 rows, including the header.
+  const maxRows = 1048575;
+  for (let offset = 0; offset < Math.max(rows.length, 1); offset += maxRows) {
+    const suffix = offset === 0 ? '' : `_${Math.floor(offset / maxRows) + 1}`;
+    const sheet = XLSX.utils.aoa_to_sheet([headers, ...rows.slice(offset, offset + maxRows)]);
+    sheet['!cols'] = headers.map(() => ({ wch: 22 }));
+    XLSX.utils.book_append_sheet(workbook, sheet, `异常订单RawData${suffix}`);
+  }
+  XLSX.writeFile(workbook, `${summary.filename.replace(/[\\/:*?"<>|]/g, '_')}.xlsx`);
 }
 
 export function exportOrderDetails(
@@ -253,10 +295,11 @@ export interface LogisticsExportData {
     exceptionRate: number;
     avgDeliveryTime: number;
   }[];
-  selectedBrand?: string;
-  selectedPlatform?: string;
-  selectedSelfFlag?: string;
+  selectedBrand?: string | string[] | null;
+  selectedPlatform?: string | string[] | null;
+  selectedSelfFlag?: string | null;
   dateRange?: { from: string; to: string };
+  exceptionOrders?: MonitoringExceptionOrder[];
 }
 
 export function exportLogisticsData(data: LogisticsExportData) {
@@ -315,14 +358,19 @@ export function exportLogisticsData(data: LogisticsExportData) {
   ]);
 
   // 调用通用导出函数
-  exportToExcel({
+  const summary = {
     filename,
     sheetName: '快递商数据',
     headers,
     data: exportRows
-  });
+  };
+  if (data.exceptionOrders) {
+    exportMonitoringWorkbook(summary, data.exceptionOrders);
+  } else {
+    exportToExcel(summary);
+  }
 
-  console.log(`✅ 物流监控数据导出成功: ${filename}.csv，共 ${data.courierData.length} 条记录`);
+  console.log(`✅ 物流监控数据导出成功: ${filename}.${data.exceptionOrders ? 'xlsx' : 'csv'}，共 ${data.courierData.length} 条记录`);
 }
 
 export interface BrandLogisticsExportData {
@@ -338,10 +386,11 @@ export interface BrandLogisticsExportData {
     deliveryRate: number;
     exceptionRate: number;
   }[];
-  selectedBrand?: string;
-  selectedPlatform?: string;
-  selectedSelfFlag?: string;
+  selectedBrand?: string | string[] | null;
+  selectedPlatform?: string | string[] | null;
+  selectedSelfFlag?: string | null;
   dateRange?: { from: string; to: string };
+  exceptionOrders?: MonitoringExceptionOrder[];
 }
 
 /**
@@ -382,14 +431,19 @@ export function exportBrandLogisticsData(data: BrandLogisticsExportData) {
     brand.exceptionRate ? brand.exceptionRate.toFixed(2) : '0.00'
   ]);
 
-  exportToExcel({
+  const summary = {
     filename,
     sheetName: '品牌数据',
     headers,
     data: exportRows
-  });
+  };
+  if (data.exceptionOrders) {
+    exportMonitoringWorkbook(summary, data.exceptionOrders);
+  } else {
+    exportToExcel(summary);
+  }
 
-  console.log(`✅ 品牌维度物流监控数据导出成功: ${filename}.csv，共 ${data.brandData.length} 条记录`);
+  console.log(`✅ 品牌维度物流监控数据导出成功: ${filename}.${data.exceptionOrders ? 'xlsx' : 'csv'}，共 ${data.brandData.length} 条记录`);
 }
 
 /**

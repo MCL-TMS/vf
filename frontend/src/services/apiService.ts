@@ -325,6 +325,7 @@ class ApiServiceClass {
     platform?: string | string[] | null;
     selfFlag?: string | null;
     batchSize?: number;  // 每批次数量（默认5000）
+    exceptionsOnly?: boolean;
   }): Promise<any[]> {
     try {
       const batchSize = filters.batchSize || 10000;  // 🔥 默认批次大小从5000改为10000，加快导出速度
@@ -402,12 +403,16 @@ class ApiServiceClass {
       platform?: string | string[] | null;
       selfFlag?: string | null;
       offset?: number;
+      exceptionsOnly?: boolean;
     },
     limit: number
   ): Promise<any[]> {
     const params = new URLSearchParams();
     params.append('startDate', filters.startDate);
     params.append('endDate', filters.endDate);
+    if (filters.exceptionsOnly) {
+      params.append('exceptionsOnly', 'true');
+    }
     
     if (filters.brand && filters.brand !== 'all') {
         if (Array.isArray(filters.brand)) {
@@ -857,6 +862,10 @@ class ApiServiceClass {
       const params = new URLSearchParams();
       
       // 修正参数名称匹配后端期望的参数
+      if (requireCrossAnalysis) {
+        params.append('requireCrossAnalysis', 'true');
+        if (preferLite) params.append('lite', '1');
+      }
       if (dateRange?.from) {
         params.append('dateFrom', dateRange.from);
       }
@@ -944,6 +953,12 @@ class ApiServiceClass {
       }
 
       const data = await this.parseApiResponse<any>(response, '总览数据获取（含同比环比）');
+      if (requireCrossAnalysis && (
+        !Array.isArray(data.data?.crossAnalysisData) ||
+        (data.filters?.mode === 'lite' && data.filters?.crossAnalysisIncluded !== true)
+      )) {
+        throw new Error('交叉分析数据未返回，请更新后端服务后重试');
+      }
       
       // 🔥 新增：调试 crossAnalysisData 是否包含效率指标
       console.log('🔍 [ApiService] 原始 API 响应 - crossAnalysisData 结构检查:', {
@@ -1005,6 +1020,7 @@ class ApiServiceClass {
       
       // 如果新的API不存在，回退到原来的API
       if (error instanceof ApiClientError && error.status === 404) {
+        if (requireCrossAnalysis) throw error;
         console.warn('⚠️ [ApiService] 新API不存在，回退到原API');
         return this.getOverviewDataFallback(options);
       }
@@ -2645,7 +2661,7 @@ export const getWeightAnalysisPermissions = (userId?: string) => ApiService.getW
 export const getForwardingData = (options?: APIRequestOptions) => ApiService.getForwardingData(options);
 export const getInterceptionData = (options?: any) => ApiService.getInterceptionData(options);
 export const getPlatformList = () => ApiService.getPlatformList(); // 🔥 导出平台列表方法
-export const exportOrderDetails = (options: APIRequestOptions) => ApiService.exportOrderDetails(options); // 🔥 导出订单明细
+export const exportOrderDetails = (options: Parameters<typeof ApiService.exportOrderDetails>[0]) => ApiService.exportOrderDetails(options); // 🔥 导出订单明细
 export const getAvailableBrands = (options?: { startDate?: string; endDate?: string; selfFlag?: string }) => ApiService.getAvailableBrands(options); // 🔥 导出可用品牌方法
 export const getAvailablePlatforms = (options?: { startDate?: string; endDate?: string; selfFlag?: string; brand?: string | string[] }) => ApiService.getAvailablePlatforms(options); // 🔥 导出可用平台方法
 export const exportTimelinessRawData = (options: any) => ApiService.exportTimelinessRawData(options); // 🔥 导出时效分析RawData

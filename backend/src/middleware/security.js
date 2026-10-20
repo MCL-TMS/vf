@@ -6,6 +6,7 @@
 const jwt = require('jsonwebtoken');
 const rateLimit = require('express-rate-limit');
 const { body, query, validationResult } = require('express-validator');
+const { isValidDateTime, normalizeDateTime } = require('../utils/dateRange');
 
 function getJwtSecret() {
   const secret = process.env.JWT_SECRET;
@@ -182,20 +183,20 @@ const validateLogin = [
 const validateDateRange = [
   query('dateFrom')
     .notEmpty().withMessage('开始日期不能为空')
-    .matches(/^\d{4}-\d{2}-\d{2}$/).withMessage('日期格式必须为YYYY-MM-DD'),
+    .custom(isValidDateTime).withMessage('日期格式必须为YYYY-MM-DD或YYYY-MM-DD HH:mm:ss'),
   
   query('dateTo')
     .notEmpty().withMessage('结束日期不能为空')
-    .matches(/^\d{4}-\d{2}-\d{2}$/).withMessage('日期格式必须为YYYY-MM-DD')
+    .custom(isValidDateTime).withMessage('日期格式必须为YYYY-MM-DD或YYYY-MM-DD HH:mm:ss')
     .custom((value, { req }) => {
-      const from = new Date(req.query.dateFrom);
-      const to = new Date(value);
+      const from = new Date(normalizeDateTime(req.query.dateFrom).replace(' ', 'T'));
+      const to = new Date(normalizeDateTime(value, true).replace(' ', 'T'));
       if (to < from) {
         throw new Error('结束日期不能早于开始日期');
       }
       // 限制查询范围不超过1年
       const diffDays = (to - from) / (1000 * 60 * 60 * 24);
-      if (diffDays > 365) {
+      if (Math.floor(diffDays) > 365) {
         throw new Error('查询范围不能超过1年');
       }
       return true;

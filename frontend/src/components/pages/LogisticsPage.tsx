@@ -214,6 +214,7 @@ export function LogisticsPage({
             />
           ) : (
             <CourierMonitoring 
+              dateRange={dateRange}
               selectedBrand={selectedBrand}
               selectedPlatform={selectedPlatform}  // ✅ 新增：传递platform参数
               selectedSelfFlag={selectedSelfFlag}  // ✅ 新增：传递selfFlag参数

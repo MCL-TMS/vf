@@ -5,6 +5,8 @@
 
 const express = require('express');
 const router = express.Router();
+const { normalizeDateTime, validateRequestDateRange } = require('../utils/dateRange');
+router.use(validateRequestDateRange);
 const { executeQuery } = require('../config/database-api');
 const { ERROR_CODES, sendError } = require('../utils/apiError');
 const { getAuthorizedCustomerNos, normalizeBrandValues } = require('../utils/brandScope');
@@ -196,11 +198,11 @@ router.get('/available', async (req, res) => {
     // 日期范围处理（只看发货时间）
     if (startDate) {
       whereConditions.push("t.WMS_OUTBOUND_TIME >= TO_DATE(:startDate, 'YYYY-MM-DD HH24:MI:SS')");
-      bindParams.startDate = `${startDate} 00:00:00`;
+      bindParams.startDate = normalizeDateTime(startDate);
     }
     if (endDate) {
-      whereConditions.push("t.WMS_OUTBOUND_TIME <= TO_DATE(:endDate, 'YYYY-MM-DD HH24:MI:SS')");
-      bindParams.endDate = `${endDate} 23:59:59`;
+      whereConditions.push("t.WMS_OUTBOUND_TIME < TO_DATE(:endDate, 'YYYY-MM-DD HH24:MI:SS') + INTERVAL '1' SECOND");
+      bindParams.endDate = normalizeDateTime(endDate, true);
     }
 
     // 自管筛选处理（默认Y）

@@ -89,7 +89,7 @@ function formatDate(date: Date): string {
  * 解析 YYYY-MM-DD 格式的日期字符串
  */
 export function parseDate(dateString: string): Date {
-  const [year, month, day] = dateString.split('-').map(Number);
+  const [year, month, day] = dateString.slice(0, 10).split('-').map(Number);
   return new Date(year, month - 1, day);
 }
 
@@ -161,8 +161,7 @@ export function getTodayDateRange(): { from: string; to: string } {
 /**
  * 获取当月第一天到今天的日期范围（用于总览界面默认时间范围）
  */
-export function getCurrentMonthToDateRange(): { from: string; to: string } {
-  const today = new Date();
+export function getCurrentMonthToDateRange(today = new Date()): { from: string; to: string } {
   const currentYear = today.getFullYear();
   const currentMonth = today.getMonth();
   
@@ -170,9 +169,17 @@ export function getCurrentMonthToDateRange(): { from: string; to: string } {
   const firstDayOfMonth = new Date(currentYear, currentMonth, 1);
   
   return {
-    from: formatDate(firstDayOfMonth),
-    to: formatDate(today)
+    from: `${formatDate(firstDayOfMonth)} 00:00:00`,
+    to: `${formatDate(today)} 23:59:59`
   };
+}
+
+export function toDateTimeInput(value: string, endOfDay = false): string {
+  const normalized = value.replace(' ', 'T');
+  if (normalized.length === 10) {
+    return `${normalized}T${endOfDay ? '23:59:59' : '00:00:00'}`;
+  }
+  return normalized.length === 16 ? `${normalized}:00` : normalized;
 }
 
 /**

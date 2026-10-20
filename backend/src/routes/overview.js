@@ -1,3 +1,4 @@
+const { dateBoundarySql, dateEndExclusiveSql, validateRequestDateRange } = require('../utils/dateRange');
 /**
  * VF物流数据分析平台 - 总览界面API路由（异常条件更新版）
  * 
@@ -10,6 +11,7 @@
 
 const express = require('express');
 const router = express.Router();
+router.use(validateRequestDateRange);
 const { getConnection, executeQuery, DateHelper } = require('../config/database-api');
 const { getBrandMapping } = require('../utils/brandMapping'); // ✅ 导入动态品牌映射
 const { buildScopedBrandFilter, getAuthorizedCustomerNos, VF_BRAND_CODES, normalizeBrandValues } = require('../utils/brandScope');
@@ -128,8 +130,8 @@ function buildStaleOverviewResponse(payload, reason) {
 }
 
 function calculateInclusiveDateSpan(dateFrom, dateTo) {
-  const from = new Date(`${dateFrom}T00:00:00Z`);
-  const to = new Date(`${dateTo}T00:00:00Z`);
+  const from = new Date(`${dateFrom.slice(0, 10)}T00:00:00Z`);
+  const to = new Date(`${dateTo.slice(0, 10)}T00:00:00Z`);
   const diffMs = to.getTime() - from.getTime();
   if (!Number.isFinite(diffMs) || diffMs < 0) {
     return 0;
@@ -185,8 +187,8 @@ const QueryUtils = {
   // 🔥 基础WHERE条件 - 移除硬编码品牌过滤（⚡ 性能优化：半开区间避免对列做函数，便于走索引）
   BASE_WHERE_CONDITIONS: `
     WHERE (t.WMS_OUTBOUND_TIME IS NOT NULL 
-           AND t.WMS_OUTBOUND_TIME >= TO_DATE(:dateFrom, 'YYYY-MM-DD')
-           AND t.WMS_OUTBOUND_TIME < TO_DATE(:dateTo, 'YYYY-MM-DD') + INTERVAL '1' DAY)
+           AND t.WMS_OUTBOUND_TIME >= ${dateBoundarySql('dateFrom')}
+           AND t.WMS_OUTBOUND_TIME < ${dateEndExclusiveSql('dateTo')})
       AND t.TSK_MERGE_NO IS NOT NULL`,
 
   // 平台映射配置 - 前端选择器值到数据库BAS_CODES表中UDF1字段的映射
@@ -377,7 +379,8 @@ router.get('/kpi', async (req, res) => {
   let kpiCacheKey = '';
   
   try {
-    const { dateFrom, dateTo, brand, platform, selfFlag, lite } = req.query;
+    const { dateFrom, dateTo, brand, platform, selfFlag, lite, requireCrossAnalysis } = req.query;
+    const includeCrossAnalysis = ['1', 'true'].includes(String(requireCrossAnalysis).toLowerCase());
     const liteModeRequested = String(lite || '').toLowerCase() === '1' || String(lite || '').toLowerCase() === 'true';
     const authorizedCustomerNos = getAuthorizedCustomerNos(req.user);
     const liteMode = shouldForceOverviewLiteMode({
@@ -488,8 +491,8 @@ router.get('/kpi', async (req, res) => {
       FROM APP_CMS.TSK_LIST_TASK t
       LEFT JOIN APP_CMS.VIEW_TSK_LIST_TASK v ON t.TSK_MERGE_NO = v.TSK_MERGE_NO
       WHERE t.WMS_OUTBOUND_TIME IS NOT NULL
-        AND t.WMS_OUTBOUND_TIME >= TO_DATE(:dateFrom, 'YYYY-MM-DD')
-        AND t.WMS_OUTBOUND_TIME < TO_DATE(:dateTo, 'YYYY-MM-DD') + INTERVAL '1' DAY
+        AND t.WMS_OUTBOUND_TIME >= ${dateBoundarySql('dateFrom')}
+        AND t.WMS_OUTBOUND_TIME < ${dateEndExclusiveSql('dateTo')}
         AND t.TSK_MERGE_NO IS NOT NULL
         AND t.CARRIERID IS NOT NULL
         ${brandFilter}
@@ -520,8 +523,8 @@ router.get('/kpi', async (req, res) => {
       FROM APP_CMS.TSK_LIST_TASK t
       LEFT JOIN APP_CMS.VIEW_TSK_LIST_TASK v ON t.TSK_MERGE_NO = v.TSK_MERGE_NO
       WHERE t.WMS_OUTBOUND_TIME IS NOT NULL
-        AND t.WMS_OUTBOUND_TIME >= TO_DATE(:dateFrom, 'YYYY-MM-DD')
-        AND t.WMS_OUTBOUND_TIME < TO_DATE(:dateTo, 'YYYY-MM-DD') + INTERVAL '1' DAY
+        AND t.WMS_OUTBOUND_TIME >= ${dateBoundarySql('dateFrom')}
+        AND t.WMS_OUTBOUND_TIME < ${dateEndExclusiveSql('dateTo')}
         AND t.TSK_MERGE_NO IS NOT NULL
         AND t.CARRIERID IS NOT NULL
         ${brandFilter}
@@ -850,8 +853,8 @@ router.get('/kpi', async (req, res) => {
           FROM APP_CMS.TSK_LIST_TASK t
           LEFT JOIN APP_CMS.VIEW_TSK_LIST_TASK v ON t.TSK_MERGE_NO = v.TSK_MERGE_NO
           WHERE t.CUSTOMERNO IN (${brandPlaceholders})
-            AND t.WMS_OUTBOUND_TIME >= TO_DATE(:periodFrom, 'YYYY-MM-DD')
-            AND t.WMS_OUTBOUND_TIME < TO_DATE(:periodTo, 'YYYY-MM-DD') + INTERVAL '1' DAY
+            AND t.WMS_OUTBOUND_TIME >= ${dateBoundarySql('periodFrom')}
+            AND t.WMS_OUTBOUND_TIME < ${dateEndExclusiveSql('periodTo')}
             ${platformFilter}
             ${selfFlagFilter}
           GROUP BY t.CUSTOMERNO
@@ -1105,7 +1108,7 @@ router.get('/kpi', async (req, res) => {
     }));
 
       let crossAnalysisData = [];
-      if (liteMode) {
+      if (liteMode && !includeCrossAnalysis) {
       console.log('⏭️ [交叉分析] Lite 模式已启用，跳过品牌×平台交叉查询以避免网关超时');
       } else {
       // 🔥 品牌×平台交叉分析查询 - 按PLATFORM_CLASS汇总，而不是PLATFORM详细值
@@ -1336,8 +1339,8 @@ router.get('/kpi', async (req, res) => {
       LEFT JOIN APP_CMS.VIEW_TSK_LIST_TASK v ON t.TSK_MERGE_NO = v.TSK_MERGE_NO
       WHERE (
         t.WMS_OUTBOUND_TIME IS NOT NULL
-        AND t.WMS_OUTBOUND_TIME >= TO_DATE(:dateFrom, 'YYYY-MM-DD')
-        AND t.WMS_OUTBOUND_TIME < TO_DATE(:dateTo, 'YYYY-MM-DD') + INTERVAL '1' DAY
+        AND t.WMS_OUTBOUND_TIME >= ${dateBoundarySql('dateFrom')}
+        AND t.WMS_OUTBOUND_TIME < ${dateEndExclusiveSql('dateTo')}
         AND t.TSK_MERGE_NO IS NOT NULL
         ${brandFilter}
         ${platformFilter}
@@ -1406,7 +1409,8 @@ router.get('/kpi', async (req, res) => {
           dateTo: dateTo,
           brand: brand || 'all',
           platform: platform || 'all',
-          mode: liteMode ? 'lite' : 'full'
+          mode: liteMode ? 'lite' : 'full',
+          crossAnalysisIncluded: !liteMode || includeCrossAnalysis
         }
       };
     });
@@ -1540,7 +1544,11 @@ router.get('/shipped-transfer', async (req, res) => {
               OR
               (COALESCE(l.CARRIERID, b.CARRIERID) = 'ZTO'
                 AND l.TRACKING_DESCR LIKE '%苏州市%'
-                AND l.TRACKING_DESCR LIKE '%快件离开【苏州昆山】已发往【昆常转运中心】%'
+                AND l.TRACKING_DESCR LIKE '%昆常转运中心%'
+              )
+              OR
+              (COALESCE(l.CARRIERID, b.CARRIERID) = 'JD'
+                AND l.TRACKING_DESCR LIKE '%您的快件已到达【昆山张浦站】，准备装车%'
               )
             )
         )
@@ -1653,13 +1661,13 @@ router.get('/status-flow-analysis', async (req, res) => {
                LEFT JOIN APP_CMS.VIEW_TSK_LIST_TASK v2 ON t2.TSK_MERGE_NO = v2.TSK_MERGE_NO
                WHERE (
                  (t2.WMS_OUTBOUND_TIME IS NOT NULL
-                  AND t2.WMS_OUTBOUND_TIME >= TO_DATE(:dateFrom, 'YYYY-MM-DD')
-                  AND t2.WMS_OUTBOUND_TIME < TO_DATE(:dateTo, 'YYYY-MM-DD') + INTERVAL '1' DAY)
+                  AND t2.WMS_OUTBOUND_TIME >= ${dateBoundarySql('dateFrom')}
+                  AND t2.WMS_OUTBOUND_TIME < ${dateEndExclusiveSql('dateTo')})
                  OR
                  (t2.WMS_OUTBOUND_TIME IS NULL
                   AND t2.PAYMENTDATE_D IS NOT NULL
-                  AND t2.PAYMENTDATE_D >= TO_DATE(:dateFrom, 'YYYY-MM-DD')
-                  AND t2.PAYMENTDATE_D < TO_DATE(:dateTo, 'YYYY-MM-DD') + INTERVAL '1' DAY)
+                  AND t2.PAYMENTDATE_D >= ${dateBoundarySql('dateFrom')}
+                  AND t2.PAYMENTDATE_D < ${dateEndExclusiveSql('dateTo')})
                )
                  AND t2.TSK_MERGE_NO IS NOT NULL
                  ${brandFilter.replace(/t\./g, 't2.')}

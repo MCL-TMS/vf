@@ -1,3 +1,4 @@
+const { dateBoundarySql, dateEndExclusiveSql, validateRequestDateRange } = require('../utils/dateRange');
 /**
  * VF物流数据分析平台 - 物流监控API路由（参数绑定修复版）
  * 
@@ -8,6 +9,7 @@
 
 const express = require('express');
 const router = express.Router();
+router.use(validateRequestDateRange);
 const { getConnection, DateHelper } = require('../config/database-api');
 const { getBrandMapping } = require('../utils/brandMapping'); // ✅ 导入动态品牌映射
 const { buildScopedBrandFilter, getAuthorizedCustomerNos } = require('../utils/brandScope');
@@ -85,8 +87,8 @@ const QueryUtils = {
   BASE_WHERE_CONDITIONS: `
     WHERE (
       t.WMS_OUTBOUND_TIME IS NOT NULL
-      AND t.WMS_OUTBOUND_TIME >= TO_DATE(:dateFrom, 'YYYY-MM-DD')
-      AND t.WMS_OUTBOUND_TIME < TO_DATE(:dateTo, 'YYYY-MM-DD') + INTERVAL '1' DAY
+      AND t.WMS_OUTBOUND_TIME >= ${dateBoundarySql('dateFrom')}
+      AND t.WMS_OUTBOUND_TIME < ${dateEndExclusiveSql('dateTo')}
       AND t.TSK_MERGE_NO IS NOT NULL
     )`,
 
@@ -1032,8 +1034,8 @@ router.get('/forwarding', async (req, res) => {
       SELECT COUNT(*) as TOTAL_COUNT
       FROM APP_CMS.TSK_LIST_TASK t
       LEFT JOIN APP_CMS.VIEW_TSK_LIST_TASK v ON t.TSK_MERGE_NO = v.TSK_MERGE_NO
-      WHERE t.WMS_OUTBOUND_TIME >= TO_DATE(:startDate, 'YYYY-MM-DD')
-        AND t.WMS_OUTBOUND_TIME < TO_DATE(:endDate, 'YYYY-MM-DD') + INTERVAL '1' DAY
+      WHERE t.WMS_OUTBOUND_TIME >= ${dateBoundarySql('startDate')}
+        AND t.WMS_OUTBOUND_TIME < ${dateEndExclusiveSql('endDate')}
         ${brandFilter}
         ${platformFilter}
         ${selfFlagFilter}
@@ -1057,8 +1059,8 @@ router.get('/forwarding', async (req, res) => {
       LEFT JOIN APP_CMS.VIEW_TSK_LIST_TASK v ON t.TSK_MERGE_NO = v.TSK_MERGE_NO
       WHERE t.TR_FLAG = 'Y'
       
-        AND t.WMS_OUTBOUND_TIME >= TO_DATE(:startDate, 'YYYY-MM-DD')
-        AND t.WMS_OUTBOUND_TIME < TO_DATE(:endDate, 'YYYY-MM-DD') + INTERVAL '1' DAY
+        AND t.WMS_OUTBOUND_TIME >= ${dateBoundarySql('startDate')}
+        AND t.WMS_OUTBOUND_TIME < ${dateEndExclusiveSql('endDate')}
         ${brandFilter}
         ${platformFilter}
         ${selfFlagFilter}
@@ -1092,8 +1094,8 @@ router.get('/forwarding', async (req, res) => {
       LEFT JOIN APP_CMS.BAS_COMPANY bc ON t.CARRIERID = bc.COMPANY_SYSID
       LEFT JOIN APP_CMS.VIEW_TSK_LIST_TASK v ON t.TSK_MERGE_NO = v.TSK_MERGE_NO
       WHERE t.TR_FLAG2 = 'Y'
-        AND t.WMS_OUTBOUND_TIME >= TO_DATE(:startDate, 'YYYY-MM-DD')
-        AND t.WMS_OUTBOUND_TIME < TO_DATE(:endDate, 'YYYY-MM-DD') + INTERVAL '1' DAY
+        AND t.WMS_OUTBOUND_TIME >= ${dateBoundarySql('startDate')}
+        AND t.WMS_OUTBOUND_TIME < ${dateEndExclusiveSql('endDate')}
         ${brandFilter}
         ${platformFilter}
         ${selfFlagFilter}
@@ -1126,8 +1128,8 @@ router.get('/forwarding', async (req, res) => {
         FROM APP_CMS.TSK_LIST_TASK t
         LEFT JOIN APP_CMS.VIEW_TSK_LIST_TASK v ON t.TSK_MERGE_NO = v.TSK_MERGE_NO
         WHERE t.TR_FLAG2 = 'Y'
-          AND t.WMS_OUTBOUND_TIME >= TO_DATE(:startDate, 'YYYY-MM-DD')
-          AND t.WMS_OUTBOUND_TIME < TO_DATE(:endDate, 'YYYY-MM-DD') + INTERVAL '1' DAY
+          AND t.WMS_OUTBOUND_TIME >= ${dateBoundarySql('startDate')}
+          AND t.WMS_OUTBOUND_TIME < ${dateEndExclusiveSql('endDate')}
           ${brandFilter}
           ${platformFilter}
           ${selfFlagFilter}
@@ -1145,8 +1147,8 @@ router.get('/forwarding', async (req, res) => {
       LEFT JOIN APP_CMS.BAS_COMPANY bc ON t.CARRIERID = bc.COMPANY_SYSID
       LEFT JOIN APP_CMS.VIEW_TSK_LIST_TASK v ON t.TSK_MERGE_NO = v.TSK_MERGE_NO
       WHERE t.TR_FLAG2 = 'Y'
-        AND t.WMS_OUTBOUND_TIME >= TO_DATE(:startDate, 'YYYY-MM-DD')
-        AND t.WMS_OUTBOUND_TIME < TO_DATE(:endDate, 'YYYY-MM-DD') + INTERVAL '1' DAY
+        AND t.WMS_OUTBOUND_TIME >= ${dateBoundarySql('startDate')}
+        AND t.WMS_OUTBOUND_TIME < ${dateEndExclusiveSql('endDate')}
         ${brandFilter}
         ${platformFilter}
         ${selfFlagFilter}
@@ -1312,8 +1314,8 @@ router.get('/interception', async (req, res) => {
     }
 
     // 组合所有筛选条件
-    const whereClause = `tsk.WMS_OUTBOUND_TIME >= TO_DATE(:startDate, 'YYYY-MM-DD')
-      AND tsk.WMS_OUTBOUND_TIME < TO_DATE(:endDate, 'YYYY-MM-DD') + 1
+    const whereClause = `tsk.WMS_OUTBOUND_TIME >= ${dateBoundarySql('startDate')}
+      AND tsk.WMS_OUTBOUND_TIME < ${dateEndExclusiveSql('endDate')}
       AND dc.PROCESS_FLAG IN ('Y','N')
       ${tskBrandFilter}
       ${tskPlatformFilter}

@@ -7,6 +7,7 @@ import { cn } from "./utils"
 import { Button } from "./button"
 import { Input } from "./input"
 import { Popover, PopoverContent, PopoverTrigger } from "./popover"
+import { getCurrentMonthToDateRange, toDateTimeInput } from "../../utils/dateUtils"
 
 interface DatePickerWithRangeProps {
   className?: string
@@ -19,53 +20,69 @@ export function DatePickerWithRange({
   onDateRangeChange,
   initialDateRange
 }: DatePickerWithRangeProps) {
-  const today = new Date().toISOString().split('T')[0];
-  const [fromDate, setFromDate] = React.useState<string>(initialDateRange?.from || today);
-  const [toDate, setToDate] = React.useState<string>(initialDateRange?.to || today);
+  const [appliedRange, setAppliedRange] = React.useState(() => initialDateRange || getCurrentMonthToDateRange());
+  const [fromDate, setFromDate] = React.useState(() => toDateTimeInput(appliedRange.from));
+  const [toDate, setToDate] = React.useState(() => toDateTimeInput(appliedRange.to, true));
   const [isOpen, setIsOpen] = React.useState(false);
+  const [error, setError] = React.useState('');
+  const inputId = React.useId();
 
   // 当初始日期范围更新时，更新内部状态
   React.useEffect(() => {
     if (initialDateRange) {
-      setFromDate(initialDateRange.from);
-      setToDate(initialDateRange.to);
+      setAppliedRange(initialDateRange);
+      setFromDate(toDateTimeInput(initialDateRange.from));
+      setToDate(toDateTimeInput(initialDateRange.to, true));
+      setError('');
     }
   }, [initialDateRange]);
 
   const handleApply = () => {
-    console.log('🎯 [DatePickerWithRange] handleApply called with dates:', { fromDate, toDate });
-    if (onDateRangeChange && fromDate && toDate) {
-      const dateRange = {
-        from: fromDate,
-        to: toDate
-      };
-      console.log('📤 [DatePickerWithRange] Calling onDateRangeChange with:', dateRange);
-      onDateRangeChange(dateRange);
+    if (!fromDate || !toDate || !Number.isFinite(new Date(fromDate).getTime()) || !Number.isFinite(new Date(toDate).getTime())) {
+      setError('请选择完整的开始和结束时间');
+      return;
     }
+    const normalizedFrom = toDateTimeInput(fromDate);
+    const normalizedTo = toDateTimeInput(toDate, true);
+    if (normalizedFrom > normalizedTo) {
+      setError('开始时间不能晚于结束时间');
+      return;
+    }
+    const dateRange = {
+      from: normalizedFrom.replace('T', ' '),
+      to: normalizedTo.replace('T', ' ')
+    };
+    setAppliedRange(dateRange);
+    onDateRangeChange?.(dateRange);
+    setError('');
     setIsOpen(false);
   };
 
   const formatDateRange = () => {
-    if (fromDate === toDate) {
-      return fromDate;
-    }
-    return `${fromDate} - ${toDate}`;
+    return `${toDateTimeInput(appliedRange.from).replace('T', ' ')} - ${toDateTimeInput(appliedRange.to, true).replace('T', ' ')}`;
   };
 
   return (
     <div className={cn("grid gap-2", className)}>
-      <Popover open={isOpen} onOpenChange={setIsOpen}>
+      <Popover open={isOpen} onOpenChange={(open) => {
+        if (open) {
+          setFromDate(toDateTimeInput(appliedRange.from));
+          setToDate(toDateTimeInput(appliedRange.to, true));
+          setError('');
+        }
+        setIsOpen(open);
+      }}>
         <PopoverTrigger asChild>
           {/* 🔥 给触发按钮也加上白色背景 */}
           <Button
             variant={"outline"}
             className={cn(
-              "w-[280px] justify-start text-left font-normal bg-white", // 新增 bg-white
+              "w-full justify-start text-left font-normal bg-white",
               "border-functional-light-grey"
             )}
           >
             <CalendarIcon className="mr-2 h-4 w-4" />
-            <span>{formatDateRange()}</span>
+            <span className="text-xs">{formatDateRange()}</span>
           </Button>
         </PopoverTrigger>
         {/* 🔥 核心修改：添加白色背景、边框、阴影 */}
@@ -75,23 +92,28 @@ export function DatePickerWithRange({
         >
           <div className="space-y-4">
             <div className="space-y-2">
-              <label className="text-sm font-medium">开始日期</label>
+              <label htmlFor={`${inputId}-start`} className="text-sm font-medium">开始时间</label>
               <Input
-                type="date"
+                id={`${inputId}-start`}
+                type="datetime-local"
+                step="1"
                 value={fromDate}
                 onChange={(e) => setFromDate(e.target.value)}
                 className="w-full bg-white border-functional-light-grey" // 输入框也加白色背景
               />
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium">结束日期</label>
+              <label htmlFor={`${inputId}-end`} className="text-sm font-medium">结束时间</label>
               <Input
-                type="date"
+                id={`${inputId}-end`}
+                type="datetime-local"
+                step="1"
                 value={toDate}
                 onChange={(e) => setToDate(e.target.value)}
                 className="w-full bg-white border-functional-light-grey" // 输入框也加白色背景
               />
             </div>
+            {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
             <div className="flex justify-end space-x-2">
               <Button
                 variant="outline"
