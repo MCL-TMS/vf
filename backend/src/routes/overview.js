@@ -388,6 +388,14 @@ router.get('/kpi', async (req, res) => {
   
   try {
     const { dateFrom, dateTo, brand, platform, selfFlag, lite, requireCrossAnalysis } = req.query;
+    if (typeof dateFrom !== 'string' || typeof dateTo !== 'string') {
+      return sendError(res, req, {
+        status: 400,
+        code: ERROR_CODES.VALIDATION_ERROR,
+        error: '日期参数类型无效',
+        details: { expectedTypes: { dateFrom: 'string', dateTo: 'string' } }
+      });
+    }
     const includeCrossAnalysis = ['1', 'true'].includes(String(requireCrossAnalysis).toLowerCase());
     const liteModeRequested = String(lite || '').toLowerCase() === '1' || String(lite || '').toLowerCase() === 'true';
     const authorizedCustomerNos = getAuthorizedCustomerNos(req.user);
