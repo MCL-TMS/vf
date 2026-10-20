@@ -42,13 +42,17 @@ function validateRequestDateRange(req, res, next) {
     [req.body?.dateRange?.from, req.body?.dateRange?.to]
   ];
   for (const [from, to] of ranges) {
-    if ((from !== undefined && !isValidDateTime(from)) || (to !== undefined && !isValidDateTime(to))) {
+    const normalizedFrom = from == null ? undefined : (typeof from === 'string' ? from : null);
+    const normalizedTo = to == null ? undefined : (typeof to === 'string' ? to : null);
+    if (normalizedFrom === null || normalizedTo === null ||
+      (normalizedFrom !== undefined && !isValidDateTime(normalizedFrom)) ||
+      (normalizedTo !== undefined && !isValidDateTime(normalizedTo))) {
       return sendError(res, req, {
         status: 400, code: ERROR_CODES.VALIDATION_ERROR,
         error: '日期时间格式无效，请使用 YYYY-MM-DD 或 YYYY-MM-DD HH:mm:ss'
       });
     }
-    if (from && to && normalizeDateTime(from) > normalizeDateTime(to, true)) {
+    if (normalizedFrom && normalizedTo && normalizeDateTime(normalizedFrom) > normalizeDateTime(normalizedTo, true)) {
       return sendError(res, req, {
         status: 400, code: ERROR_CODES.VALIDATION_ERROR,
         error: '开始时间不能晚于结束时间'
