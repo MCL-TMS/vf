@@ -11,7 +11,7 @@ function isValidDateTime(value) {
 }
 
 function normalizeDateTime(value, endOfDay = false) {
-  if (!isValidDateTime(value)) {
+  if (typeof value !== 'string' || !isValidDateTime(value)) {
     const error = new Error('日期时间格式无效，请使用 YYYY-MM-DD HH:mm:ss');
     error.statusCode = 400;
     error.code = 'VALIDATION_ERROR';
