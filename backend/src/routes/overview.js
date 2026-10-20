@@ -130,8 +130,16 @@ function buildStaleOverviewResponse(payload, reason) {
 }
 
 function calculateInclusiveDateSpan(dateFrom, dateTo) {
+  if (typeof dateFrom !== 'string' || typeof dateTo !== 'string') {
+    return 0;
+  }
+
   const from = new Date(`${dateFrom.slice(0, 10)}T00:00:00Z`);
   const to = new Date(`${dateTo.slice(0, 10)}T00:00:00Z`);
+  if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
+    return 0;
+  }
+
   const diffMs = to.getTime() - from.getTime();
   if (!Number.isFinite(diffMs) || diffMs < 0) {
     return 0;
