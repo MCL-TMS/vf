@@ -1,19 +1,13 @@
 import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Badge } from "../ui/badge";
-import { Button } from "../ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, ComposedChart } from "recharts";
-import { 
-  Eye, 
-  EyeOff, 
-  Brain,
-  Sparkles
-} from "lucide-react";
 import { FilteredData } from "../../utils/dataFilter";
-import { getTrendsOrders, getTrendsForecast, getTrendsCarriers, getTrendsExceptions } from "../../services/apiService";
+import { getTrendsOrders, getTrendsCarriers, getTrendsExceptions } from "../../services/apiService";
 import type { DateRange } from "../../data/types";
 import { PageLoadingState } from "../PageLoadingState";
+import { ForecastAnalysis } from "./ForecastAnalysis";
 
 interface TrendsPageProps {
   data: FilteredData;
@@ -78,8 +72,6 @@ function StatusTrendTooltip({ active, payload, label }: any) {
 }
 
 export function TrendsPage({ data: _data, selectedBrand, selectedPlatform, selectedSelfFlag, dateRange }: TrendsPageProps) {
-  // AI分析建议的显示状态 - 默认隐藏
-  const [showAIAnalysis, setShowAIAnalysis] = useState(false);
   const [activeTab, setActiveTab] = useState('monthly');
   
   // 🔥 真实数据状态
@@ -87,7 +79,6 @@ export function TrendsPage({ data: _data, selectedBrand, selectedPlatform, selec
   const [courierTrendData, setCourierTrendData] = useState<any[]>([]);
   const [courierWeekSeries, setCourierWeekSeries] = useState<Array<{ key: string; label: string }>>([]);
   const [exceptionTrendData, setExceptionTrendData] = useState<any[]>([]);
-  const [forecastData, setForecastData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -114,7 +105,6 @@ export function TrendsPage({ data: _data, selectedBrand, selectedPlatform, selec
   const sixMonthsRange = getDefaultSixMonthsRange(dateRange?.to);
   const ordersRange = sixMonthsRange;
   const forecastSourceRange = dateRange || sixMonthsRange;
-  const forecastDays = 7;
 
   // 快递公司周度表现：固定使用“当前自然月”范围，按周聚合后动态展示周数
   function getCurrentMonthRange(): DateRange {
@@ -213,8 +203,8 @@ export function TrendsPage({ data: _data, selectedBrand, selectedPlatform, selec
       // 月度数据可用后立即结束主加载态
       setLoading(false);
 
-      // 第二步：后台并行加载其他3个tab数据，不阻塞月度趋势显示
-      const [carriersResult, exceptionsResult, forecastResult] = await Promise.allSettled([
+      // 第二步：后台并行加载快递和异常趋势
+      const [carriersResult, exceptionsResult] = await Promise.allSettled([
         getTrendsCarriers({
           dateRange: getCurrentMonthRange(),
           brand: selectedBrand || 'all',
@@ -227,13 +217,6 @@ export function TrendsPage({ data: _data, selectedBrand, selectedPlatform, selec
           brand: selectedBrand || 'all',
           platform: selectedPlatform,
           granularity: 'day',
-          selfFlag: selectedSelfFlag || 'Y'
-        }),
-        getTrendsForecast({
-          dateRange: forecastSourceRange,
-          brand: selectedBrand || 'all',
-          platform: selectedPlatform,
-          days: forecastDays,
           selfFlag: selectedSelfFlag || 'Y'
         })
       ]);
@@ -288,23 +271,17 @@ export function TrendsPage({ data: _data, selectedBrand, selectedPlatform, selec
         setExceptionTrendData(exceptionRows);
       }
 
-      const nextForecastData = forecastResult.status === 'fulfilled' && forecastResult.value?.success && forecastResult.value?.data
-        ? forecastResult.value.data
-        : null;
-      setForecastData(nextForecastData);
-
-      const failedCount = [carriersResult, exceptionsResult, forecastResult].filter(
+      const failedCount = [carriersResult, exceptionsResult].filter(
         (result) => result.status === 'rejected'
       ).length;
 
       if (failedCount > 0) {
-        console.warn(`⚠️ 趋势分析辅助接口失败: ${failedCount}/3`);
+        console.warn(`⚠️ 趋势分析辅助接口失败: ${failedCount}/2`);
       }
 
       const hasMonthlyData = ordersResult.status === 'fulfilled' && Array.isArray(ordersResult.value?.data) && ordersResult.value.data.length > 0;
       const hasCourierData = carriersResult.status === 'fulfilled' && Array.isArray(carriersResult.value?.data) && carriersResult.value.data.length > 0;
       const hasExceptionsData = exceptionsResult.status === 'fulfilled' && Array.isArray(exceptionsResult.value?.data) && exceptionsResult.value.data.length > 0;
-      const hasForecastData = Array.isArray(nextForecastData?.forecast) && nextForecastData.forecast.length > 0;
 
       // 当前tab无数据但其他tab有数据时，自动切换到有数据的tab，避免误以为整页无数据
       if (activeTab === 'monthly' && !hasMonthlyData) {
@@ -312,8 +289,6 @@ export function TrendsPage({ data: _data, selectedBrand, selectedPlatform, selec
           setActiveTab('courier');
         } else if (hasExceptionsData) {
           setActiveTab('exceptions');
-        } else if (hasForecastData) {
-          setActiveTab('forecast');
         }
       }
 
@@ -327,35 +302,6 @@ export function TrendsPage({ data: _data, selectedBrand, selectedPlatform, selec
   function getExceptionAvg(key: 'pickupDelay' | 'shipDelay' | 'deliveryDelay' | 'routeDelay' | 'total') {
     if (!exceptionTrendData.length) return 0;
     return Math.round(exceptionTrendData.reduce((sum: number, item: any) => sum + (item[key] || 0), 0) / exceptionTrendData.length);
-  }
-
-  // 加载中状态
-  if (loading) {
-    return (
-      <PageLoadingState
-        title="趋势分析加载中"
-        subtitle="正在准备月度趋势、快递公司趋势与预测数据"
-        loading={true}
-        dataType="趋势分析"
-        loadingMessage="加载趋势数据中..."
-        minHeight="420px"
-      />
-    );
-  }
-
-  // 错误状态
-  if (error) {
-    return (
-      <PageLoadingState
-        title="趋势分析加载失败"
-        subtitle="部分数据接口未成功返回，可点击重试"
-        loading={false}
-        error={error}
-        dataType="趋势分析"
-        onRetry={loadTrendsData}
-        minHeight="420px"
-      />
-    );
   }
 
   return (
@@ -385,6 +331,7 @@ export function TrendsPage({ data: _data, selectedBrand, selectedPlatform, selec
 
         {/* 月度趋势 */}
         <TabsContent value="monthly" className="space-y-6">
+          {loading || error ? <PageLoadingState title={error ? '趋势分析加载失败' : '趋势分析加载中'} loading={loading} error={error} dataType="月度趋势" onRetry={loadTrendsData} minHeight="320px" /> : <>
           {/* 🔥 组合图表：订单量（条形图）+ 签收率（折线图） */}
           <Card className="maersk-card">
             <CardHeader>
@@ -503,6 +450,7 @@ export function TrendsPage({ data: _data, selectedBrand, selectedPlatform, selec
               )}
             </CardContent>
           </Card>
+          </>}
         </TabsContent>
 
         {/* 快递公司趋势 */}
@@ -697,109 +645,7 @@ export function TrendsPage({ data: _data, selectedBrand, selectedPlatform, selec
 
         {/* 预测分析 */}
         <TabsContent value="forecast" className="space-y-6">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <Card className="maersk-card">
-              <CardHeader>
-                <CardTitle className="text-maersk-black">未来{forecastDays}天预测（基于真实数据）</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  {forecastData?.forecast?.map((item: any, index: number) => (
-                    <div key={index} className="flex justify-between items-center">
-                      <span className="text-foreground">{item.date}</span>
-                      <div className="flex items-center space-x-2">
-                        <span className="font-medium text-maersk-blue">
-                          {formatNumber(item.predictedOrders)}
-                        </span>
-                        <Badge variant="outline" className="border-maersk-blue text-maersk-blue">
-                          置信度 {item.confidence || 0}%
-                        </Badge>
-                      </div>
-                    </div>
-                  )) || (
-                    <div className="text-center text-muted-foreground py-4">
-                      暂无预测数据
-                    </div>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* AI 分析建议 - 已调整为“暂未开放”样式 */}
-            <Card className="maersk-card overflow-hidden">
-              <CardHeader className="bg-functional-bright-grey border-b border-functional-light-grey pb-3">
-                <CardTitle className="flex items-center gap-2">
-                  <Brain className="h-5 w-5 text-maersk-blue" />
-                  <span className="text-maersk-black">AI 分析建议</span>
-                  <Badge variant="outline" className="ml-auto text-[10px] py-0 h-4 bg-functional-light-grey text-functional-mid-grey border-none">
-                    COMING SOON
-                  </Badge>
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="py-10">
-                <div className="flex flex-col items-center justify-center text-center">
-                  <div className="w-12 h-12 bg-maersk-white rounded-full flex items-center justify-center shadow-sm mb-3 border border-functional-light-grey">
-                    <Sparkles className="h-6 w-6 text-maersk-blue opacity-20" />
-                  </div>
-                  <h4 className="text-sm font-medium text-maersk-black mb-1">智能化趋势洞察</h4>
-                  <p className="text-xs text-functional-mid-grey max-w-[200px]">
-                    正在接入大语言模型与专家系统，功能暂未开放，敬请期待
-                  </p>
-                </div>
-
-                {/* 源代码保留供后续开放使用
-                <CardHeader>
-                  <CardTitle className="flex items-center justify-between">
-                    <span className="text-maersk-black">AI 分析建议</span>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setShowAIAnalysis(!showAIAnalysis)}
-                      className="h-8 w-8 p-0 hover:bg-functional-bright-grey"
-                      title={showAIAnalysis ? "隐藏AI分析" : "显示AI分析"}
-                    >
-                      {showAIAnalysis ? (
-                        <Eye className="h-4 w-4 text-functional-mid-grey" />
-                      ) : (
-                        <EyeOff className="h-4 w-4 text-functional-mid-grey" />
-                      )}
-                    </Button>
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  {showAIAnalysis ? (
-                    <div className="space-y-3 text-sm">
-                      <div className="p-3 bg-functional-bright-blue rounded-lg border border-functional-light-blue">
-                        <strong className="text-maersk-blue">趋势预测:</strong>
-                        <p className="text-foreground mt-1">
-                          基于历史数据分析，平均每日订单量约 {forecastData?.summary?.avgDailyOrders?.toLocaleString() || 0} 单
-                        </p>
-                      </div>
-                      <div className="p-3 bg-accent-bright-green rounded-lg border border-accent-light-green">
-                        <strong className="text-maersk-blue">性能指标:</strong>
-                        <p className="text-foreground mt-1">
-                          平均签收率 {forecastData?.summary?.avgDeliveryRate || 0}%
-                        </p>
-                      </div>
-                      <div className="p-3 bg-accent-bright-orange rounded-lg border border-accent-light-orange">
-                        <strong className="text-maersk-blue">数据说明:</strong>
-                        <p className="text-foreground mt-1">
-                          预测基于当前筛选时间范围（{forecastSourceRange.from} 至 {forecastSourceRange.to}）的真实订单数据生成
-                        </p>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="text-center py-8 text-muted-foreground">
-                      <EyeOff className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                      <p className="text-sm">AI分析建议已隐藏</p>
-                      <p className="text-xs mt-1">点击眼睛图标可重新显示</p>
-                    </div>
-                  )}
-                </CardContent>
-                */}
-              </CardContent>
-            </Card>
-          </div>
+          <ForecastAnalysis dateRange={forecastSourceRange} brand={selectedBrand} platform={selectedPlatform} selfFlag={selectedSelfFlag} />
         </TabsContent>
       </Tabs>
     </div>

@@ -1574,7 +1574,7 @@ router.get('/shipped-transfer', async (req, res) => {
               )
               OR
               (COALESCE(l.CARRIERID, b.CARRIERID) = 'JD'
-                AND l.TRACKING_DESCR LIKE '%您的快件已到达【昆山张浦站】，准备装车%'
+                AND l.TRACKING_DESCR LIKE '%您的快件已离开【苏州昆山集货分拣中心】%'
               )
             )
         )

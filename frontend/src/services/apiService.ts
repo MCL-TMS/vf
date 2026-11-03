@@ -2512,33 +2512,33 @@ class ApiServiceClass {
     const serializedPlatform = this.serializePlatformParam(platform, true);
     if (serializedPlatform) params.append('platform', serializedPlatform);
 
-    if (selfFlag && selfFlag !== 'all') {
-      params.append('selfFlag', selfFlag);
-    } else if (!selfFlag) {
-      params.append('selfFlag', 'Y');
-    }
+    params.append('selfFlag', selfFlag || 'Y');
 
     const url = `${this.baseURL}/trends/forecast${params.toString() ? `?${params.toString()}` : ''}`;
     const controller = new AbortController();
+    const abort = () => controller.abort();
+    signal?.addEventListener('abort', abort, { once: true });
+    if (signal?.aborted) controller.abort();
     const timeoutId = setTimeout(() => controller.abort(), 180000);
 
     try {
       const response = await this.performanceFetch(url, {
         method: 'GET',
-        signal: signal || controller.signal,
+        signal: controller.signal,
         headers: {
           'Content-Type': 'application/json',
         },
       });
 
-      clearTimeout(timeoutId);
       return await this.parseApiResponse<any>(response, '趋势预测数据获取');
     } catch (error: any) {
-      clearTimeout(timeoutId);
       if (error.name === 'AbortError') {
         throw new Error('趋势预测数据请求超时，请稍后重试');
       }
       throw error;
+    } finally {
+      clearTimeout(timeoutId);
+      signal?.removeEventListener('abort', abort);
     }
   }
 

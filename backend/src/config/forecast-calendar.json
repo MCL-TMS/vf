@@ -1,0 +1,25 @@
+{
+  "holidayCalendarCoverage": [2024, 2025, 2026],
+  "holidayRanges": [
+    { "year": 2024, "start": "2024-01-01", "end": "2024-01-01", "key": "new-year", "name": "元旦" },
+    { "year": 2024, "start": "2024-02-10", "end": "2024-02-17", "key": "spring-festival", "name": "春节" },
+    { "year": 2024, "start": "2024-04-04", "end": "2024-04-06", "key": "qingming", "name": "清明" },
+    { "year": 2024, "start": "2024-05-01", "end": "2024-05-05", "key": "labor-day", "name": "劳动节" },
+    { "year": 2024, "start": "2024-06-08", "end": "2024-06-10", "key": "dragon-boat", "name": "端午" },
+    { "year": 2024, "start": "2024-09-15", "end": "2024-09-17", "key": "mid-autumn", "name": "中秋" },
+    { "year": 2024, "start": "2024-10-01", "end": "2024-10-07", "key": "national-day", "name": "国庆" },
+    { "year": 2025, "start": "2025-01-01", "end": "2025-01-01", "key": "new-year", "name": "元旦" },
+    { "year": 2025, "start": "2025-01-28", "end": "2025-02-04", "key": "spring-festival", "name": "春节" },
+    { "year": 2025, "start": "2025-04-04", "end": "2025-04-06", "key": "qingming", "name": "清明" },
+    { "year": 2025, "start": "2025-05-01", "end": "2025-05-05", "key": "labor-day", "name": "劳动节" },
+    { "year": 2025, "start": "2025-05-31", "end": "2025-06-02", "key": "dragon-boat", "name": "端午" },
+    { "year": 2025, "start": "2025-10-01", "end": "2025-10-08", "key": "national-day", "name": "国庆/中秋" },
+    { "year": 2026, "start": "2026-01-01", "end": "2026-01-03", "key": "new-year", "name": "元旦" },
+    { "year": 2026, "start": "2026-02-15", "end": "2026-02-23", "key": "spring-festival", "name": "春节" },
+    { "year": 2026, "start": "2026-04-04", "end": "2026-04-06", "key": "qingming", "name": "清明" },
+    { "year": 2026, "start": "2026-05-01", "end": "2026-05-05", "key": "labor-day", "name": "劳动节" },
+    { "year": 2026, "start": "2026-06-19", "end": "2026-06-21", "key": "dragon-boat", "name": "端午" },
+    { "year": 2026, "start": "2026-09-25", "end": "2026-09-27", "key": "mid-autumn", "name": "中秋" },
+    { "year": 2026, "start": "2026-10-01", "end": "2026-10-07", "key": "national-day", "name": "国庆" }
+  ]
+}

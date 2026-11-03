@@ -19,6 +19,9 @@ const { getConnection } = require('../config/database-api');
 const { getBrandMapping } = require('../utils/brandMapping');
 const { buildScopedBrandFilter, getAuthorizedCustomerNos } = require('../utils/brandScope');
 const { isValidDateTime } = require('../utils/dateRange');
+const { buildOrderForecast } = require('../utils/orderForecast');
+const forecastCalendarConfig = require('../config/forecast-calendar.json');
+const { buildForecastCalendar, getUncoveredHolidayYears } = require('../utils/forecastCalendar');
 
 /**
  * 日期辅助类
@@ -687,7 +690,7 @@ router.get('/carriers', async (req, res) => {
 });
 
 /**
- * 获取趋势预测数据（基于历史数据的简单预测）
+ * 获取趋势预测数据（完整日历史、滚动回测选模）
  * GET /api/trends/forecast
  * 
  * 查询参数：
@@ -718,8 +721,8 @@ router.get('/forecast', async (req, res) => {
       });
     }
 
-    const forecastDays = parseInt(days);
-    if (isNaN(forecastDays) || forecastDays < 1 || forecastDays > 30) {
+    const forecastDays = Number(days);
+    if (!Number.isInteger(forecastDays) || forecastDays < 1 || forecastDays > 30) {
       return res.status(400).json({
         success: false,
         error: '预测天数无效',
@@ -732,13 +735,21 @@ router.get('/forecast', async (req, res) => {
       return res.json(cached);
     }
 
+    const chinaToday = new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10);
+    const yesterday = new Date(Date.parse(`${chinaToday}T00:00:00Z`) - 86400000).toISOString().slice(0, 10);
+    const historyTo = dateTo.slice(0, 10) < yesterday ? dateTo.slice(0, 10) : yesterday;
+    const earliestFrom = new Date(Date.parse(`${historyTo}T00:00:00Z`) - 799 * 86400000).toISOString().slice(0, 10);
+    const historyFrom = dateFrom.slice(0, 10) > earliestFrom ? dateFrom.slice(0, 10) : earliestFrom;
+    if (historyFrom > historyTo) {
+      return res.status(400).json({ success: false, message: '筛选范围内没有已结束的自然日，请选择历史日期。' });
+    }
     connection = await getConnection();
-    
+
     // 构建筛选条件
     let selfFlagFilter = '';
     const params = {
-      dateFrom: dateFrom,
-      dateTo: dateTo
+      dateFrom: historyFrom,
+      dateTo: historyTo
     };
     const { brandFilter } = await buildBrandFilterForTrends({ req, params, brand });
     const platformFilter = buildPlatformFilterForTrends({ params, platform });
@@ -753,14 +764,12 @@ router.get('/forecast', async (req, res) => {
       params.selfFlag = 'Y';
     }
 
-    // 查询历史数据统计（用于简单的移动平均预测）
     const historicalQuery = `
       SELECT 
         to_char(t.WMS_OUTBOUND_TIME, 'YYYY-MM-DD') as date_period,
         COUNT(DISTINCT t.TSK_MERGE_NO) as total_orders,
         ROUND(COUNT(DISTINCT CASE WHEN t.DIS_STATUS in('95','93') THEN t.TSK_MERGE_NO END) * 100.0 / NULLIF(COUNT(DISTINCT t.TSK_MERGE_NO), 0), 2) as delivery_rate
       FROM APP_CMS.TSK_LIST_TASK t
-      LEFT JOIN APP_CMS.VIEW_TSK_LIST_TASK v ON t.TSK_MERGE_NO = v.TSK_MERGE_NO
       WHERE t.WMS_OUTBOUND_TIME IS NOT NULL
         AND t.WMS_OUTBOUND_TIME >= ${dateBoundarySql('dateFrom')}
         AND t.WMS_OUTBOUND_TIME < ${dateEndExclusiveSql('dateTo')}
@@ -769,71 +778,24 @@ router.get('/forecast', async (req, res) => {
         ${platformFilter}
         ${selfFlagFilter}
       GROUP BY to_char(t.WMS_OUTBOUND_TIME, 'YYYY-MM-DD')
-      ORDER BY to_char(t.WMS_OUTBOUND_TIME, 'YYYY-MM-DD') DESC
-      FETCH FIRST 30 ROWS ONLY
+      ORDER BY to_char(t.WMS_OUTBOUND_TIME, 'YYYY-MM-DD') ASC
     `;
 
     const result = await connection.execute(historicalQuery, params);
     
     const historicalData = result.rows.map(row => ({
-      date: row[0],
-      orders: row[1] || 0,
-      deliveryRate: row[2] || 0
+      date: row.DATE_PERIOD ?? row[0],
+      orders: row.TOTAL_ORDERS ?? row[1] ?? 0,
+      deliveryRate: row.DELIVERY_RATE ?? row[2] ?? 0
     }));
 
-    // 基于真实历史数据计算基准值（空数据时兜底为0）
-    const hasHistory = historicalData.length > 0;
-    const avgOrders = hasHistory
-      ? historicalData.reduce((sum, d) => sum + d.orders, 0) / historicalData.length
-      : 0;
-    const avgDeliveryRate = hasHistory
-      ? historicalData.reduce((sum, d) => sum + d.deliveryRate, 0) / historicalData.length
-      : 0;
-
-    // 使用线性趋势（最小二乘斜率）替代随机波动，保证同参数结果可复现
-    const chronological = [...historicalData].reverse();
-    let slope = 0;
-    if (chronological.length >= 2) {
-      const n = chronological.length;
-      const xMean = (n - 1) / 2;
-      const yMean = chronological.reduce((sum, p) => sum + p.orders, 0) / n;
-      let numerator = 0;
-      let denominator = 0;
-      chronological.forEach((point, idx) => {
-        const xDelta = idx - xMean;
-        numerator += xDelta * (point.orders - yMean);
-        denominator += xDelta * xDelta;
-      });
-      slope = denominator === 0 ? 0 : numerator / denominator;
-    }
-
-    // 生成预测数据
-    const forecastData = [];
-    const lastDate = new Date(dateTo);
-    
-    for (let i = 1; i <= forecastDays; i++) {
-      const forecastDate = new Date(lastDate);
-      forecastDate.setDate(lastDate.getDate() + i);
-      
-      forecastData.push({
-        date: DateHelper.formatDate(forecastDate),
-        predictedOrders: Math.round(Math.max(0, avgOrders + slope * i)),
-        predictedDeliveryRate: Math.round(avgDeliveryRate * 100) / 100,
-        confidence: Math.max(50, 90 - i * 3) // 置信度随天数递减
-      });
-    }
-
+    const forecastTo = new Date(Date.parse(`${historyTo}T00:00:00Z`) + forecastDays * 86400000).toISOString().slice(0, 10);
+    const calendar = buildForecastCalendar(historyFrom, forecastTo, forecastCalendarConfig);
+    const uncoveredHolidayYears = getUncoveredHolidayYears(historyFrom, forecastTo, forecastCalendarConfig);
+    const prediction = buildOrderForecast(historicalData, { dateFrom: historyFrom, dateTo: historyTo, days: forecastDays, calendar, uncoveredHolidayYears });
     const payload = {
       success: true,
-      data: {
-        historical: historicalData,
-        forecast: forecastData,
-        summary: {
-          avgDailyOrders: Math.round(avgOrders),
-          avgDeliveryRate: Math.round(avgDeliveryRate * 100) / 100,
-          forecastPeriod: `${forecastDays} days`
-        }
-      },
+      data: prediction,
       timestamp: new Date().toISOString(),
       filters: {
         dateFrom,
@@ -841,6 +803,8 @@ router.get('/forecast', async (req, res) => {
         brand: brand || 'all',
         platform: platform || 'all',
         forecastDays,
+        historyFrom,
+        historyTo,
         selfFlag: selfFlag || 'Y'
       }
     };
